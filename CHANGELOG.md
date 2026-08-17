@@ -6,6 +6,27 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 Suite audit (après merge #232)
+
+- **A-04 / P-02** : tickers en budget court (2 × 0,5 s), cache 3 s, prefetch
+  groupé par cycle. `/api/status` ne touche plus l'exchange.
+- **D-01** : `drop_forming_candle` unique — le Parquet n'écrit plus la barre
+  en formation.
+- **D-02** : `unique(time, keep=last)` à l'incrémental, `keep=first` au
+  backfill historique.
+- **L-09** : en paper, le notionnel suit le prix slippé.
+- **L-08** : persist `pending_open` avant l'ordre ; nettoyage si le fill échoue.
+- **L-11** : `DailyStats.fees` porte entrée + sortie.
+- **L-10** : le log dit `ScoreFactor`, plus un faux « Sizing % ».
+- **L-15** : seuil de gap configurable (`trading.gap_threshold`, défaut 2 %).
+- **O-12** : `_perturb` change toujours au moins une valeur (bornes comprises).
+- **A-07** : `session_scope` commit / rollback.
+- **A-13** : ping frontend en thread (plus de `connect()` bloquant).
+- **B-02** : le backtest gère plusieurs positions (un slot par stratégie).
+- **B-06** : le pyramidage passe par le risk gate.
+
+
+
 Bilan d'audit de la branche : [`audit/14-REVISION-2026-08-18.md`](audit/14-REVISION-2026-08-18.md).
 
 `data/oos_tracker.json` et `data/backtest_history.json` sont vidés : les

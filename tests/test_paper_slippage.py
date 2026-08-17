@@ -68,6 +68,16 @@ class Harness(PositionOpenMixin):
         self.tf = "1h"
 
 
+def test_open_recomputes_notional_after_paper_slip():
+    """L-09 : après slippage paper, notional = size × exec_price slippé."""
+    import inspect
+    from app.live.position_open_mixin import PositionOpenMixin
+    src = inspect.getsource(PositionOpenMixin._open_position)
+    slip = src.find("paper_slippage_fraction")
+    recompute = src.find("notional = size * exec_price", slip)
+    assert slip != -1 and recompute != -1 and recompute > slip
+
+
 class TestPaperSlippageFraction:
     def test_static_model_returns_base(self):
         h = Harness(model="static")

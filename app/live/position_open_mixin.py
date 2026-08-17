@@ -30,7 +30,7 @@ import polars as pl
 
 from app.core.bot_identity import build_pos_key, build_slot_key, resolve_venue
 from app.core.config import DEFAULT_TAKER_FEE
-from app.core.database import persist_open_position, session_scope
+from app.core.database import delete_open_position, persist_open_position, session_scope
 from app.core.execution import (
     plan_partial_targets,
     quantize_price,
@@ -289,11 +289,27 @@ class PositionOpenMixin:
         if take_profit is not None:
             take_profit = quantize_price(take_profit, venue)
 
+        # L-08 : persister AVANT l'ordre. Un crash après fill et avant
+        # persist laissait un ordre réel sans position. La reprise relit
+        # cette ligne (pending_open) et reprend la gestion.
+        with session_scope(self.SessionLocal) as _sess:
+            persist_open_position(_sess, {
+                "id": pos_key, "symbol": symbol, "side": signal["side"],
+                "strategy": signal.get("name", ""), "entry": price,
+                "stop": stop, "size": size, "notional": notional,
+                "leverage": leverage, "open_time": time.time(),
+                "fees": 0.0, "order_id": "", "reason": "pending_open",
+            })
         order     = self._execute_order(
             venue, symbol, "market", signal["side"], size,
             params={"leverage": int(leverage)}
         )
         if _order_failed(order):
+            try:
+                with session_scope(self.SessionLocal) as _sess:
+                    delete_open_position(_sess, pos_key)
+            except Exception:
+                pass
             raise RuntimeError(
                 f"[OPEN] {symbol} : ordre non exécuté — {_order_fail_reason(order)}"
             )
@@ -314,6 +330,9 @@ class PositionOpenMixin:
         if self.cfg["trading"].get("paper_mode"):
             slip = self._paper_slippage_fraction(symbol, tf, notional)
             exec_price *= (1 + slip) if signal["side"] == "long" else (1 - slip)
+            # L-09 : le notionnel suit le prix slippé (sinon le ledger et
+            # le sizing restent sur le ticker pré-exécution).
+            notional = size * exec_price
         else:
             # Remplissage partiel : aligner la taille trackée sur la taille
             # réellement exécutée (sinon stops/PnL calculés sur une taille fausse).
@@ -419,7 +438,7 @@ class PositionOpenMixin:
         logger.info(
             f"[OPEN] {signal['side'].upper()} {symbol} @ {exec_price:.4f} "
             f"| Strat={strat_name}@{tf} | Score={signal['score']:.2f} "
-            f"| Sizing={score_factor * 100:.0f}% | Size={size:.6f} | Stop={stop:.4f}"
+            f"| ScoreFactor={score_factor * 100:.0f}% | Size={size:.6f} | Stop={stop:.4f}"
         )
         # G2 : une venue data-only n'a reçu AUCUN ordre — la notification de
         # trade (symbole / sens / ouverture / SL / TP) est le seul chemin vers
@@ -583,6 +602,11 @@ class PositionOpenMixin:
             with self._positions_lock:
                 self.open_positions.pop(pos_key, None)
             self.ledger.release(pos_key)
+            try:
+                with session_scope(self.SessionLocal) as _sess:
+                    delete_open_position(_sess, pos_key)
+            except Exception:
+                pass
             raise
         # F-11 : le jeton anti-spam n'est consommé qu'après un fill réussi.
         self.risk.consume_rate_token()

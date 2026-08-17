@@ -221,3 +221,55 @@ class Engine:
                     sd["errors"] += 1
                 logger.error(f"[Engine] Erreur dans stratégie {strat.name} : {e}")
         return best
+
+    def passing_signals(self, df: pl.DataFrame, params: dict = None,
+                        df_htf=None, symbol: str = "",
+                        threshold: float = 0.0,
+                        stats: Optional[Dict[str, Dict[str, int]]] = None) -> List[Dict[str, Any]]:
+        """B-02 : tous les signaux au-dessus du seuil, meilleurs d'abord.
+
+        ``best_signal`` n'en garde qu'un ; le backtest multi-positions ouvre
+        un slot par stratégie qui passe, comme le live.
+        """
+        if df is None or len(df) < 2:
+            return []
+        out: List[Dict[str, Any]] = []
+        for strat in self.strategies:
+            sd = None
+            if stats is not None:
+                sd = stats.setdefault(strat.name, {
+                    "evaluated": 0, "none": 0, "proposed": 0,
+                    "below_threshold": 0, "above_threshold": 0, "errors": 0,
+                })
+            try:
+                result = strat.score(df, params, df_htf=df_htf, symbol=symbol)
+                if not isinstance(result, dict):
+                    continue
+                if sd is not None:
+                    sd["evaluated"] += 1
+                score = result.get("score", 0)
+                side  = result.get("side", "none")
+                if side == "none" or score <= 0:
+                    if sd is not None:
+                        sd["none"] += 1
+                    continue
+                if sd is not None:
+                    sd["proposed"] += 1
+                strat_threshold = float(
+                    (params or {}).get(strat.name, {}).get("score_threshold", threshold)
+                )
+                if score < strat_threshold:
+                    if sd is not None:
+                        sd["below_threshold"] += 1
+                    continue
+                if sd is not None:
+                    sd["above_threshold"] += 1
+                result = dict(result)
+                result.setdefault("name", strat.name)
+                out.append(result)
+            except Exception as e:
+                if sd is not None:
+                    sd["errors"] += 1
+                logger.error(f"[Engine] Erreur dans stratégie {strat.name} : {e}")
+        out.sort(key=lambda r: float(r.get("score") or 0), reverse=True)
+        return out

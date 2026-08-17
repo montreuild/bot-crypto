@@ -64,14 +64,18 @@ class DummyLongStrategy(BaseStrategy):
     """Stratégie factice qui émet toujours un signal LONG."""
     name = "dummy"
 
-    def score(self, df, params=None, df_htf=None):
+    def score(self, df, params=None, df_htf=None, symbol=""):
         if len(df) < 30:
             return {"side": "none", "score": 0}
         return {
             "side": "long", "score": 0.80,
-            "name": "dummy", "reason": "test",
+            "name": self.name, "reason": "test",
             "stop_hint": float(df["close"][-1]) * 0.97,
         }
+
+
+class DummyLongB(DummyLongStrategy):
+    name = "dummy_b"
 
 
 class TestBacktestResult:
@@ -243,6 +247,15 @@ class TestBacktester:
         result = bt.run(df, "BTC/USDC")
         # La stratégie émet des signaux → doit y avoir des trades
         assert result.total_trades >= 0  # peut être 0 si signaux filtrés
+
+    def test_b02_deux_strategies_ouvrent_en_parallele(self):
+        engine = Engine()
+        engine.register(DummyLongStrategy())
+        engine.register(DummyLongB())
+        bt = Backtester(engine, _cfg())
+        result = bt.run(_make_df(400), "BTC/USDC", "1h")
+        names = {t.get("strategy") for t in result.trades}
+        assert "dummy" in names and "dummy_b" in names
 
     def test_equity_curve_length(self):
         engine = Engine()

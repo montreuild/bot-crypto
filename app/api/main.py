@@ -21,6 +21,7 @@ import hmac
 import logging
 import os
 import socket
+import threading
 import time as _time
 
 # phase6-sklearn-removal : plus de warning sklearn à filtrer (sklearn supprimé
@@ -186,17 +187,12 @@ def prometheus_metrics(request: Request):
 # HTML** qui explique comment le démarrer + liens vers /api/docs.
 # Ça donne un retour visible à l'utilisateur au lieu d'un "site inaccessible".
 
-_frontend_reachable_cache: dict = {"ts": 0.0, "ok": False}
+_frontend_reachable_cache: dict = {"ts": 0.0, "ok": False, "refreshing": False}
 _FRONTEND_CHECK_TTL = 60.0  # cache 60s pour éviter un ping par request
+_frontend_ping_lock = threading.Lock()
 
 
-def _is_frontend_reachable() -> bool:
-    """Ping TCP rapide du frontend Next.js (cache 60s)."""
-    now = _time.monotonic()
-    if now - _frontend_reachable_cache["ts"] < _FRONTEND_CHECK_TTL:
-        return _frontend_reachable_cache["ok"]
-
-    # Parse host + port depuis FRONTEND_URL
+def _probe_frontend() -> bool:
     try:
         from urllib.parse import urlparse
         parsed = urlparse(FRONTEND_URL)
@@ -204,17 +200,32 @@ def _is_frontend_reachable() -> bool:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
     except Exception:
         host, port = "localhost", 3000
-
-    ok = False
     try:
-        with socket.create_connection((host, port), timeout=1.0):
-            ok = True
+        with socket.create_connection((host, port), timeout=0.2):
+            return True
     except (OSError, socket.timeout):
-        ok = False
+        return False
 
-    _frontend_reachable_cache["ts"] = now
-    _frontend_reachable_cache["ok"] = ok
-    return ok
+
+def _refresh_frontend_reachable() -> None:
+    try:
+        ok = _probe_frontend()
+        _frontend_reachable_cache["ts"] = _time.monotonic()
+        _frontend_reachable_cache["ok"] = ok
+    finally:
+        _frontend_reachable_cache["refreshing"] = False
+
+
+def _is_frontend_reachable() -> bool:
+    """A-13 : ne bloque plus la boucle — ping en thread, dernière valeur connue."""
+    now = _time.monotonic()
+    if now - _frontend_reachable_cache["ts"] < _FRONTEND_CHECK_TTL:
+        return _frontend_reachable_cache["ok"]
+    with _frontend_ping_lock:
+        if not _frontend_reachable_cache["refreshing"]:
+            _frontend_reachable_cache["refreshing"] = True
+            threading.Thread(target=_refresh_frontend_reachable, daemon=True).start()
+    return _frontend_reachable_cache["ok"]
 
 
 def _route_frontend_or_help(path: str):

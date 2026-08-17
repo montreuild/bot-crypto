@@ -26,8 +26,8 @@
 
 | # | Sévérité | Titre | Fichier | État au 18/08 |
 |---|----------|-------|---------|---------------|
-| D-01 | 🟠 Majeur | La bougie en formation est persistée dans le cache Parquet | `core/candle_store.py` vs `live/ohlcv_cache.py:128` | ouvert |
-| D-02 | 🟠 Majeur | `unique("time")` sans `keep` : la version conservée n'est pas déterministe | `core/candle_store.py:214,262` | ouvert |
+| D-01 | 🟠 Majeur | La bougie en formation est persistée dans le cache Parquet | `core/candle_store.py` vs `live/ohlcv_cache.py:128` | ✅ résolu — `drop_forming_candle` avant save |
+| D-02 | 🟠 Majeur | `unique("time")` sans `keep` : la version conservée n'est pas déterministe | `core/candle_store.py:214,262` | ✅ résolu — `keep=last` incrémental, `keep=first` historique |
 | D-03 | 🟡 Moyen | Aucune détection de trou à l'écriture, seulement à la lecture par l'API | `api/helpers.py:168-187` | ouvert |
 | D-04 | 🟡 Moyen | 386 Mo de features en cache sans politique d'éviction ni versionnage | `core/feature_store.py` | ouvert |
 | D-05 | 🟡 Moyen | `oos_tracker.json` réécrit intégralement par slot | `core/oos_tracker.py` | ouvert |

@@ -16,7 +16,7 @@ import polars as pl
 
 from app.core.config import DATA_ROOT
 from app.core.singleton import lazy_singleton
-from app.core.timeframes import TF_SECONDS
+from app.core.timeframes import TF_MS, TF_SECONDS
 
 OHLCV_DIR = os.path.join(DATA_ROOT, "ohlcv")
 
@@ -125,6 +125,31 @@ def _valid_bars(df: pl.DataFrame, exchange, symbol: str) -> pl.DataFrame:
         valid = valid & (pl.col("volume") > 0)
     return df.filter(valid).drop_nulls()
 
+
+def drop_forming_candle(df: pl.DataFrame, tf: str,
+                        now_ms: Optional[int] = None) -> pl.DataFrame:
+    """D-01 : retire la dernière barre si elle n'est pas encore close.
+
+    Une ouverture ``t`` couvre ``[t, t+Δ)``. Persistée, son close provisoire
+    empoisonne les backtests suivants. No-op si TF inconnu ou s'il ne resterait
+    plus aucune barre.
+    """
+    tf_ms = TF_MS.get(tf)
+    if not tf_ms or df is None or df.height <= 1:
+        return df
+    try:
+        last_ms = epoch_ms(df["time"][-1])
+        if last_ms is None:
+            return df
+        now = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        # Forming = now est DANS [t, t+Δ). Une barre future (fixtures de
+        # test, horloge en retard) ou déjà close n'est pas élaguée.
+        if last_ms <= now < last_ms + tf_ms:
+            return df.head(df.height - 1)
+    except Exception as e:
+        logger.debug(f"[CandleStore] élagage bougie en formation {tf} KO : {e}")
+    return df
+
 # Schéma Parquet — time stocké en ms pour cohérence avec ccxt
 _OHLCV_SCHEMA = {
     "time":   pl.Datetime("ms"),
@@ -194,7 +219,7 @@ class CandleStore:
                     f"[CandleStore] {symbol}/{tf} — cache suffisant "
                     f"({len(df_cached)} ≥ {total} bougies), aucun appel à l'exchange"
                 )
-                return df_cached.tail(total)
+                return drop_forming_candle(df_cached.tail(total), tf)
 
             # Fetch incrémental ou complet
             bootstrapped_deep = False
@@ -211,9 +236,10 @@ class CandleStore:
             if new_raw:
                 df_new    = self._raw_to_df(new_raw)
                 df_merged = _valid_bars(
-                    pl.concat([df_cached, df_new]).unique("time").sort("time"),
+                    pl.concat([df_cached, df_new]).unique("time", keep="last").sort("time"),
                     exchange, symbol,
                 )
+                df_merged = drop_forming_candle(df_merged, tf)
                 self._save(path, df_merged)
                 df_cached = df_merged
                 logger.debug(
@@ -259,9 +285,10 @@ class CandleStore:
                     n_before  = len(df_cached)
                     df_old    = self._raw_to_df(old_raw)
                     df_merged = _valid_bars(
-                        pl.concat([df_cached, df_old]).unique("time").sort("time"),
+                        pl.concat([df_cached, df_old]).unique("time", keep="first").sort("time"),
                         exchange, symbol,
                     )
+                    df_merged = drop_forming_candle(df_merged, tf)
                     self._save(path, df_merged)
                     df_cached = df_merged
                     self._forget_exhausted(symbol, tf)
@@ -288,7 +315,7 @@ class CandleStore:
         if len(df_cached) == 0:
             return None
 
-        result = df_cached.tail(total)
+        result = drop_forming_candle(df_cached.tail(total), tf)
         return result if len(result) >= 1 else None
 
     def load_cached(self, symbol: str, tf: str) -> pl.DataFrame:

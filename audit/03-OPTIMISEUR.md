@@ -26,11 +26,11 @@
 | O-06 | 🟠 Majeur | `seed=0` figé : deux campagnes explorent exactement le même chemin | `optimizer_search.py:650` | ✅ résolu — `optimizer.seed` (défaut `None`) |
 | O-07 | 🟠 Majeur | `n_trials` du Deflated Sharpe ≠ nombre d'essais réellement joués | `auto_optimizer.py:531` | ✅ **résolu** — `result.get("n_trials")` (`auto_optimizer.py:626`) |
 | O-08 | 🟡 Moyen | Early stop sur le score OOS : arrêt d'autant plus précoce que le bruit est fort | `optimizer_search.py:786-805` | ✅ résolu — jamais avant la moitié du budget |
-| O-09 | 🟡 Moyen | `overfitting_ratio` inopérant sur les scores négatifs | `opt_scoring.py:141-147` | ouvert |
+| O-09 | 🟡 Moyen | `overfitting_ratio` inopérant sur les scores négatifs | `opt_scoring.py:141-147` | ✅ déjà en place — `NaN` si IS ou OOS ≤ 0 |
 | O-10 | 🟡 Moyen | Modèle ML final entraîné sur IS+OOS par défaut | `auto_optimizer.py:642-644` | ✅ résolu — `is_only` par défaut |
 | O-11 | 🟡 Moyen | Un trial en timeout est silencieusement ignoré, pas rejoué | `optimizer_search.py:591-593` | ✅ résolu — rejoué in-process |
-| O-12 | 🔵 Mineur | `_perturb` peut ne rien perturber (`offsets` contient 0) | `optimizer_search.py:1104-1110` | ouvert |
-| O-13 | 🔵 Mineur | `_penalized_score` ne pénalise jamais un sur-apprentissage à score OOS négatif | `optimizer_search.py:311-312` | ouvert |
+| O-12 | 🔵 Mineur | `_perturb` peut ne rien perturber (`offsets` contient 0) | `optimizer_search.py:1104-1110` | ✅ résolu — toujours un voisin distinct |
+| O-13 | 🔵 Mineur | `_penalized_score` ne pénalise jamais un sur-apprentissage à score OOS négatif | `optimizer_search.py:311-312` | ✅ déjà en place — pas de bonus si `oos ≤ 0` |
 
 > 18 août : N-01, N-02, N-03 traités. Voir [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
 

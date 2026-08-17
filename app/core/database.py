@@ -255,18 +255,21 @@ def init_db(url: str = "sqlite:///crypto_bot.db"):
 
 @contextmanager
 def session_scope(SessionLocal):
-    """Context manager garantissant la fermeture de la session en toutes circonstances.
+    """A-07 : commit en sortie, rollback sur exception, puis fermeture.
 
-    Les fonctions de database.py (persist_open_position, save_trade, etc.) gèrent
-    elles-mêmes commit/rollback — session_scope se contente de fermer proprement.
-
-    Usage :
-        with session_scope(self.SessionLocal) as sess:
-            persist_open_position(sess, pos)
+    Les helpers (persist_open_position, save_trade, …) gardent ``commit=True``
+    par défaut pour les appelants hors scope. Un second ``commit()`` ici est
+    un no-op s'ils ont déjà commité ; un ``commit=False`` + ``sess.commit()``
+    (A-01) reste le chemin transactionnel unique.
     """
     session = SessionLocal()
+    session.expire_on_commit = False
     try:
         yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 

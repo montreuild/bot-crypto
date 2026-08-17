@@ -14,11 +14,11 @@
 | # | Sévérité | Titre | Fichier | État au 18/08 |
 |---|----------|-------|---------|---------------|
 | B-01 | 🔴 Critique | Les stops et TP sont remplis au niveau, jamais au gap | `backtest.py:928-944` | ✅ résolu — fill à l'open (`gap`) |
-| B-02 | 🔴 Critique | Une seule position à la fois : le backtest ne simule pas le portefeuille | `backtest.py:1611-1613` | 🔴 **reporté** |
+| B-02 | 🔴 Critique | Une seule position à la fois : le backtest ne simule pas le portefeuille | `backtest.py:1611-1613` | ✅ résolu — `positions` dict + `passing_signals` |
 | B-03 | 🟠 Majeur | Walk-forward : `timeframe` jamais transmis au `Backtester` | `walk_forward.py:103-104` | ✅ résolu |
 | B-04 | 🟠 Majeur | Walk-forward ne réoptimise rien — ce n'est pas un walk-forward | `walk_forward.py:82-110` | ✅ honnête — `kind: stability`, `reoptimizes: false` (pas de re-opt par fold) |
 | B-05 | 🟠 Majeur | `min_notional` vérifié avant `partial_fill`, jamais après | `backtest.py:1184-1210` | ✅ résolu |
-| B-06 | 🟠 Majeur | Le pyramidage ignore la courbe de dé-risquage et le circuit breaker | `backtest.py:1022-1050` | ouvert |
+| B-06 | 🟠 Majeur | Le pyramidage ignore la courbe de dé-risquage et le circuit breaker | `backtest.py:1022-1050` | ✅ résolu — `can_slot_trade` avant scale-in |
 | B-07 | 🟡 Moyen | `realistic_risk` désactivé par défaut : les circuit breakers ne sont jamais simulés | `backtest.py:563,581` | ✅ résolu — `True` sur opt / WF / FT |
 | B-08 | 🟡 Moyen | Aucun embargo entre IS et OOS | `core/is_oos.py:29-40` | ✅ résolu — `purge_bars` / `embargo_bars` |
 | B-09 | 🟡 Moyen | Trois constantes de warmup indépendantes (210 / 220 / 250) | 3 fichiers | ✅ résolu — `WARMUP_BARS_DEFAULT` |

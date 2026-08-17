@@ -5,7 +5,7 @@
 > Révision intermédiaire du 17 août :
 > [`13-REVISION-2026-08-17.md`](13-REVISION-2026-08-17.md).
 >
-> Les dix corrections du §3 sont **faites** sauf **B-02** (reporté).
+> Les dix corrections du §3 sont **faites**, y compris **B-02**.
 > N-01 à N-04 sont traités. O-05 sans retour de scikit-learn.
 
 **Dépôt** : `bot-crypto` — bot de trading algorithmique multi-stratégies
@@ -155,7 +155,7 @@ calcul.
 | F-02 | Sharpe calculé sur 1 à 3 observations — 104/158 runs à \|Sharpe\| > 10 | [Financier](01-FINANCIER.md) | ✅ **résolu** — `None` sous 10 obs. |
 | F-03 | `max_dd_p95` renvoie le meilleur drawdown, pas le pire | [Financier](01-FINANCIER.md) | ✅ **résolu** — percentile 5 |
 | B-01 | Stops et TP remplis au niveau, jamais au gap | [Backtest](02-BACKTEST.md) | ✅ **résolu** — fill à l'open si gap |
-| B-02 | Backtest mono-position : `RiskLedger` et concurrence jamais exercés | [Backtest](02-BACKTEST.md) | 🔴 **reporté** |
+| B-02 | Backtest mono-position : `RiskLedger` et concurrence jamais exercés | [Backtest](02-BACKTEST.md) | ✅ **résolu** — plusieurs slots, `passing_signals` |
 | O-01 | L'objectif d'optimisation **est** le score OOS | [Optimiseur](03-OPTIMISEUR.md) | 🟡 requalifié — alias `val_*` ajoutés |
 | O-02 | `beats_baseline` évalué sur la fenêtre de sélection | [Optimiseur](03-OPTIMISEUR.md) | ✅ **résolu** (PR #222) |
 | O-03 | Le gate walk-forward tourne sur les données de sélection | [Optimiseur](03-OPTIMISEUR.md) | ✅ **résolu** (PR #222) |

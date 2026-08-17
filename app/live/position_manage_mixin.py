@@ -85,15 +85,16 @@ class PositionManageMixin:
         if atr is None or atr <= 0:
             atr = price * 0.01  # fallback 1%
 
-        # Détection gap (prix franchit le stop de plus de 2%)
-        if pos["side"] == "long" and probe < pos["stop"] * 0.98:
+        # Détection gap (prix franchit le stop de plus que le seuil config)
+        _gap = float(self.cfg["trading"].get("gap_threshold", 0.02))
+        if pos["side"] == "long" and probe < pos["stop"] * (1.0 - _gap):
             logger.warning(
                 f"[Gap] {symbol} prix {price:.4f} < stop {pos['stop']:.4f} "
                 f"— clôture forcée"
             )
             self._close_position(pos_id, price, exit_reason="gap")
             return
-        if pos["side"] == "short" and probe > pos["stop"] * 1.02:
+        if pos["side"] == "short" and probe > pos["stop"] * (1.0 + _gap):
             logger.warning(
                 f"[Gap] {symbol} prix {price:.4f} > stop {pos['stop']:.4f} "
                 f"— clôture forcée"
