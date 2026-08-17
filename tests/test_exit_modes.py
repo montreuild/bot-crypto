@@ -65,6 +65,24 @@ def test_trailing_after_profit_pose_un_seuil_d_armement():
     assert perso["_trail_activate_r"] == pytest.approx(2.5)
 
 
+def test_les_modes_suiveurs_retirent_la_cible_fixe():
+    """Un mode qui laisse courir doit POSSÉDER la géométrie de sortie.
+
+    Mesuré : `smc_ml_edge` fixe `sl_atr_mult = tp_atr_mult = 2.5`, donc sa
+    cible tombe exactement à 1R. Le moteur testant la cible fixe AVANT les
+    cibles partielles, elle soldait toujours la position en entier et
+    `tp1_tp2_runner` rendait un backtest identique à `as_declared`, zéro jambe.
+    """
+    sig = _signal(tp_atr_mult=2.5, tp_hint=123.0)
+    for mode in ("trailing", "trailing_after_profit", "tp1_tp2_runner"):
+        out = apply_exit_mode(sig, mode)
+        assert out["tp_atr_mult"] is None, f"{mode} garde tp_atr_mult"
+        assert out["tp_hint"] is None, f"{mode} garde tp_hint"
+    # `sl_tp` la garde, évidemment : c'est tout son objet.
+    garde = apply_exit_mode(sig, "sl_tp")
+    assert garde["tp_atr_mult"] == 2.5
+
+
 def test_tp1_tp2_runner_laisse_un_reliquat():
     """Le runner EST le reliquat : des fractions qui somment à 1 ne laisseraient
     rien courir, ce qui viderait le mode de son sens."""

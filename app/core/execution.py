@@ -183,6 +183,17 @@ def apply_exit_mode(signal: dict, mode: str,
         out["disable_trailing"] = True
         return out
 
+    # ── Les trois modes suivants laissent courir : ils RETIRENT la cible fixe.
+    #
+    # Sans cela, le mode ne décide de rien. Mesuré : `smc_ml_edge` fixe
+    # `sl_atr_mult = tp_atr_mult = 2.5`, donc sa cible tombe exactement à 1R —
+    # pile où TP1 devrait se déclencher. Or le moteur teste la cible fixe AVANT
+    # les cibles partielles : elle soldait toujours la position en entier, et
+    # `tp1_tp2_runner` rendait un backtest rigoureusement identique à
+    # `as_declared`, zéro jambe partielle. Un mode qui promet de laisser courir
+    # un reliquat tout en gardant une cible à 1R se contredit lui-même.
+    _sans_cible_fixe(out)
+
     if mode == "trailing":
         out["exits"] = []
         out["disable_trailing"] = False
@@ -201,6 +212,17 @@ def apply_exit_mode(signal: dict, mode: str,
     out["disable_trailing"] = False
     out["be_after_partial"] = bool(p.get("be_after_partial", True))
     return out
+
+
+def _sans_cible_fixe(signal: dict) -> None:
+    """Retire la cible fixe du signal, en place.
+
+    Les deux chemins par lesquels une cible arrive au moteur : `tp_atr_mult`
+    (multiple d'ATR) et `tp_hint` (prix absolu). Les deux doivent partir, sinon
+    le mode continue d'être court-circuité par celui qui reste.
+    """
+    signal["tp_atr_mult"] = None
+    signal["tp_hint"] = None
 
 
 def plan_partial_targets(signal: dict, entry: float, stop: float) -> list:
