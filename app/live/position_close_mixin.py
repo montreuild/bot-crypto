@@ -380,7 +380,7 @@ class PositionCloseMixin:
     def _serialize_position(self, pos: dict) -> dict:
         upnl = 0.0
         try:
-            ticker = self._safe_ticker(pos["symbol"])
+            ticker = self._safe_ticker(pos["symbol"], allow_network=False)
             if ticker:
                 price = ticker.get("last", pos["entry"])
                 upnl  = (

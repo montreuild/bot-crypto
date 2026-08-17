@@ -555,6 +555,44 @@ class TestInteriorGaps:
         assert len(cached) == ex.depth
 
 
+def test_unique_keep_last_on_incremental_overlap():
+    """D-02 : la barre de recouvrement prend la version fraîche (close à jour)."""
+    import polars as pl
+
+    old = pl.DataFrame({
+        "time": [datetime(2024, 1, 1, 10), datetime(2024, 1, 1, 11)],
+        "open": [1.0, 2.0], "high": [1.0, 2.0], "low": [1.0, 2.0],
+        "close": [10.0, 20.0], "volume": [1.0, 1.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    new = pl.DataFrame({
+        "time": [datetime(2024, 1, 1, 11), datetime(2024, 1, 1, 12)],
+        "open": [2.0, 3.0], "high": [2.0, 3.0], "low": [2.0, 3.0],
+        "close": [21.0, 30.0], "volume": [1.0, 1.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    merged = pl.concat([old, new]).unique("time", keep="last").sort("time")
+    eleven = merged.filter(pl.col("time") == datetime(2024, 1, 1, 11))
+    assert eleven["close"][0] == 21.0
+
+
+def test_unique_keep_first_on_historical_overlap():
+    """D-02 : le backfill ne doit pas écraser une barre déjà en cache."""
+    import polars as pl
+
+    cached = pl.DataFrame({
+        "time": [datetime(2024, 1, 1, 11)],
+        "open": [2.0], "high": [2.0], "low": [2.0],
+        "close": [21.0], "volume": [1.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    older = pl.DataFrame({
+        "time": [datetime(2024, 1, 1, 10), datetime(2024, 1, 1, 11)],
+        "open": [1.0, 2.0], "high": [1.0, 2.0], "low": [1.0, 2.0],
+        "close": [10.0, 99.0], "volume": [1.0, 1.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    merged = pl.concat([cached, older]).unique("time", keep="first").sort("time")
+    eleven = merged.filter(pl.col("time") == datetime(2024, 1, 1, 11))
+    assert eleven["close"][0] == 21.0
+
+
 def test_fetch_range_approfondit_le_store_et_ne_rend_que_la_plage(tmp_path):
     """A-03 : le backfill vise la profondeur du store ; le backtest n'en voit
     que la fenêtre. Une plage de 3 jours ne doit pas empêcher d'aller chercher

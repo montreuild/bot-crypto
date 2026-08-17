@@ -314,6 +314,9 @@ class PositionOpenMixin:
         if self.cfg["trading"].get("paper_mode"):
             slip = self._paper_slippage_fraction(symbol, tf, notional)
             exec_price *= (1 + slip) if signal["side"] == "long" else (1 - slip)
+            # L-09 : le notionnel suit le prix slippé (sinon le ledger et
+            # le sizing restent sur le ticker pré-exécution).
+            notional = size * exec_price
         else:
             # Remplissage partiel : aligner la taille trackée sur la taille
             # réellement exécutée (sinon stops/PnL calculés sur une taille fausse).

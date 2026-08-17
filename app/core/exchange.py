@@ -10,58 +10,71 @@ import ccxt
 logger = logging.getLogger(__name__)
 MAX_RETRIES              = 4
 BASE_DELAY               = 2.0
+# A-04 : tickers / lecture informative — budget court (ne doit pas geler les stops).
+INFO_MAX_RETRIES         = 2
+INFO_BASE_DELAY          = 0.5
 # Après N erreurs réseau consécutives → reset complet de la session TCP
 RESET_AFTER_ERRORS       = 5
 # Délai max entre deux tentatives de reconnexion (cap exponentiel à 5 min)
 MAX_RECONNECT_DELAY      = 300.0
 
 
-def with_retry(fn: Callable) -> Callable:
-    """Retry avec backoff exponentiel pour les erreurs réseau/rate-limit."""
-    @functools.wraps(fn)
-    def wrapper(self_or_first, *args, **kwargs) -> Any:
-        # Permet d'utiliser le décorateur sur méthodes ET fonctions libres
-        instance = self_or_first if isinstance(self_or_first, RobustExchange) else None
+def with_retry(fn: Optional[Callable] = None, *,
+               max_retries: int = MAX_RETRIES,
+               base_delay: float = BASE_DELAY):
+    """Retry avec backoff exponentiel pour les erreurs réseau/rate-limit.
 
-        delay = BASE_DELAY
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                result = fn(self_or_first, *args, **kwargs)
-                # Succès → reset compteur d'erreurs consécutives
-                if instance is not None:
-                    instance._consecutive_errors = 0
-                return result
-            except ccxt.RateLimitExceeded:
-                wait = delay * (2 ** (attempt - 1))
-                logger.warning(f"[Exchange] Rate limit — pause {wait:.0f}s ({attempt}/{MAX_RETRIES})")
-                time.sleep(wait)
-            except (ccxt.NetworkError, ccxt.RequestTimeout) as e:
-                if instance is not None:
-                    instance._consecutive_errors += 1
-                    # Déclenchement du reset de session après RESET_AFTER_ERRORS erreurs
-                    if instance._consecutive_errors >= RESET_AFTER_ERRORS:
-                        logger.warning(
-                            f"[Exchange] {instance._consecutive_errors} erreurs consécutives — "
-                            f"reset de la session TCP…"
-                        )
-                        instance._reconnect()
-                if attempt == MAX_RETRIES:
-                    logger.error(f"[Exchange] Erreur réseau définitive : {e}")
+    ``@with_retry`` (ordres, OHLCV) : 4 essais, 2 s → jusqu'à ~30 s.
+    ``@with_retry(max_retries=2, base_delay=0.5)`` (tickers, A-04) : ~1,5 s.
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(self_or_first, *args, **kwargs) -> Any:
+            instance = self_or_first if isinstance(self_or_first, RobustExchange) else None
+            delay = base_delay
+            for attempt in range(1, max_retries + 1):
+                try:
+                    result = func(self_or_first, *args, **kwargs)
+                    if instance is not None:
+                        instance._consecutive_errors = 0
+                    return result
+                except ccxt.RateLimitExceeded:
+                    wait = delay * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"[Exchange] Rate limit — pause {wait:.1f}s ({attempt}/{max_retries})"
+                    )
+                    time.sleep(wait)
+                except (ccxt.NetworkError, ccxt.RequestTimeout) as e:
+                    if instance is not None:
+                        instance._consecutive_errors += 1
+                        if instance._consecutive_errors >= RESET_AFTER_ERRORS:
+                            logger.warning(
+                                f"[Exchange] {instance._consecutive_errors} erreurs consécutives — "
+                                f"reset de la session TCP…"
+                            )
+                            instance._reconnect()
+                    if attempt == max_retries:
+                        logger.error(f"[Exchange] Erreur réseau définitive : {e}")
+                        raise
+                    wait = min(delay * (2 ** (attempt - 1)), MAX_RECONNECT_DELAY)
+                    logger.warning(
+                        f"[Exchange] Réseau KO — retry {attempt}/{max_retries} dans {wait:.1f}s"
+                    )
+                    time.sleep(wait)
+                except ccxt.AuthenticationError:
+                    logger.error("[Exchange] ❌ Authentification échouée — vérifier clés API.")
                     raise
-                wait = min(delay * (2 ** (attempt - 1)), MAX_RECONNECT_DELAY)
-                logger.warning(f"[Exchange] Réseau KO — retry {attempt}/{MAX_RETRIES} dans {wait:.0f}s")
-                time.sleep(wait)
-            except ccxt.AuthenticationError:
-                logger.error("[Exchange] ❌ Authentification échouée — vérifier clés API.")
-                raise
-            except ccxt.InsufficientFunds as e:
-                logger.error(f"[Exchange] ❌ Fonds insuffisants : {e}")
-                raise
-            except ccxt.ExchangeError as e:
-                logger.error(f"[Exchange] Erreur exchange : {e}")
-                raise
-        raise RuntimeError(f"Échec après {MAX_RETRIES} tentatives.")
-    return wrapper
+                except ccxt.InsufficientFunds as e:
+                    logger.error(f"[Exchange] ❌ Fonds insuffisants : {e}")
+                    raise
+                except ccxt.ExchangeError as e:
+                    logger.error(f"[Exchange] Erreur exchange : {e}")
+                    raise
+            raise RuntimeError(f"Échec après {max_retries} tentatives.")
+        return wrapper
+    if fn is not None:
+        return decorator(fn)
+    return decorator
 
 
 def _safe_float(x, default: Optional[float] = None) -> Optional[float]:
@@ -124,10 +137,10 @@ class RobustExchange:
     def fetch_ohlcv(self, symbol, timeframe, limit=100, since=None):
         return self._ex.fetch_ohlcv(symbol, timeframe, limit=limit, since=since)
 
-    @with_retry
+    @with_retry(max_retries=INFO_MAX_RETRIES, base_delay=INFO_BASE_DELAY)
     def fetch_ticker(self, symbol): return self._ex.fetch_ticker(symbol)
 
-    @with_retry
+    @with_retry(max_retries=INFO_MAX_RETRIES, base_delay=INFO_BASE_DELAY)
     def fetch_tickers(self, symbols=None): return self._ex.fetch_tickers(symbols)
 
     @with_retry

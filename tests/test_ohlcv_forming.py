@@ -3,6 +3,7 @@ import time
 
 import polars as pl
 
+from app.core.candle_store import drop_forming_candle
 from app.live.ohlcv_cache import OHLCVCache
 
 
@@ -54,6 +55,16 @@ def test_get_forming_range_returns_last_bar_high_low(monkeypatch):
     cache._exchange = None
     lo, hi = cache.get_forming_range("BTC/USDC", "1h")
     assert (lo, hi) == (99.0, 101.0)
+
+
+def test_drop_forming_candle_shared_drops_open_bar():
+    """D-01 : une seule fonction, utilisée par le store et le cache live."""
+    now = int(time.time() * 1000)
+    hour = 3_600_000
+    df = _df([now - 2 * hour, now - hour, now])
+    out = drop_forming_candle(df, "1h", now_ms=now)
+    assert out.height == 2
+    assert int(out["time"][-1]) == now - hour
 
 
 def test_unknown_tf_is_noop():

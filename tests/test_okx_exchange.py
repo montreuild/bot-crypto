@@ -8,11 +8,25 @@ import pytest
 ccxt = pytest.importorskip("ccxt")
 
 from app.core.exchange import (  # noqa: E402 — après importorskip, exchange.py importe ccxt
+    INFO_BASE_DELAY,
+    INFO_MAX_RETRIES,
+    MAX_RETRIES,
     RobustExchange,
     create_exchange,
+    with_retry,
 )
 
 # ── Câblage des credentials (passphrase OKX) ─────────────────────────────────
+
+def test_ticker_retry_budget_is_shorter_than_orders():
+    """A-04 : un ticker ne doit pas dormir 30 s et geler les stops."""
+    assert INFO_MAX_RETRIES < MAX_RETRIES
+    assert INFO_BASE_DELAY < 2.0
+    @with_retry
+    def _ok(_self=None):
+        return 1
+    assert _ok(None) == 1
+
 
 def test_create_exchange_okx_wires_passphrase():
     cfg = {

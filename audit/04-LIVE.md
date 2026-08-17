@@ -19,7 +19,7 @@
 | L-06 | 🟠 Majeur | Plafond caché à 25 % du capital, sans motif de rejet (cf. F-12) | `balance_sync.py:196` | ✅ résolu |
 | L-07 | 🟠 Majeur | Le jeton anti-spam est consommé avant les 7 autres contrôles (cf. F-11) | `risk_gate.py:297` | ✅ résolu — après fill |
 | L-08 | 🟡 Moyen | Fenêtre non atomique entre l'ordre exchange et la persistance | `position_open_mixin.py:292-391` | ouvert |
-| L-09 | 🟡 Moyen | `notional` non recalculé après le slippage paper | `position_open_mixin.py:313-330` | ouvert |
+| L-09 | 🟡 Moyen | `notional` non recalculé après le slippage paper | `position_open_mixin.py:313-330` | ✅ résolu — `notional = size * exec_price` |
 | L-10 | 🟡 Moyen | Le log d'ouverture affiche un « Sizing = X % » qui n'agit sur rien | `position_open_mixin.py:414-422` | ouvert |
 | L-11 | 🟡 Moyen | `update_daily_stats` reçoit les frais de sortie seuls | `position_close_mixin.py:328` | ouvert |
 | L-12 | 🟡 Moyen | Le frein de volatilité est nommé « ATR BTC » mais alimenté autrement | `risk_gate.py:263` | ouvert |
