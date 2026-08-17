@@ -33,5 +33,30 @@ def test_drawdown_stats_still_present():
     assert 0.0 <= res["prob_ruin_10pct"] <= 100.0
 
 
+def _realized_max_dd_pct(pnls, initial_capital):
+    """Drawdown de la série d'origine — une permutation parmi d'autres."""
+    import numpy as np
+    equity = np.concatenate([[initial_capital], initial_capital + np.cumsum(pnls)])
+    peak = np.maximum.accumulate(equity)
+    dd = (equity - peak) / np.where(peak > 0, peak, 1) * 100
+    return abs(float(dd.min()))
+
+
+def test_max_dd_p95_is_the_adverse_tail_not_the_best_case():
+    """F-03 : max_dd_p95 est un quantile de risque, donc ≥ au DD réalisé.
+
+    L'ancien calcul prenait le 95ᵉ percentile de drawdowns *négatifs* — le
+    meilleur cas — puis ``abs()``. Sur 145/155 slots persistés, le p95 publié
+    était *inférieur* au drawdown réellement observé.
+    """
+    pnls = [50, -30, 20, -10, 40, -25, 15, -8, 12, -18]
+    capital = 1000.0
+    realized = _realized_max_dd_pct(pnls, capital)
+    res = MonteCarlo(n_runs=500).run(_trades(pnls), capital)
+    assert "error" not in res
+    assert res["max_dd_p95"] >= realized
+    assert res.get("mc_version") == 2
+
+
 def test_no_trades_error():
     assert "error" in MonteCarlo().run([], 1000.0)
