@@ -15,7 +15,7 @@
 | A-02 | 🟠 Majeur | Routes de calcul lourd exécutées dans le threadpool FastAPI | `routes/backtest.py:284`, `routes/replay.py`, `routes/scanner.py` | ouvert |
 | A-03 | 🟠 Majeur | Un backtest par plage de dates charge 50 000 bougies en mémoire | `routes/backtest.py` (branche `use_date_range`) | ✅ résolu — `fetch_range` : backfill profondeur store, lecture filtrée |
 | A-04 | 🟠 Majeur | `with_retry` bloque le thread jusqu'à 30 s par appel | `core/exchange.py:14-64` | ✅ résolu — tickers 2×0,5 s + cache ; API sans réseau |
-| A-05 | 🟡 Moyen | Réponse `/api/backtest` non bornée (OHLCV + trades + folds) | `routes/backtest.py`, `walk_forward.py:126` | ouvert |
+| A-05 | 🟡 Moyen | Réponse `/api/backtest` non bornée (OHLCV + trades + folds) | `routes/backtest.py`, `walk_forward.py:126` | ✅ atténué — OHLCV ~4k pts, folds sans trades |
 | A-06 | 🟡 Moyen | Rate limiting par IP du pair TCP : un seul seau derrière nginx | `api/state.py:32` | ✅ résolu — = S-02, `TRUSTED_PROXIES` |
 | A-07 | 🟡 Moyen | `session_scope` ne gère ni commit ni rollback | `core/database.py` | ✅ résolu — commit / rollback |
 | A-08 | 🟡 Moyen | `entry_time` est reconstruit, pas mesuré | `core/database.py` (`save_trade`) | ✅ résolu — `open_time` / ISO, crypto et actions |

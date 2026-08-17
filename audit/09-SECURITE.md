@@ -16,7 +16,7 @@
 | S-02 | 🟡 Moyen | Rate limiting inopérant derrière un reverse proxy | `api/state.py:32` | ✅ résolu — même règle `TRUSTED_PROXIES` que l'auth |
 | S-03 | 🟡 Moyen | Clé API acceptée en query string du WebSocket | `routes/ws.py` | ✅ résolu — `ALLOW_WS_QUERY_KEY=1` seulement |
 | S-04 | 🟡 Moyen | Le cookie `api_key` ne porte `Secure` que sous condition | `frontend/src/app/api/[...path]/route.ts:103` | ✅ résolu — `x-forwarded-proto: https` |
-| S-05 | 🟡 Moyen | `notifications.crash_include_log` peut exfiltrer positions et soldes | `config/ops.yaml`, `deploy/notify-crash.py` | ouvert |
+| S-05 | 🟡 Moyen | `notifications.crash_include_log` peut exfiltrer positions et soldes | `config/ops.yaml`, `deploy/notify-crash.py` | ✅ atténué — caviardage pnl/size/capital |
 | S-06 | 🟡 Moyen | `mypy` configuré très permissif et absent de la CI | `mypy.ini`, `.github/workflows/ci.yml` | ouvert |
 | S-07 | 🔵 Mineur | Le handler global renvoie le type d'exception | `api/middleware.py:49` | ✅ résolu — `correlation_id` |
 | S-08 | 🔵 Mineur | 4 dépendances non épinglées sur 32 | `requirements.txt` | ouvert |

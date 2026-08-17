@@ -24,9 +24,9 @@
 | B-09 | 🟡 Moyen | Trois constantes de warmup indépendantes (210 / 220 / 250) | 3 fichiers | ✅ résolu — `WARMUP_BARS_DEFAULT` |
 | B-10 | 🟡 Moyen | Clôture de fin de série sans spread ni frais taker | `backtest.py:1643-1645` | ✅ résolu |
 | B-11 | 🟡 Moyen | `capital_before` incohérent après sorties partielles | `backtest.py:788-790` | ✅ résolu |
-| B-12 | 🔵 Mineur | `rejected_notional` agrège trois causes distinctes | `backtest.py:1154,1186,1202` | ouvert |
-| B-13 | 🔵 Mineur | Buy & Hold démarre au `close[warmup]`, le bot à `open[warmup+1]` | `backtest.py:1723` | ouvert |
-| B-14 | 🔵 Mineur | Walk-forward renvoie l'intégralité des trades de chaque fold | `walk_forward.py:126-127` | ouvert |
+| B-12 | 🔵 Mineur | `rejected_notional` agrège trois causes distinctes | `backtest.py:1154,1186,1202` | ✅ résolu — compteurs séparés |
+| B-13 | 🔵 Mineur | Buy & Hold démarre au `close[warmup]`, le bot à `open[warmup+1]` | `backtest.py:1723` | ✅ résolu — `open[warmup+1]` |
+| B-14 | 🔵 Mineur | Walk-forward renvoie l'intégralité des trades de chaque fold | `walk_forward.py:126-127` | ✅ résolu — résumé fold seulement |
 
 > Détail : [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
 

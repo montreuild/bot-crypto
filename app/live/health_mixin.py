@@ -197,8 +197,9 @@ class HealthMixin:
     @property
     def status(self) -> dict:
         risk      = self.risk.status_dict()
-        positions = [self._serialize_position(p) for p in self.open_positions.values()
-                     if not p.get("_reserved")]
+        with self._positions_lock:
+            _snap = [p for p in self.open_positions.values() if not p.get("_reserved")]
+        positions = [self._serialize_position(p) for p in _snap]
 
         now = time.time()
         if (self._status_db_cache is None

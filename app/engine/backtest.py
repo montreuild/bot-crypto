@@ -1307,6 +1307,7 @@ class Backtester:
 
         stop_dist    = abs(exec_price - stop)
         if stop_dist <= 0:
+            diag["rejected_stop"] = diag.get("rejected_stop", 0) + 1
             diag["rejected_notional"] += 1
             self.rejections.record("stop_invalide", symbol=ctx.symbol)
             return None
@@ -1338,6 +1339,7 @@ class Backtester:
         notional = _floor_to(size * exec_price, 4)
 
         if size <= 0:
+            diag["rejected_size"] = diag.get("rejected_size", 0) + 1
             diag["rejected_notional"] += 1
             self.rejections.record("notionnel_min", symbol=ctx.symbol)
             return None
@@ -1350,6 +1352,7 @@ class Backtester:
         # tradant des fractions de titre. No-op en crypto (lot_size = 0).
         q_size = _quantize_size(size, self._venue)
         if q_size <= 0:
+            diag["rejected_venue"] = diag.get("rejected_venue", 0) + 1
             diag["rejected_notional"] += 1
             self.rejections.record("venue", symbol=ctx.symbol)
             logger.debug(
@@ -1363,6 +1366,7 @@ class Backtester:
         # et quantification), comme RiskLedger.reserve côté live.
         min_notional = self._min_notional()
         if notional < min_notional:
+            diag["rejected_min_notional"] = diag.get("rejected_min_notional", 0) + 1
             diag["rejected_notional"] += 1
             self.rejections.record("notionnel_min", symbol=ctx.symbol)
             logger.debug(
@@ -1936,7 +1940,12 @@ class Backtester:
         try:
             if len(df) <= warmup:
                 return result
-            first_price = float(df["close"][warmup])
+            # B-13 : même première barre que le bot (entrée à l'open warmup+1).
+            # Repli sur close[warmup] si la colonne open manque (tests unitaires).
+            if "open" in df.columns and warmup + 1 < len(df):
+                first_price = float(df["open"][warmup + 1])
+            else:
+                first_price = float(df["close"][warmup])
             last_price  = float(df["close"][-1])
             if first_price <= 0:
                 return result
