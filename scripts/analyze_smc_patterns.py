@@ -197,7 +197,10 @@ def main() -> int:
     p.add_argument("--fenetre-transitions", type=int, default=12,
                    help="fenêtre des transitions, en barres (défaut 12)")
     p.add_argument("--fenetre-composes", type=int, default=12,
-                   help="fenêtre des composés, en barres du TF le plus bas (défaut 12)")
+                   help="fenêtre des composés, en barres du TF le plus bas "
+                        "(défaut 12). ⚠ le coût de l'énumération à 3 maillons "
+                        "croît en carré : sur 4 TF, commencer à 4 "
+                        "(cf. docs/MESURE_PATTERNS_SMC.md §5 bis)")
     p.add_argument("--sortie", type=Path, default=Path("research/smc_patterns"),
                    help="répertoire de sortie (défaut research/smc_patterns)")
     p.add_argument("--sans-ecriture", action="store_true",

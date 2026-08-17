@@ -15,6 +15,7 @@ import numpy as np
 import polars as pl
 
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
+from app.core.execution import apply_exit_mode as _apply_exit_mode
 from app.core.execution import close_pnl as _close_pnl
 from app.core.execution import cost_model as _cost_model
 from app.core.execution import format_cost_model as _format_cost_model
@@ -609,6 +610,11 @@ class Backtester:
         self.slippage_model = str(bcfg.get("slippage_model", "static"))
         self.slippage_k     = float(bcfg.get("slippage_k", 1.0))
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
+        # Mode de sortie GÉNÉRIQUE appliqué à toutes les stratégies (§5).
+        # `as_declared` = la stratégie garde la main, donc aucun backtest
+        # existant ne change tant que personne ne demande autre chose.
+        self.exit_mode = str(bcfg.get("exit_mode", "as_declared"))
+        self.exit_mode_params = dict(bcfg.get("exit_mode_params") or {})
         # S12 : `backtest.max_notional_pct` est supprimé — le plafond notionnel
         # s'exprime sur l'enveloppe du slot × levier (§2.2), la bonne base.
         # G2 : venue de l'instrument backtesté (quantification des tailles,
@@ -984,6 +990,16 @@ class Backtester:
         # le stop reste fixe (V4 standalone style : SL = entry ∓ 1.5×ATR).
         _tr = (None if position.get("disable_trailing")
                else position.get("_trailing"))
+        # §5 — armement différé : tant que le profit courant n'atteint pas
+        # `_trail_activate_r` fois le risque initial, on laisse le stop initial
+        # tranquille. Resserrer trop tôt est ce qui coupait les positions avant
+        # leur cible (cf. docs/STRATEGY_SMC_ML_EDGE.md §4).
+        _act_r = position.get("_trail_activate_r")
+        if _tr and _act_r is not None:
+            _risque = abs(entry - position.get("planned_stop", stop))
+            _profit = (c_close - entry) if side == "long" else (entry - c_close)
+            if _risque <= 0 or _profit < float(_act_r) * _risque:
+                _tr = None
         if _tr:
             lo20 = ctx.low_arr[max(0, i - 19):i + 1].tolist()
             hi20 = ctx.high_arr[max(0, i - 19):i + 1].tolist()
@@ -1052,6 +1068,12 @@ class Backtester:
         return position
 
     def _try_enter(self, ctx, signal: dict, i: int):
+        # Le mode du signal l'emporte sur celui de la config : une stratégie
+        # qui sait ce qu'elle fait garde le dernier mot, comme partout ailleurs
+        # dans la résolution de paramètres.
+        _mode = str(signal.get("exit_mode") or self.exit_mode)
+        if _mode != "as_declared":
+            signal = _apply_exit_mode(signal, _mode, self.exit_mode_params)
         """Tente d'ouvrir une position depuis un signal accepté : stop/TP
         initiaux, sizing par risque (cap notional, size_factor, partial fill),
         frais d'entrée. Retourne le dict position ou None si rejeté."""
@@ -1281,6 +1303,9 @@ class Backtester:
             "size_initial":    round(size, 6),
             "_targets":        _plan_partial_targets(signal, exec_price, stop),
             "be_after_partial": bool(signal.get("be_after_partial", True)),
+            # §5 — `trailing_after_profit` : le suiveur reste au repos tant que
+            # le trade n'a pas fait ses preuves (cf. `_manage_open_position`).
+            "_trail_activate_r": signal.get("_trail_activate_r"),
         }
         diag["trades_opened"] += 1
         diag["last_trade_bar"] = i

@@ -40,6 +40,43 @@ passaient le gate — c'était un artefact de taille d'échantillon.
 
 Aucun `optimizer_results` n'est modifié : appliquer un paramétrage est une
 décision de trading. Détail : `docs/RECALIBRATION_HTF.md`.
+### 🚪 Modes de sortie génériques, réutilisables par toutes les stratégies
+
+Chaque stratégie déclarait sa gestion de sortie à la main, par un assemblage de
+champs (`exits`, `disable_trailing`, `trail_override`, `be_after_partial`).
+Comparer deux stratégies revenait donc à comparer **aussi** deux gestions de
+position, sans pouvoir dire laquelle expliquait l'écart — le dossier
+`smc_ml_edge` a buté exactement là-dessus, le coupable étant un stop trop serré
+et non le signal.
+
+Quatre modes nommés, sélectionnables par `backtest.exit_mode` ou par
+`signal["exit_mode"]` (le signal l'emporte, comme partout ailleurs) :
+
+| mode | comportement |
+|---|---|
+| `as_declared` | **défaut** — ne touche à rien |
+| `sl_tp` | stop et cible fixes, aucun suivi |
+| `trailing` | suiveur actif dès l'entrée |
+| `trailing_after_profit` | suiveur armé seulement au-delà de `trail_activate_r` × R |
+| `tp1_tp2_runner` | 25 % à 1R, 25 % à 2R, reliquat en suiveur, point mort après la 1ʳᵉ jambe |
+
+Les modes se **composent des primitives existantes** — `plan_partial_targets`,
+`TrailingStopManager`, `be_after_partial` étaient déjà là. Seul
+`trailing_after_profit` demandait du neuf : un garde explicite qui laisse le
+stop initial tranquille tant que le profit n'atteint pas le seuil. Resserrer
+trop tôt est précisément ce qui coupait les positions avant leur cible.
+
+**Le défaut est inerte, et c'est testé** : `as_declared` produit un backtest
+identique au bit près à une configuration sans la clé. Brancher ce mécanisme
+n'invalide aucune mesure publiée.
+
+Un mode inconnu lève au lieu d'être ignoré : une faute de frappe dans un YAML
+doit se voir, pas produire un backtest dont on croit qu'il teste autre chose.
+
+Défini dans `app/core/execution.py`, donc **partagé backtest ↔ live** : deux
+définitions divergentes des mêmes sorties feraient diverger les deux chemins
+dès le premier TP partiel.
+
 
 ### 🔬 Bas timeframes et actions — et un témoin qui évite une fausse annonce
 
