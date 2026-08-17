@@ -167,9 +167,10 @@ class BacktestResult:
     def __init__(self, trades: List[dict], equity_curve: List[float],
                  initial_capital: float, timestamps: List[str] = None,
                  timeframe: str = "1d", rejections: dict = None,
-                 n_bars: int = 0):
+                 n_bars: int = 0, equity_mtm: List[float] = None):
         self.trades          = trades
         self.equity_curve    = equity_curve
+        self.equity_mtm      = equity_mtm or []
         self.initial_capital = initial_capital
         self.timestamps      = timestamps or []
         self._timeframe      = timeframe
@@ -210,10 +211,17 @@ class BacktestResult:
         self.final_equity = self.equity_curve[-1] if self.equity_curve else self.initial_capital
 
         eq = np.array(self.equity_curve, dtype=float)
-        if len(eq) > 1:
-            peak              = np.maximum.accumulate(eq)
-            drawdowns         = (eq - peak) / np.where(peak > 0, peak, 1.0) * 100
+        # F-06 : le drawdown se lit sur l'équité mark-to-market (un point
+        # par barre), pas sur la courbe par trade qui ignore les pertes
+        # latentes.
+        eq_dd = np.array(self.equity_mtm, dtype=float) if len(self.equity_mtm) > 1 else eq
+        if len(eq_dd) > 1:
+            peak              = np.maximum.accumulate(eq_dd)
+            drawdowns         = (eq_dd - peak) / np.where(peak > 0, peak, 1.0) * 100
             self.max_drawdown = _sf(float(drawdowns.min()), 0.0)
+        else:
+            self.max_drawdown = 0.0
+        if len(eq) > 1:
             returns           = np.diff(eq) / np.where(eq[:-1] > 0, eq[:-1], 1.0)
             std               = float(returns.std())
             # Annualisation à la cadence RÉELLE de la série. `equity_curve` a un
@@ -233,7 +241,6 @@ class BacktestResult:
                 raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
                 self.sharpe       = _sf(raw_sharpe, 0.0)
         else:
-            self.max_drawdown = 0.0
             self.sharpe       = None
 
         self.avg_win  = _sf(float(np.mean(wins)),   0.0) if wins   else 0.0
@@ -1550,6 +1557,7 @@ class Backtester:
         # live trader — garantit la cohérence backtest/live.
         trades       = []
         equity_curve = [capital]
+        equity_mtm   = [capital]
         timestamps   = [str(df["time"][0]) if "time" in df.columns else "0"]
         position     = None
         trade_id     = 0
@@ -1671,6 +1679,17 @@ class Backtester:
                 f"vol_brake={self._risk_gate.volatility_threshold:.1%})"
             )
 
+        def _mark_mtm(bar_i: int) -> None:
+            # F-06 : équité mark-to-market à chaque barre — le drawdown
+            # ne voit plus seulement les clôtures.
+            u = 0.0
+            if position is not None:
+                _e = float(position.get("entry") or 0.0)
+                _sz = float(position.get("size") or 0.0)
+                _c = float(close_arr[bar_i])
+                u = ((_e - _c) if position.get("side") == "short" else (_c - _e)) * _sz
+            equity_mtm.append(round(ctx.capital + u, 4))
+
         for i in range(warmup, len(df) - 1):
             diag["bars_total"] += 1
             # QW-6 — alimenter le volatility brake AVANT toute décision de la
@@ -1743,6 +1762,7 @@ class Backtester:
             # ── Gestion de la position ouverte ────────────────────────────────
             if position is not None:
                 position = self._manage_open_position(ctx, position, i)
+                _mark_mtm(i)
                 continue
 
             # ── Cherche un signal ─────────────────────────────────────────────
@@ -1756,6 +1776,7 @@ class Backtester:
                 _bars_since_signal += 1
                 if _bars_since_signal > diag["max_bars_no_signal"]:
                     diag["max_bars_no_signal"] = _bars_since_signal
+                _mark_mtm(i)
                 continue
 
             diag["signal_accepted"] += 1
@@ -1766,6 +1787,7 @@ class Backtester:
                 f"{signal.get('side')} score={signal.get('score', 0):.3f}"
             )
             position = self._try_enter(ctx, signal, i)
+            _mark_mtm(i)
 
         capital                = ctx.capital
         trade_id               = ctx.trade_id
@@ -1784,6 +1806,7 @@ class Backtester:
                            append_ts=False, ref_price=_eod)
             position = None
             capital  = ctx.capital
+            equity_mtm.append(round(capital, 4))
 
         # Finalise les compteurs de fin de boucle : si la dernière position
         # a été fermée à l'avant-dernière barre, la transition est déjà
@@ -1827,7 +1850,8 @@ class Backtester:
                                 # Durée réelle du run : les bougies parcourues,
                                 # hors warmup. Indispensable à toute
                                 # annualisation (cf. BacktestResult._years).
-                                n_bars=max(0, len(df) - warmup))
+                                n_bars=max(0, len(df) - warmup),
+                                equity_mtm=equity_mtm)
         result.diagnostics = diag
         result.ml_info = ml_info
         # §5 — le mode de sortie appliqué fait partie du contexte qui produit le

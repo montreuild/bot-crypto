@@ -277,7 +277,8 @@ class OptimizerSearchEngine:
         # priorité supérieure et avalerait silencieusement les params du trial.
         if self.strategy_name in cfg.get("optimizer_results", {}):
             del cfg["optimizer_results"][self.strategy_name]
-        bt  = Backtester(eng, cfg, cancel_event=self._cancel_event, ml_mode=self.ml_mode)
+        bt  = Backtester(eng, cfg, cancel_event=self._cancel_event,
+                         ml_mode=self.ml_mode, realistic_risk=True)
 
         # Essai évalué DANS ce process (n_jobs<=1, tests, repli après
         # BrokenProcessPool) : aucune variable d'environnement ne le signale à

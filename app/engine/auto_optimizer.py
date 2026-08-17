@@ -307,7 +307,7 @@ def _run_baseline(strategy_name: str, cfg: dict,
         mod = importlib.import_module(f"app.strategies.{strategy_name}")
         eng = Engine()
         eng.register(mod.Strategy())
-        bt  = Backtester(eng, cfg)
+        bt  = Backtester(eng, cfg, realistic_risk=True)
         # timeframe transmis pour que resolve_strategy_params superpose
         # optimizer_results[tf] : le baseline reflète ainsi le paramétrage
         # RÉELLEMENT actif (params: + optimizer_results), comme le live/comparatif,

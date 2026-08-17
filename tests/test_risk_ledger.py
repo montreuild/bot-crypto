@@ -67,6 +67,23 @@ class TestReserveOrderOfChecks:
         assert d.allowed is False
         assert d.reason_code == "notionnel_min"
 
+    def test_venue_notional_cap_rejects_second_symbol(self):
+        """F-05 : le notionnel agrégé de la venue est plafonné."""
+        ledger = RiskLedger()
+        env_a = _env(slot_key="a::1h::BTC/USDC", slot_envelope=400.0,
+                     symbol_envelope=400.0, venue_envelope=500.0,
+                     symbol_risk_budget=100.0, venue_risk_budget=100.0,
+                     max_leverage=1.0)
+        env_b = _env(slot_key="b::1h::ETH/USDC", symbol="ETH/USDC",
+                     slot_envelope=400.0, symbol_envelope=400.0,
+                     venue_envelope=500.0,
+                     symbol_risk_budget=100.0, venue_risk_budget=100.0,
+                     max_leverage=1.0)
+        assert ledger.reserve(env_a, risk=2.0, notional=400.0, pos_key="pa").allowed
+        d = ledger.reserve(env_b, risk=2.0, notional=400.0, pos_key="pb")
+        assert d.allowed is False
+        assert d.reason_code == "enveloppe_venue"
+
     def test_valid_reservation_is_allowed(self):
         ledger = RiskLedger()
         env = _env()

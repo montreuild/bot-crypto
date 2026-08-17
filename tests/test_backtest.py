@@ -124,6 +124,17 @@ class TestBacktestResult:
         r = self._make_result([100, -200, 50])
         assert r.max_drawdown < 0
 
+    def test_mtm_drawdown_sees_latent_loss(self):
+        """F-06 : une position qui descend puis remonte laisse une trace."""
+        capital = 1000.0
+        # Courbe par trade : seulement +10 à la clôture → DD nul.
+        trades = [{"status": "closed", "pnl": 10.0, "fees": 0.1}]
+        equity_curve = [1000.0, 1010.0]
+        # MTM : 1000 → 960 → 1010 (perte latente de 4 %).
+        equity_mtm = [1000.0, 960.0, 1010.0]
+        r = BacktestResult(trades, equity_curve, capital, equity_mtm=equity_mtm)
+        assert r.max_drawdown < -3.0
+
     def test_expectancy(self):
         r = self._make_result([10, 10, -5])
         assert r.expectancy == pytest.approx(5.0)

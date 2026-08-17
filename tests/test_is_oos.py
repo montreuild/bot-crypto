@@ -37,6 +37,17 @@ def test_none_df():
     assert split_is_oos(None) == (None, None, 0)
 
 
+def test_purge_and_embargo_carve_the_boundary():
+    """B-08 : purge retire la fin de l'IS, embargo saute le début de l'OOS."""
+    df = _df(1000)
+    df_is, df_oos, split = split_is_oos(df, purge_bars=10, embargo_bars=5)
+    a, b, s = split_is_oos(df)
+    assert s == split
+    assert len(df_is) == len(a) - 10
+    assert len(df_oos) == len(b) - 5
+    assert float(df_is["close"][-1]) + 1 + 10 + 5 == float(df_oos["close"][0])
+
+
 def test_optimizer_imports_shared_fraction():
     from app.engine.optimizer_search import _OOS_FRACTION
     assert _OOS_FRACTION == OOS_FRACTION_DEFAULT

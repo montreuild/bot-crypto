@@ -40,11 +40,22 @@ sur le capital à l'ouverture). `Σ trade.pnl == final_equity − initial_capita
 et l'optimiseur / `composite_score` lisent `net_profit`. Les résultats
 persistés portent `schema_version` + `git_commit` (D-06).
 
-### 🐛 F-04 — plus d'emprunt fictif à levier 1
+### 🐛 F-04 — emprunt sur le notionnel réellement emprunté
 
-`Venue.effective_borrow_rate` rend 0 quand `max_leverage ≤ 1`. La venue
-par défaut (margin ×1) ne facture plus ~30 %/an de portage sur des fonds
-propres. ⚠️ change les backtests historiques (dans le sens favorable).
+Un **long** à levier 1 n'emprunte rien. Un **short** à levier 1 emprunte
+l'actif entier (le garde « taux = 0 si levier ≤ 1 » l'avait effacé à
+tort). Un long à levier L n'emprunte que `1 − 1/L` du notionnel.
+
+### 🐛 Suite du plan d'audit
+
+- **F-05** : plafond notionnel au niveau venue (`enveloppe_venue`).
+- **F-06** : drawdown calculé sur l'équité mark-to-market barre par barre.
+- **F-07** : gate Deflated Sharpe câblé sur la formule Bailey & LdP
+  (probabilité ∈ [0,1]), plus l'heuristique maison.
+- **B-07** : `realistic_risk=True` sur optimiseur, walk-forward, forward-test.
+- **B-08** : `purge_bars` / `embargo_bars` sur `split_is_oos` (défaut 0).
+- **L-03 / L-04** : reprise live — `fetch_positions` seulement en perp ;
+  un désaccord marque orphelin, ne supprime plus.
 
 ### 🐛 Alignement d'exécution backtest / paper / live
 

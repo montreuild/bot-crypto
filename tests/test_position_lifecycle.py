@@ -140,7 +140,10 @@ class TestOpen:
         assert _open(trader, symbol="ETH/USDC")[0] is True
         assert _open(trader, symbol="SOL/USDC")[0] is False
         assert len(trader.open_positions) == 2
-        assert trader.rejections.as_dict()["par_motif"].get("budget_venue") == 1
+        motifs = trader.rejections.as_dict()["par_motif"]
+        # F-05 : le plafond notionnel venue peut déclencher avant le budget
+        # de risque — les deux bornent la concurrence entre symboles.
+        assert motifs.get("enveloppe_venue", 0) + motifs.get("budget_venue", 0) == 1
 
     def test_rejected_order_raises_and_leaves_no_phantom_position(self, trader_exchange):
         """S0-02 : un ordre rejeté ne doit pas être traité comme une ouverture réussie."""

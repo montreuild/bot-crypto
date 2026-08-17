@@ -311,7 +311,7 @@ def _eval_worker(args: tuple) -> dict:
         if _w is not None:
             from app.core.indicators_precompute import set_wilder_atr_adx as _swaa
             _swaa(bool(_w))
-        _bt = _Backtester(_eng, _cfg_copy, ml_mode=_ml_mode)
+        _bt = _Backtester(_eng, _cfg_copy, ml_mode=_ml_mode, realistic_risk=True)
 
         _res_is  = _bt.run(_df_is,  symbol, timeframe=timeframe)
         _res_oos = _bt.run(_df_oos, symbol, timeframe=timeframe)

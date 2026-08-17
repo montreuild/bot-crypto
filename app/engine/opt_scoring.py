@@ -225,18 +225,21 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
     # calcul (Sharpe NaN, etc.), on n'échoue pas silencieusement : on logge
     # et on accepte (préserve la rétrocompatibilité — un gate trop strict
     # silencieux serait pire qu'un gate absent).
-    if n_trials and n_trials > 1 and min_deflated_sharpe is not None and min_deflated_sharpe > 0:
+    if (n_trials and n_trials > 1
+            and min_deflated_sharpe is not None and min_deflated_sharpe > 0
+            and oos_sharpe is not None):
         try:
-            from app.core.deflated_sharpe import is_deflated_sharpe_significant
-            ds_ok, ds_val, ds_reason = is_deflated_sharpe_significant(
-                sharpe_observed=float(oos_sharpe),
+            # F-07 : formule Bailey & López de Prado (probabilité ∈ [0,1]),
+            # plus l'heuristique maison de core/deflated_sharpe.py.
+            dsr = deflated_sharpe_ratio(
+                float(oos_sharpe),
+                n_observations=int(oos_trades),
                 n_trials=int(n_trials),
-                min_deflated_sharpe=float(min_deflated_sharpe),
             )
-            if not ds_ok:
-                return False, (f"Deflated Sharpe gate refusé : {ds_reason} "
-                               f"(DS={ds_val:.2f}, seuil={min_deflated_sharpe:.2f}, "
-                               f"n_trials={n_trials})")
+            if dsr < float(min_deflated_sharpe):
+                return False, (f"Deflated Sharpe gate refusé : DSR={dsr:.2f} "
+                               f"< seuil={min_deflated_sharpe:.2f} "
+                               f"(n_trials={n_trials})")
         except Exception as _ds_err:
             logger.warning(
                 f"[beats_baseline] Deflated Sharpe KO ({_ds_err}) — gate ignoré "
