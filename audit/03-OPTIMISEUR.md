@@ -9,28 +9,30 @@
 
 ## Tableau de bord
 
-> ⚠️ **Révisé le 17 août 2026.** La PR #222 a introduit une **troisième tranche
-> (holdout, 20 %)** qui résout O-02, O-03 et O-07, et requalifie O-01. Détail et
-> vérification dans [`13-REVISION-2026-08-17.md`](13-REVISION-2026-08-17.md).
-> Deux nouveaux constats portent sur ce correctif : **N-01** et **N-02**.
+> ⚠️ **Révisé le 17 puis le 18 août 2026.** La PR #222 a introduit une
+> **troisième tranche (holdout, 20 %)** qui résout O-02, O-03 et O-07, et
+> requalifie O-01. N-01 / N-02 / N-03, O-04, O-05 (sans sklearn), O-06,
+> O-08, O-10, O-11 : [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
 > Les sections ci-dessous décrivent l'état au 14 août, conservé comme trace du
 > raisonnement ; la colonne « État » donne la situation courante.
 
 | # | Sévérité | Titre | Fichier | État au 17/08 |
 |---|----------|-------|---------|---------------|
-| O-01 | 🔴→🟡 | L'objectif d'optimisation **est** le score OOS : il n'y a pas d'out-of-sample | `optimizer_search.py:305-313` | **requalifié** — le découpage à 3 tranches est en place ; reste que la tranche de sélection s'appelle encore `oos_*` |
+| O-01 | 🔴→🟡 | L'objectif d'optimisation **est** le score OOS : il n'y a pas d'out-of-sample | `optimizer_search.py:305-313` | **requalifié** — alias `val_*` / `best_val_*` à côté de `oos_*` |
 | O-02 | 🔴 Critique | Le gate de promotion est évalué sur la fenêtre qui a servi à sélectionner | `auto_optimizer.py:534-541` | ✅ **résolu** — gate sur holdout, variables réaffectées (`auto_optimizer.py:587-590`) |
 | O-03 | 🔴 Critique | Le gate walk-forward tourne sur les mêmes données que la sélection | `auto_optimizer.py:543-585` | ✅ **résolu** — reçoit `df_recherche` (cf. N-03 sur le nom) |
-| O-04 | 🟠 Majeur | L'optimiseur mesure sur 1 000 € quand le live dimensionne sur l'enveloppe du slot | `optimizer_search.py:274` | ouvert |
-| O-05 | 🟠 Majeur | Gel de paramètres décidé sur un dépistage sous-dimensionné | `optimizer_search.py:401-529` | atténué — `opt_budget.py` porte `smart_money` de 40 à 400 essais |
-| O-06 | 🟠 Majeur | `seed=0` figé : deux campagnes explorent exactement le même chemin | `optimizer_search.py:650` | ouvert |
+| O-04 | 🟠 Majeur | L'optimiseur mesure sur 1 000 € quand le live dimensionne sur l'enveloppe du slot | `optimizer_search.py:274` | ✅ résolu — enveloppe du slot |
+| O-05 | 🟠 Majeur | Gel de paramètres décidé sur un dépistage sous-dimensionné | `optimizer_search.py:401-529` | ✅ atténué — gel seulement si assez d'essais **et** impact &lt; bruit ; **pas de sklearn** |
+| O-06 | 🟠 Majeur | `seed=0` figé : deux campagnes explorent exactement le même chemin | `optimizer_search.py:650` | ✅ résolu — `optimizer.seed` (défaut `None`) |
 | O-07 | 🟠 Majeur | `n_trials` du Deflated Sharpe ≠ nombre d'essais réellement joués | `auto_optimizer.py:531` | ✅ **résolu** — `result.get("n_trials")` (`auto_optimizer.py:626`) |
-| O-08 | 🟡 Moyen | Early stop sur le score OOS : arrêt d'autant plus précoce que le bruit est fort | `optimizer_search.py:786-805` |
-| O-09 | 🟡 Moyen | `overfitting_ratio` inopérant sur les scores négatifs | `opt_scoring.py:141-147` |
-| O-10 | 🟡 Moyen | Modèle ML final entraîné sur IS+OOS par défaut | `auto_optimizer.py:642-644` |
-| O-11 | 🟡 Moyen | Un trial en timeout est silencieusement ignoré, pas rejoué | `optimizer_search.py:591-593` |
-| O-12 | 🔵 Mineur | `_perturb` peut ne rien perturber (`offsets` contient 0) | `optimizer_search.py:1104-1110` |
-| O-13 | 🔵 Mineur | `_penalized_score` ne pénalise jamais un sur-apprentissage à score OOS négatif | `optimizer_search.py:311-312` |
+| O-08 | 🟡 Moyen | Early stop sur le score OOS : arrêt d'autant plus précoce que le bruit est fort | `optimizer_search.py:786-805` | ✅ résolu — jamais avant la moitié du budget |
+| O-09 | 🟡 Moyen | `overfitting_ratio` inopérant sur les scores négatifs | `opt_scoring.py:141-147` | ouvert |
+| O-10 | 🟡 Moyen | Modèle ML final entraîné sur IS+OOS par défaut | `auto_optimizer.py:642-644` | ✅ résolu — `is_only` par défaut |
+| O-11 | 🟡 Moyen | Un trial en timeout est silencieusement ignoré, pas rejoué | `optimizer_search.py:591-593` | ✅ résolu — rejoué in-process |
+| O-12 | 🔵 Mineur | `_perturb` peut ne rien perturber (`offsets` contient 0) | `optimizer_search.py:1104-1110` | ouvert |
+| O-13 | 🔵 Mineur | `_penalized_score` ne pénalise jamais un sur-apprentissage à score OOS négatif | `optimizer_search.py:311-312` | ouvert |
+
+> 18 août : N-01, N-02, N-03 traités. Voir [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
 
 ---
 

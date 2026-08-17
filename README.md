@@ -6,6 +6,8 @@ Bot de trading algorithmique multi-stratégies avec interface web, backtest avan
 > - **Python 3.14 obligatoire** (au lieu de 3.12) — voir `docs/DEMARRAGE_WINDOWS.md`
 > - **Frontend Next.js officiel unique** — Jinja2 décommissionné (voir `docs/FIN_JINJA2.md`)
 > - **Plan d'amélioration** — `docs/PLAN_DIRECTEUR_AMELIORATIONS.md` (8 sprints, 173 SP)
+> - **Audit interne** — `audit/` (synthèse + révision du 18/08 :
+>   [`audit/14-REVISION-2026-08-18.md`](audit/14-REVISION-2026-08-18.md))
 > - **Audit externe** — `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` (54 p.)
 
 ---
@@ -13,8 +15,11 @@ Bot de trading algorithmique multi-stratégies avec interface web, backtest avan
 ## 📋 Fonctionnalités
 
 - **Live / Paper trading** — Exécution sur OKX (et autres exchanges via CCXT) avec gestion du risque, circuit breaker, trailing stop
-- **Backtest avancé** — Jusqu'à 8 000 bougies, Walk-Forward Analysis, Monte-Carlo, comparaison multi-stratégies, graphique de prix avec signaux
-- **Optimiseur** — Random Search / Bayesian UCB / Grid Search IS/OOS avec détection d'overfitting, application directe dans `config.yaml`
+- **Backtest avancé** — jusqu'à 50 000 bougies (CandleStore), plage de dates
+  via `fetch_range` (backfill persisté, lecture filtrée), analyse de **stabilité**
+  walk-forward (params figés), Monte-Carlo, comparaison multi-stratégies
+- **Optimiseur** — Random Search / Bayesian UCB / Grid Search, holdout 20 %,
+  métriques `val_*` (sélection) vs holdout (`gate_source`), sans scikit-learn
 - **ML** — Stratégie basée sur LightGBM + Isotonic calibration (scikit-learn supprimé)
 - **Notifications** — Telegram et WhatsApp
 - **Interface web** — **Next.js 15 / React 19** (frontend officiel), 20 pages

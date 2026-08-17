@@ -6,6 +6,8 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+Bilan d'audit de la branche : [`audit/14-REVISION-2026-08-18.md`](audit/14-REVISION-2026-08-18.md).
+
 ### 🐛 Audit sprint 1 — arrêter de mentir aux chiffres
 
 - **F-03** : `max_dd_p95` du Monte-Carlo prenait le 95ᵉ percentile de drawdowns

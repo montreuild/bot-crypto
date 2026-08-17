@@ -64,12 +64,17 @@ variables), pas des formules.
    - HTTPS (`FORCE_HTTPS=1` + reverse proxy TLS) et CORS adapté au domaine
      via la variable d'env `ALLOWED_ORIGINS` (liste séparée par des virgules,
      ex. `ALLOWED_ORIGINS=https://bot.mondomaine.com` — défaut : localhost).
-   - **`X-Forwarded-For`** n'est désormais honoré que si la connexion provient
-     d'un proxy déclaré dans `TRUSTED_PROXIES` (IP séparées par des virgules,
-     ex. `TRUSTED_PROXIES=127.0.0.1`). **Derrière un reverse proxy, définissez
-     cette variable** avec l'IP du proxy ; sinon le header est ignoré
-     (anti-spoofing : un client distant ne peut plus se faire passer pour
-     localhost et contourner l'auth quand `web.api_key` est vide).
+   - **`X-Forwarded-For`** n'est honoré (auth **et** rate-limit, S-02) que si
+     la connexion provient d'un proxy déclaré dans `TRUSTED_PROXIES` (IP
+     séparées par des virgules, ex. `TRUSTED_PROXIES=127.0.0.1`). **Derrière
+     un reverse proxy, définissez cette variable** ; sinon le header est
+     ignoré (anti-spoofing).
+   - **`ALLOW_WS_QUERY_KEY=1`** : seul moyen d'authentifier le WebSocket via
+     `?api_key=` (fuit dans les logs nginx). Défaut : cookie HttpOnly seulement.
+   - **`METRICS_TOKEN`** (ou `web.api_key`) : requis pour `GET /metrics` dès
+     qu'une des deux est posée. Configurer `bearer_token` côté Prometheus.
+   - Cookie `api_key` : `HttpOnly; SameSite=Lax` et `Secure` dès que
+     `x-forwarded-proto: https` (TLS terminé devant Next).
 4. **Supervision** : activer Telegram (`notifications.telegram_enabled`),
    le service systemd avec `Restart=on-failure` (déjà dans `deploy/`), et le
    healthcheck `/health` dans un monitoring externe (UptimeRobot ou cron).
@@ -107,9 +112,10 @@ variables), pas des formules.
 - **Ouverture atomique** : réservation de slot sous verrou + rollback si
   l'ordre échoue (la réservation est correctement supprimée par le `except`).
 - **Sécurité API** : auth `X-API-Key` en `hmac.compare_digest`, fallback
-  localhost-only sans clé, rate-limit 60/min, `/api/config` redacte les
-  sections `exchange` et `notifications`, validation des noms de stratégies
-  (anti-injection de module), whitelist d'exchanges.
+  localhost-only sans clé, rate-limit 300/min **par IP cliente** (S-02 :
+  `TRUSTED_PROXIES`), `/metrics` authentifié (S-01), `/api/config` redacte
+  les sections `exchange` et `notifications`, validation des noms de
+  stratégies (anti-injection de module), whitelist d'exchanges.
 - **Cohérence backtest/live des paramètres** : `resolve_strategy_params` est
   la source unique des params (base YAML + overlay optimizer) des deux côtés.
 

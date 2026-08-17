@@ -9,24 +9,26 @@
 
 ## Tableau de bord
 
-| # | Sévérité | Titre | Fichier |
-|---|----------|-------|---------|
-| L-01 | 🔴 Critique | Le stop n'est évalué qu'une fois par cycle, sur le dernier prix | `position_manage_mixin.py:217` |
-| L-02 | 🔴 Critique | En paper (mode par défaut), aucun stop exchange et aucun stop intrabar | `position_manage_mixin.py:241-243` |
-| L-03 | 🟠 Majeur | `fetch_positions()` en spot/margin peut supprimer toutes les positions à la reprise | `position_restore_mixin.py:52-85` |
-| L-04 | 🟠 Majeur | La reprise ne rapproche que le SYMBOLE, jamais la taille ni le sens | `position_restore_mixin.py:74-80` |
-| L-05 | 🟠 Majeur | `RiskLedger.reserve` sur une clé existante fuit du budget | `risk_ledger.py:98-107` |
-| L-06 | 🟠 Majeur | Plafond caché à 25 % du capital, sans motif de rejet (cf. F-12) | `balance_sync.py:196` |
-| L-07 | 🟠 Majeur | Le jeton anti-spam est consommé avant les 7 autres contrôles (cf. F-11) | `risk_gate.py:297` |
-| L-08 | 🟡 Moyen | Fenêtre non atomique entre l'ordre exchange et la persistance | `position_open_mixin.py:292-391` |
-| L-09 | 🟡 Moyen | `notional` non recalculé après le slippage paper | `position_open_mixin.py:313-330` |
-| L-10 | 🟡 Moyen | Le log d'ouverture affiche un « Sizing = X % » qui n'agit sur rien | `position_open_mixin.py:414-422` |
-| L-11 | 🟡 Moyen | `update_daily_stats` reçoit les frais de sortie seuls | `position_close_mixin.py:328` |
-| L-12 | 🟡 Moyen | Le frein de volatilité est nommé « ATR BTC » mais alimenté autrement | `risk_gate.py:263` |
-| L-13 | 🟡 Moyen | Positions mutées hors verrou pendant que l'API les sérialise | `position_manage_mixin.py:53` |
-| L-14 | 🔵 Mineur | `_pre_execution_check` échoue sans trace dans les compteurs | `position_open_mixin.py:559-561` |
-| L-15 | 🔵 Mineur | Seuil de gap à 2 % en dur | `position_manage_mixin.py:77,84` |
-| L-16 | 🔵 Mineur | `bars_held` live en horloge murale, backtest en index de bougie | `position_manage_mixin.py:153` |
+| # | Sévérité | Titre | Fichier | État au 18/08 |
+|---|----------|-------|---------|---------------|
+| L-01 | 🔴 Critique | Le stop n'est évalué qu'une fois par cycle, sur le dernier prix | `position_manage_mixin.py:217` | ✅ résolu — high/low de la bougie en formation |
+| L-02 | 🔴 Critique | En paper (mode par défaut), aucun stop exchange et aucun stop intrabar | `position_manage_mixin.py:241-243` | ✅ résolu — fill au niveau du stop |
+| L-03 | 🟠 Majeur | `fetch_positions()` en spot/margin peut supprimer toutes les positions à la reprise | `position_restore_mixin.py:52-85` | ✅ résolu — fetch seulement en perp |
+| L-04 | 🟠 Majeur | La reprise ne rapproche que le SYMBOLE, jamais la taille ni le sens | `position_restore_mixin.py:74-80` | ✅ résolu — désaccord → orphelin |
+| L-05 | 🟠 Majeur | `RiskLedger.reserve` sur une clé existante fuit du budget | `risk_ledger.py:98-107` | ✅ résolu — `deja_reserve` |
+| L-06 | 🟠 Majeur | Plafond caché à 25 % du capital, sans motif de rejet (cf. F-12) | `balance_sync.py:196` | ✅ résolu |
+| L-07 | 🟠 Majeur | Le jeton anti-spam est consommé avant les 7 autres contrôles (cf. F-11) | `risk_gate.py:297` | ✅ résolu — après fill |
+| L-08 | 🟡 Moyen | Fenêtre non atomique entre l'ordre exchange et la persistance | `position_open_mixin.py:292-391` | ouvert |
+| L-09 | 🟡 Moyen | `notional` non recalculé après le slippage paper | `position_open_mixin.py:313-330` | ouvert |
+| L-10 | 🟡 Moyen | Le log d'ouverture affiche un « Sizing = X % » qui n'agit sur rien | `position_open_mixin.py:414-422` | ouvert |
+| L-11 | 🟡 Moyen | `update_daily_stats` reçoit les frais de sortie seuls | `position_close_mixin.py:328` | ouvert |
+| L-12 | 🟡 Moyen | Le frein de volatilité est nommé « ATR BTC » mais alimenté autrement | `risk_gate.py:263` | ouvert |
+| L-13 | 🟡 Moyen | Positions mutées hors verrou pendant que l'API les sérialise | `position_manage_mixin.py:53` | ouvert |
+| L-14 | 🔵 Mineur | `_pre_execution_check` échoue sans trace dans les compteurs | `position_open_mixin.py:559-561` | ouvert |
+| L-15 | 🔵 Mineur | Seuil de gap à 2 % en dur | `position_manage_mixin.py:77,84` | ouvert |
+| L-16 | 🔵 Mineur | `bars_held` live en horloge murale, backtest en index de bougie | `position_manage_mixin.py:153` | ouvert |
+
+> N-04 (`apply_exit_mode` live) est résolu. Détail : [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
 
 ---
 
