@@ -30,7 +30,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 import polars as pl
 
-from app.core.is_oos import OOS_FRACTION_DEFAULT as _OOS_FRACTION  # BT-08 : constante partagée
+from app.core.is_oos import (  # BT-08 : constantes partagées
+    HOLDOUT_FRACTION_DEFAULT as _HOLDOUT,
+    OOS_FRACTION_DEFAULT as _OOS_FRACTION,
+)
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 # ── Sous-modules (ré-exports compatibilité — noms historiques inclus) ────────
@@ -140,7 +143,10 @@ def required_total_bars(strategy_name: str, timeframe: str = None,
     except Exception:
         min_bars = 220
     oos_needed = min_bars + _oos_trade_window_bars(timeframe)
-    return math.ceil(oos_needed / _OOS_FRACTION)
+    # N-01 : split_with_holdout prélève 20 % en amont. Sans ce facteur, le
+    # fetch sous-provisionne d'1,25× et le holdout est trop souvent refusé
+    # (repli silencieux sur l'ancien contrat à 2 tranches).
+    return math.ceil(oos_needed / (_OOS_FRACTION * (1.0 - _HOLDOUT)))
 
 
 def auto_fetch_limit(timeframe: str, strategies: List[str],

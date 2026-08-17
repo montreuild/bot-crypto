@@ -86,6 +86,25 @@ class TestRefusFranc:
         assert split_with_holdout(None) == (None, None, 0, None, None)
 
 
+class TestRequiredTotalBars:
+    def test_le_fetch_reserve_aussi_les_20_pct_de_holdout(self):
+        """N-01 : required_total_bars dimensionne pour IS + OOS + holdout."""
+        from app.core.is_oos import HOLDOUT_FRACTION_DEFAULT, OOS_FRACTION_DEFAULT
+        from app.engine.optimizer_search import required_total_bars
+
+        n = required_total_bars("unknown_strategy_xyz", "1h")
+        # Fallback min_bars=220 + fenêtre OOS, divisé par 0.35 × 0.80.
+        # Plus grand que l'ancienne formule (÷ 0.35 seulement) d'un facteur 1.25.
+        from app.engine.optimizer_search import _oos_trade_window_bars
+        oos_needed = 220 + _oos_trade_window_bars("1h")
+        old = __import__("math").ceil(oos_needed / OOS_FRACTION_DEFAULT)
+        new = __import__("math").ceil(
+            oos_needed / (OOS_FRACTION_DEFAULT * (1.0 - HOLDOUT_FRACTION_DEFAULT)))
+        assert n == new
+        assert n == __import__("math").ceil(old / (1.0 - HOLDOUT_FRACTION_DEFAULT))
+        assert n > old
+
+
 class TestNonRegression:
     def test_split_is_oos_inchange(self):
         """La fonction historique ne doit pas avoir bougé d'un indice."""

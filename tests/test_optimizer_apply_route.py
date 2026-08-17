@@ -126,6 +126,44 @@ def test_job_sans_best_params_est_refuse(monkeypatch, tmp_path):
         app.dependency_overrides.pop(verify_api_key, None)
 
 
+def test_le_gate_manuel_decide_sur_le_holdout(monkeypatch, tmp_path):
+    """N-02 : le bouton Appliquer juge le holdout, pas la tranche de sélection.
+
+    Ici la sélection passerait (PnL +80) mais le holdout est perdant :
+    le chemin manuel doit refuser, comme l'auto-apply.
+    """
+    spath, cfgpath = _fixture_config(tmp_path)
+    job = _job(pnl=80.0, trades=12, wr=45.0, sharpe=1.2)
+    job["holdout"] = {"trades": 12, "pnl": -5.0, "wr": 30.0, "sharpe": -0.4}
+    job["gate_source"] = "holdout"
+    client = _client(monkeypatch, tmp_path, job)
+    try:
+        r = _appliquer(client, cfgpath)
+        assert r.status_code == 409
+        assert "PnL" in r.json()["detail"]
+        assert _params_ecrits(spath) == {}
+    finally:
+        app.dependency_overrides.pop(verify_api_key, None)
+
+
+def test_le_gate_manuel_applique_quand_le_holdout_passe(monkeypatch, tmp_path):
+    """Symétrique : sélection perdante, holdout gagnant → apply OK + gate_source."""
+    spath, cfgpath = _fixture_config(tmp_path)
+    job = _job(pnl=-20.0, trades=12, wr=30.0, sharpe=-0.5)
+    job["holdout"] = {"trades": 12, "pnl": 80.0, "wr": 45.0, "sharpe": 1.2}
+    job["gate_source"] = "holdout"
+    client = _client(monkeypatch, tmp_path, job)
+    try:
+        r = _appliquer(client, cfgpath)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["status"] == "applied"
+        assert body["gate_source"] == "holdout"
+        assert _params_ecrits(spath)["1h"]["BTC/USDC"]["params"] == {"st_period": 10}
+    finally:
+        app.dependency_overrides.pop(verify_api_key, None)
+
+
 def test_job_inconnu_ou_non_termine(monkeypatch, tmp_path):
     _, cfgpath = _fixture_config(tmp_path)
     job = _job()

@@ -272,7 +272,7 @@ def _slices_for(df, strategy_name: str, timeframe: str, min_bars: int,
     df_is, df_oos, split, df_recherche, df_holdout = split_with_holdout(
         df, holdout_fraction=holdout_fraction, min_holdout_bars=min_bars)
     if df_holdout is None and holdout_fraction > 0:
-        logger.info(
+        logger.warning(
             f"[AutoOpt] {strategy_name}/{timeframe} : pas de holdout — "
             f"{len(df)} bougies ne permettent pas d'en réserver une tranche "
             f"exploitable ({min_bars} barres min pour cette stratégie). "
