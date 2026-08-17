@@ -316,7 +316,8 @@ def _run_baseline(strategy_name: str, cfg: dict,
         return {
             "trades": res.get("total_trades", 0),
             "pnl":    round(res.get("total_pnl", 0), 4),
-            "sharpe": round(res.get("sharpe", 0), 3),
+            "sharpe": (None if res.get("sharpe") is None
+                       else round(res.get("sharpe", 0), 3)),
             "wr":     round(res.get("win_rate", 0), 1),
             "dd":     round(res.get("max_drawdown", 0), 2),
             "alpha":  round(res["alpha"], 4) if res.get("alpha") is not None else None,
@@ -589,10 +590,12 @@ class AutoOptimizer:
                     best_oos_wr = _h.get("wr", 0)
                     best_oos_sharpe = _h.get("sharpe", 0)
                     _update_job(job_id, holdout=_h, gate_source="holdout")
+                    _sh = ("—" if best_oos_sharpe is None
+                           else f"{best_oos_sharpe:.2f}")
                     logger.info(
                         f"[AutoOpt] {job_id} : holdout ({len(df_holdout)} barres) — "
                         f"PnL={best_oos_pnl:+.2f} WR={best_oos_wr:.1f}% "
-                        f"Sharpe={best_oos_sharpe:.2f} sur {oos_trades} trades "
+                        f"Sharpe={_sh} sur {oos_trades} trades "
                         f"(sélection : PnL={result.get('best_oos_pnl', 0):+.2f})")
                 else:
                     logger.warning(

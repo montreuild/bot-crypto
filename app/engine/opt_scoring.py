@@ -56,7 +56,7 @@ def composite_score(res, min_trades: int = MIN_SIGNIFICANT_TRADES) -> float:
         return -999.0
 
     if isinstance(res, dict):
-        sharpe = res.get("sharpe", 0)
+        sharpe = res.get("sharpe") or 0
         wr     = res.get("win_rate", 0) / 100
         pf     = res.get("profit_factor", 0)
         pnl    = res.get("total_pnl", 0)
@@ -65,7 +65,7 @@ def composite_score(res, min_trades: int = MIN_SIGNIFICANT_TRADES) -> float:
         alpha  = res.get("alpha", 0)
         cap    = res.get("initial_capital") or _FALLBACK_CAPITAL
     else:
-        sharpe = res.sharpe
+        sharpe = res.sharpe or 0
         wr     = res.win_rate / 100
         pf     = res.profit_factor
         pnl    = res.total_pnl
@@ -208,9 +208,16 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
         return False, f"PnL OOS non positif ({oos_pnl:+.2f})"
     if oos_pnl <= b_pnl:
         return False, (f"PnL OOS ({oos_pnl:+.2f}) ≤ baseline ({b_pnl:+.2f})")
-    if not (oos_wr > b_wr or oos_sharpe > b_sharpe):
+    # F-02 : un Sharpe None n'est pas mesurable — il ne peut pas battre
+    # le baseline. On n'autorise l'amélioration de qualité que via le WR.
+    _sharpe_ok = (oos_sharpe is not None
+                  and b_sharpe is not None
+                  and oos_sharpe > b_sharpe)
+    if not (oos_wr > b_wr or _sharpe_ok):
+        _sh_txt = "—" if oos_sharpe is None else f"{oos_sharpe:.2f}"
+        _bsh_txt = "—" if b_sharpe is None else f"{b_sharpe:.2f}"
         return False, (f"aucune amélioration de qualité (WR {oos_wr:.1f}% vs "
-                       f"{b_wr:.1f}%, Sharpe {oos_sharpe:.2f} vs {b_sharpe:.2f})")
+                       f"{b_wr:.1f}%, Sharpe {_sh_txt} vs {_bsh_txt})")
 
     # ── 5. Deflated Sharpe gate (P0 — câblage TODO auto_optimizer.py:521) ──
     # Ne s'active QUE si n_trials > 1 (sinon pas de biais de sélection à

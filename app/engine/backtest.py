@@ -222,13 +222,19 @@ class BacktestResult:
             # produit 1,5, et gonflait le Sharpe de sqrt(bougies/trades) — ×15
             # sur un run de 8 trades en 5,5 ans (Sharpe affiché 9,5).
             from app.core.performance_metrics import returns_per_year
-            ann_factor        = np.sqrt(returns_per_year(
-                len(returns), self._years(), _bars_per_year(self._timeframe)))
-            raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
-            self.sharpe       = _sf(raw_sharpe, 0.0)
+            from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES
+            # F-02 : un écart-type sur 1-3 points n'est pas estimable. None
+            # (non mesurable) ≠ 0.0 (ratio nul). Aligné sur MIN_SIGNIFICANT_TRADES.
+            if len(returns) < MIN_SIGNIFICANT_TRADES:
+                self.sharpe = None
+            else:
+                ann_factor        = np.sqrt(returns_per_year(
+                    len(returns), self._years(), _bars_per_year(self._timeframe)))
+                raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
+                self.sharpe       = _sf(raw_sharpe, 0.0)
         else:
             self.max_drawdown = 0.0
-            self.sharpe       = 0.0
+            self.sharpe       = None
 
         self.avg_win  = _sf(float(np.mean(wins)),   0.0) if wins   else 0.0
         self.avg_loss = _sf(float(np.mean(losses)), 0.0) if losses else 0.0
@@ -513,7 +519,10 @@ class BacktestResult:
             ann_s  = np.sqrt(_rpy(len(rets_s), self._years(),
                                   _bars_per_year(self._timeframe)))
             std_s  = float(rets_s.std())
-            if std_s > 0:
+            from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES as _MIN_SH
+            if len(rets_s) < _MIN_SH:
+                d["sharpe"] = None
+            elif std_s > 0:
                 d["sharpe"] = round(_sf(float(rets_s.mean() / std_s * ann_s), 0.0), 3)
             else:
                 d["sharpe"] = 0.0
@@ -541,7 +550,8 @@ class BacktestResult:
             "total_trades":       self.total_trades,
             "win_rate":           round(_sf(self.win_rate, 0.0), 2),
             "max_drawdown":       round(_sf(self.max_drawdown, 0.0), 2),
-            "sharpe":             round(_sf(self.sharpe, 0.0), 3),
+            "sharpe":             (None if self.sharpe is None
+                                   else round(_sf(self.sharpe, 0.0), 3)),
             # QW-1 : métriques étendues (S3-07 — branchement a posteriori)
             "sortino":            round(_sf(getattr(self, "sortino", 0.0), 0.0), 3),
             "calmar":             round(_sf(getattr(self, "calmar", 0.0), 0.0), 3),

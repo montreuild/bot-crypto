@@ -105,7 +105,20 @@ class TestBacktestResult:
         r = BacktestResult([], [1000.0], 1000.0)
         assert r.total_trades == 0
         assert r.win_rate == 0.0
-        assert r.sharpe == 0.0
+        assert r.sharpe is None
+
+    def test_sharpe_is_none_under_ten_observations(self):
+        """F-02 : un Sharpe sur 1-3 trades n'est pas une mesure."""
+        r = self._make_result([10, -5, 8])
+        assert r.total_trades == 3
+        assert r.sharpe is None
+        assert r.to_dict()["sharpe"] is None
+
+    def test_sharpe_is_numeric_from_ten_observations(self):
+        r = self._make_result([10, -5, 8, -3, 6, -2, 4, -1, 5, -4])
+        assert r.total_trades == 10
+        assert r.sharpe is not None
+        assert isinstance(r.sharpe, float)
 
     def test_max_drawdown_negative(self):
         r = self._make_result([100, -200, 50])

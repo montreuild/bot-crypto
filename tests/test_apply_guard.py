@@ -35,6 +35,12 @@ def test_rejects_no_quality_improvement():
     assert not ok and "qualité" in reason
 
 
+def test_unmeasurable_sharpe_does_not_beat_baseline():
+    """F-02 : Sharpe None n'est pas une amélioration de qualité."""
+    ok, reason = beats_baseline(12, 80.0, 39.0, None, BASE)
+    assert not ok and "qualité" in reason
+
+
 def test_route_guards_with_beats_baseline():
     """Garde-fou statique : la route apply appelle bien beats_baseline et
     expose force=... (BT-04)."""
