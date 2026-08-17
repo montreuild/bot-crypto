@@ -59,6 +59,18 @@ class PositionManageMixin:
         if ticker is None:
             return
         price = ticker.get("last", pos["entry"])
+        # L-01 : le stop/TP se jugent sur le range de la bougie en formation
+        # (plus-bas pour un long, plus-haut pour un short). `ticker.last` ne
+        # voit qu'un échantillon ponctuel par cycle — une mèche entre deux
+        # cycles n'était jamais vue.
+        probe = price
+        lo_hi = None
+        cache = getattr(self, "ohlcv_cache", None)
+        if cache is not None and hasattr(cache, "get_forming_range"):
+            lo_hi = cache.get_forming_range(symbol, pos_tf)
+        if lo_hi is not None:
+            lo, hi = lo_hi
+            probe = lo if pos["side"] == "long" else hi
 
         # Récupération ATR (cache → fetch → fallback 1%)
         atr = self.ohlcv_cache.get_cached_atr(symbol)
@@ -74,14 +86,14 @@ class PositionManageMixin:
             atr = price * 0.01  # fallback 1%
 
         # Détection gap (prix franchit le stop de plus de 2%)
-        if pos["side"] == "long" and price < pos["stop"] * 0.98:
+        if pos["side"] == "long" and probe < pos["stop"] * 0.98:
             logger.warning(
                 f"[Gap] {symbol} prix {price:.4f} < stop {pos['stop']:.4f} "
                 f"— clôture forcée"
             )
             self._close_position(pos_id, price, exit_reason="gap")
             return
-        if pos["side"] == "short" and price > pos["stop"] * 1.02:
+        if pos["side"] == "short" and probe > pos["stop"] * 1.02:
             logger.warning(
                 f"[Gap] {symbol} prix {price:.4f} > stop {pos['stop']:.4f} "
                 f"— clôture forcée"
@@ -92,8 +104,10 @@ class PositionManageMixin:
         # ── Take-profit fixe (vérifié sur ticker, en complément du SL) ────────
         tp_val = pos.get("take_profit")
         if tp_val is not None:
-            tp_hit = (pos["side"] == "long"  and price >= tp_val) or \
-                     (pos["side"] == "short" and price <= tp_val)
+            tp_probe = (lo_hi[1] if pos["side"] == "long" else lo_hi[0]) \
+                if lo_hi is not None else price
+            tp_hit = (pos["side"] == "long"  and tp_probe >= tp_val) or \
+                     (pos["side"] == "short" and tp_probe <= tp_val)
             if tp_hit:
                 logger.info(
                     f"[TP] {symbol} {pos['side']} TP={tp_val:.4f} touché @ {price:.4f}"
@@ -214,8 +228,11 @@ class PositionManageMixin:
         elif _calc_unreal_pct(pos["side"], pos["entry"], price) >= 0:
             self._loss_notified.discard(pos_id)
 
-        if trailing.is_triggered(price, new_stop, pos["side"]):
-            self._close_position(pos_id, price, exit_reason=(
+        if trailing.is_triggered(probe, new_stop, pos["side"]):
+            # L-02 : en paper, simuler le stop exchange — fill au niveau
+            # (le slippage paper est appliqué dans _close_position).
+            fill = new_stop if self.cfg["trading"].get("paper_mode") else price
+            self._close_position(pos_id, fill, exit_reason=(
                 "stop_loss" if pos.get("disable_trailing") else "trailing_stop"))
 
     # ── Stop-loss / take-profit côté exchange ───────────────────────────────

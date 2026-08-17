@@ -41,6 +41,15 @@ def test_unmeasurable_sharpe_does_not_beat_baseline():
     assert not ok and "qualité" in reason
 
 
+def test_live_open_applique_le_mode_de_sortie():
+    """N-04 : le live appelle apply_exit_mode, comme le backtest."""
+    import inspect
+    from app.live.position_open_mixin import PositionOpenMixin
+    src = inspect.getsource(PositionOpenMixin._try_open_from_signal)
+    assert "apply_exit_mode" in src
+    assert "exit_mode" in src
+
+
 def test_route_guards_with_beats_baseline():
     """Garde-fou statique : la route apply appelle bien beats_baseline et
     expose force=... (BT-04)."""

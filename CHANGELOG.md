@@ -46,6 +46,15 @@ persistés portent `schema_version` + `git_commit` (D-06).
 par défaut (margin ×1) ne facture plus ~30 %/an de portage sur des fonds
 propres. ⚠️ change les backtests historiques (dans le sens favorable).
 
+### 🐛 Alignement d'exécution backtest / paper / live
+
+- **B-01** : un stop/TP gappé se remplit à l'ouverture, plus au niveau
+  exact. Motif `gap` exposé dans `by_exit_reason`.
+- **L-01 / L-02** : le stop live se juge sur le high/low de la bougie en
+  formation ; en paper, fill au niveau du stop (plus slippage).
+- **N-04** : `apply_exit_mode` est appelé à l'ouverture live, même
+  résolution que le backtest.
+
 ### 🐛 L'overfit résiduel n'existait pas — c'était la métrique
 
 `docs/RECALIBRATION_HTF.md` signalait cinq couples « surappris malgré

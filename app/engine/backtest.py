@@ -925,6 +925,25 @@ class Backtester:
         ctx.diag["partial_exits"] = ctx.diag.get("partial_exits", 0) + 1
         return pnl
 
+    def _fill_at_level(self, side: str, level: float, open_px: float,
+                       *, stop: bool) -> tuple:
+        """B-01 : fill au gap si la bougie ouvre au-delà du niveau.
+
+        Un stop-market réel se remplit à l'ouverture, pas au niveau, quand
+        celle-ci a déjà franchi le seuil. Symétrique pour un TP favorable.
+        Retourne ``(exec_price, ref_price, gapped)``.
+        """
+        if stop:
+            gapped = (side == "long" and open_px < level) or \
+                     (side == "short" and open_px > level)
+        else:
+            gapped = (side == "long" and open_px > level) or \
+                     (side == "short" and open_px < level)
+        ref = open_px if gapped else level
+        exec_price = ref * (1 - self.spread_pct) if side == "long" \
+            else ref * (1 + self.spread_pct)
+        return exec_price, ref, gapped
+
     def _manage_open_position(self, ctx, position: dict, i: int):
         """Gère la position ouverte sur la barre ``i`` : MAE/MFE, sorties
         (early-exit stratégie, time-exit, TP, stop intrabar), sinon mise à
@@ -938,6 +957,8 @@ class Backtester:
         c_high  = ctx.high_arr[i]
         c_low   = ctx.low_arr[i]
         c_close = ctx.close_arr[i]
+        c_open  = ctx.open_arr[i] if getattr(ctx, "open_arr", None) is not None \
+            else c_close
 
         if side == "long":
             mae_pts = c_low  - entry
@@ -1004,24 +1025,26 @@ class Backtester:
             return None
 
         if tp_hit:
-            # TP fixe touché : sortie au prix TP (spread défavorable, côté maker)
-            exec_price = tp_val * (1 - self.spread_pct) if side == "long" \
-                         else tp_val * (1 + self.spread_pct)
-            self._close_at(ctx, position, i, exec_price, "take_profit",
-                           maker=True, ref_price=tp_val)
+            exec_price, ref, gapped = self._fill_at_level(
+                side, tp_val, c_open, stop=False)
+            self._close_at(ctx, position, i, exec_price,
+                           "gap" if gapped else "take_profit",
+                           maker=not gapped, ref_price=ref)
             return None
 
         if stop_hit:
-            exec_price = stop * (1 - self.spread_pct) if side == "long" \
-                         else stop * (1 + self.spread_pct)
+            exec_price, ref, gapped = self._fill_at_level(
+                side, stop, c_open, stop=True)
             _tr = position.get("_trailing")
             if _tr and hasattr(_tr, "_dts") and _tr._dts:
                 position["trail_phase"] = _tr._dts.phase_name
             else:
                 position["trail_phase"] = "unknown"
-            self._close_at(ctx, position, i, exec_price,
-                           ("stop_loss" if position.get("disable_trailing")
-                            else "trailing_stop"), maker=False, ref_price=stop)
+            reason = "gap" if gapped else (
+                "stop_loss" if position.get("disable_trailing")
+                else "trailing_stop")
+            self._close_at(ctx, position, i, exec_price, reason,
+                           maker=False, ref_price=ref)
             return None
 
         # ── L1 (§29) — sorties partielles TP1 / TP2, runner ──────────────────
@@ -1034,11 +1057,12 @@ class Backtester:
                          or (side == "short" and c_low <= c["price"])]
             for cible in atteintes:
                 cibles.remove(cible)
-                px = cible["price"] * (1 - self.spread_pct) if side == "long" \
-                    else cible["price"] * (1 + self.spread_pct)
-                self._close_partial_at(ctx, position, i, px, cible["fraction"],
-                                       cible["reason"], maker=True,
-                                       ref_price=cible["price"])
+                px, ref, gapped = self._fill_at_level(
+                    side, cible["price"], c_open, stop=False)
+                self._close_partial_at(ctx, position, i, px,
+                                       cible["fraction"],
+                                       "gap" if gapped else cible["reason"],
+                                       maker=not gapped, ref_price=ref)
                 # §30 — après la première jambe, le stop passe au point mort
                 # frais compris : le trade ne peut plus coûter d'argent.
                 if position.get("be_after_partial") and not position.get("_be_done"):
@@ -1583,6 +1607,7 @@ class Backtester:
         low_arr   = df["low"].to_numpy().astype(float)
         high_arr  = df["high"].to_numpy().astype(float)
         close_arr = df["close"].to_numpy().astype(float)
+        open_arr  = df["open"].to_numpy().astype(float)
 
         # Libellé des stratégies actives — chaque backtest de l'UI tourne une
         # stratégie par Backtester, donc ce libellé identifie la stratégie
@@ -1606,7 +1631,7 @@ class Backtester:
             trades=trades, equity_curve=equity_curve, timestamps=timestamps,
             diag=diag, strat_params=strat_params,
             atr_arr=atr_arr, low_arr=low_arr, high_arr=high_arr,
-            close_arr=close_arr,
+            close_arr=close_arr, open_arr=open_arr,
             bars_current_position=_bars_current_position,
             # QW-6 (étape 6) — risk gate pour le mode realistic_risk.
             # Initialisé plus bas (après know si realistic_risk=True).

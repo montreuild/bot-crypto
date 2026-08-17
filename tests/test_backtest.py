@@ -191,6 +191,24 @@ class TestBacktester:
         assert trade["pnl"] == pytest.approx(returned - entry_fees)
         assert ctx.capital == pytest.approx(1000.0 - entry_fees + returned)
 
+    def test_fill_at_level_uses_open_on_gap(self):
+        """B-01 : un gap à travers le stop/TP se remplit à l'ouverture."""
+        bt = Backtester(Engine(), _cfg())
+        # Long, stop 95, ouverture à 90 (gap défavorable).
+        px, ref, gapped = bt._fill_at_level("long", 95.0, 90.0, stop=True)
+        assert gapped is True
+        assert ref == 90.0
+        assert px == pytest.approx(90.0 * (1 - bt.spread_pct))
+        # Sans gap : fill au niveau.
+        px, ref, gapped = bt._fill_at_level("long", 95.0, 96.0, stop=True)
+        assert gapped is False and ref == 95.0
+        # TP long : gap favorable (open au-dessus du TP).
+        px, ref, gapped = bt._fill_at_level("long", 110.0, 115.0, stop=False)
+        assert gapped is True and ref == 115.0
+        # Short stop : gap si open au-dessus du stop.
+        _, ref, gapped = bt._fill_at_level("short", 105.0, 108.0, stop=True)
+        assert gapped is True and ref == 108.0
+
     def test_run_returns_result(self):
         engine = Engine()
         engine.register(DummyLongStrategy())
