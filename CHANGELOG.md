@@ -56,6 +56,13 @@ tort). Un long à levier L n'emprunte que `1 − 1/L` du notionnel.
 - **B-08** : `purge_bars` / `embargo_bars` sur `split_is_oos` (défaut 0).
 - **L-03 / L-04** : reprise live — `fetch_positions` seulement en perp ;
   un désaccord marque orphelin, ne supprime plus.
+- **F-08** : `by_strategy` cohérent avec le run (après F-01).
+- **F-09** : Sortino = √(moyenne des carrés downside sur N), plus n−1.
+- **F-10** : profit factor / Sortino / Calmar non mesurables → `None`, plus 999/100.
+- **B-08** : embargo 1 % (+ lookahead ML) branché sur le split d'optimisation.
+- **O-01** : alias `val_*` à côté de `oos_*` (tranche de sélection).
+- **O-04** : l'optimiseur mesure sur l'enveloppe du slot, plus 1 000 € globaux.
+- **O-06** : seed Optuna configurable (`optimizer.seed`, défaut None).
 
 ### 🐛 Alignement d'exécution backtest / paper / live
 

@@ -37,6 +37,20 @@ OOS_FRACTION_DEFAULT = 0.35
 # elle s'applique simplement à la partie restante.
 HOLDOUT_FRACTION_DEFAULT = 0.20
 
+# Embargo par défaut : ≈ 1 % de la série (López de Prado, ch. 7).
+EMBARGO_FRACTION_DEFAULT = 0.01
+
+
+def default_purge_embargo(n: int, lookahead: int = 0) -> tuple:
+    """``(purge_bars, embargo_bars)`` pour un historique de ``n`` barres.
+
+    B-08 : ``purge`` = horizon de label (fuite IS → OOS par les y[t]) ;
+    ``embargo`` = max(purge, 1 % de la série).
+    """
+    purge = max(int(lookahead), 0)
+    embargo = max(purge, int(n * EMBARGO_FRACTION_DEFAULT)) if n else 0
+    return purge, embargo
+
 
 def split_with_holdout(df, warmup: int = WARMUP_BARS_DEFAULT,
                        oos_fraction: float = OOS_FRACTION_DEFAULT,

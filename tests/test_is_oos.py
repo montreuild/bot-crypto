@@ -6,8 +6,10 @@ auto_optimizer (WARMUP=210, fraction OOS 0.35) : mêmes indices de coupure.
 import polars as pl
 
 from app.core.is_oos import (
+    EMBARGO_FRACTION_DEFAULT,
     OOS_FRACTION_DEFAULT,
     WARMUP_BARS_DEFAULT,
+    default_purge_embargo,
     split_is_oos,
 )
 
@@ -46,6 +48,12 @@ def test_purge_and_embargo_carve_the_boundary():
     assert len(df_is) == len(a) - 10
     assert len(df_oos) == len(b) - 5
     assert float(df_is["close"][-1]) + 1 + 10 + 5 == float(df_oos["close"][0])
+
+
+def test_default_purge_embargo_is_one_percent():
+    purge, embargo = default_purge_embargo(10_000, lookahead=12)
+    assert purge == 12
+    assert embargo == max(12, int(10_000 * EMBARGO_FRACTION_DEFAULT))
 
 
 def test_optimizer_imports_shared_fraction():

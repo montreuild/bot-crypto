@@ -269,8 +269,26 @@ def _slices_for(df, strategy_name: str, timeframe: str, min_bars: int,
     genre d'écart qui produit un gate mesuré sur le holdout d'un côté et sur la
     sélection de l'autre, sans que rien ne le signale.
     """
+    from app.core.is_oos import default_purge_embargo
+    n = len(df) if df is not None else 0
+    lookahead = 0
+    try:
+        mod = importlib.import_module(f"app.strategies.{strategy_name}")
+        cls = getattr(mod, "Strategy", None)
+        raw = (getattr(cls, "label_horizons", None)
+               or getattr(cls, "lookahead", None)
+               or getattr(cls, "horizon", None))
+        if raw is not None:
+            from app.ml.splitting import label_embargo
+            lookahead = label_embargo(raw if hasattr(raw, "__iter__")
+                                      and not isinstance(raw, (str, bytes))
+                                      else [raw])
+    except Exception:
+        lookahead = 0
+    purge, embargo = default_purge_embargo(n, lookahead)
     df_is, df_oos, split, df_recherche, df_holdout = split_with_holdout(
-        df, holdout_fraction=holdout_fraction, min_holdout_bars=min_bars)
+        df, holdout_fraction=holdout_fraction, min_holdout_bars=min_bars,
+        purge_bars=purge, embargo_bars=embargo)
     if df_holdout is None and holdout_fraction > 0:
         logger.warning(
             f"[AutoOpt] {strategy_name}/{timeframe} : pas de holdout — "
@@ -899,7 +917,9 @@ class AutoOptimizer:
             df = df_map.get(tf)
             if df is None or len(df) < 300:
                 continue
-            df_is, df_oos, split = split_is_oos(df)   # convention unique (BT-08)
+            from app.core.is_oos import default_purge_embargo
+            _p, _e = default_purge_embargo(len(df))
+            df_is, df_oos, split = split_is_oos(df, purge_bars=_p, embargo_bars=_e)
 
             for name in strats:
                 if name not in PARAM_SPACES:

@@ -262,6 +262,27 @@ class OptimizerSearchEngine:
             return params
         return {**params, **self._fixed_ml_hp}
 
+    def _slot_envelope(self):
+        """O-04 : enveloppe du slot, pour mesurer à la même échelle que le live."""
+        cached = getattr(self, "_envelope", None)
+        if cached is not None:
+            return cached
+        try:
+            from app.core.bot_identity import build_slot_key, resolve_venue
+            from app.core.risk_envelope import resolve_envelope
+            slot_key = build_slot_key(
+                self.strategy_name, self.timeframe or "1h", self.symbol)
+            venue = resolve_venue(
+                self.cfg, self.strategy_name, self.timeframe, self.symbol)
+            env = resolve_envelope(
+                self.cfg, venue, self.symbol, slot_key,
+                peers=[slot_key], edges={slot_key: None})
+            self._envelope = env
+            return env
+        except Exception as e:
+            logger.debug(f"[Optimizer] enveloppe slot KO : {e}")
+            return None
+
     def _load_strategy(self):
         mod = importlib.import_module(f"app.strategies.{self.strategy_name}")
         eng = Engine()
@@ -278,7 +299,8 @@ class OptimizerSearchEngine:
         if self.strategy_name in cfg.get("optimizer_results", {}):
             del cfg["optimizer_results"][self.strategy_name]
         bt  = Backtester(eng, cfg, cancel_event=self._cancel_event,
-                         ml_mode=self.ml_mode, realistic_risk=True)
+                         ml_mode=self.ml_mode, realistic_risk=True,
+                         envelope=self._slot_envelope())
 
         # Essai évalué DANS ce process (n_jobs<=1, tests, repli après
         # BrokenProcessPool) : aucune variable d'environnement ne le signale à
@@ -300,7 +322,7 @@ class OptimizerSearchEngine:
         oos_score = _composite_score(res_oos, min_trades=_min_tr)
         overfit   = _overfitting_ratio(is_score, oos_score)
 
-        return {
+        out = {
             "params":      params,
             "is_score":    is_score,
             "oos_score":   oos_score,
@@ -315,7 +337,19 @@ class OptimizerSearchEngine:
             "oos_wr":      res_oos.win_rate,
             "oos_dd":      res_oos.max_drawdown,
             "oos_alpha":   getattr(res_oos, "alpha", None),
+            # O-01 : la tranche de sélection n'est plus hors-échantillon
+            # (holdout = vrai OOS). Alias val_* pour le nommer honnêtement.
+            "val_pnl":     getattr(res_oos, "net_profit", res_oos.total_pnl),
+            "val_sharpe":  res_oos.sharpe,
+            "val_trades":  res_oos.total_trades,
+            "val_wr":      res_oos.win_rate,
+            "val_score":   oos_score,
         }
+        env = self._slot_envelope()
+        if env is not None:
+            from app.core.risk_envelope import envelope_base
+            out["envelope_base"] = envelope_base(env)
+        return out
 
     def _penalized_score(self, r: dict) -> float:
         """Score final pénalisé si surapprentissage détecté.
@@ -674,7 +708,10 @@ class OptimizerSearchEngine:
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
         n_startup = max(8, n_trials // 3)
-        sampler = optuna.samplers.TPESampler(n_startup_trials=n_startup, seed=0)
+        # O-06 : seed configurable. None (défaut) = chaque campagne explore
+        # un chemin différent. Les tests passent optimizer.seed: 0.
+        _seed = (self.cfg.get("optimizer") or {}).get("seed")
+        sampler = optuna.samplers.TPESampler(n_startup_trials=n_startup, seed=_seed)
         study = optuna.create_study(direction="maximize", sampler=sampler)
 
         param_keys = list(self.param_space.keys())
@@ -1132,7 +1169,7 @@ class OptimizerSearchEngine:
             options = self.param_space[k]
             if len(options) > 1:
                 curr_idx = options.index(params[k]) if params[k] in options else 0
-                offsets  = [-1, 0, 1]
+                offsets  = [-1, 1]  # O-12 : 0 ne perturbe rien
                 new_idx  = curr_idx + random.choice(offsets)
                 new_idx  = max(0, min(len(options) - 1, new_idx))
                 new_params[k] = options[new_idx]

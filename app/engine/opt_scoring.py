@@ -76,6 +76,8 @@ def composite_score(res, min_trades: int = MIN_SIGNIFICANT_TRADES) -> float:
 
     cap = float(cap) if cap else _FALLBACK_CAPITAL
 
+    if pf is None or (isinstance(pf, float) and not math.isfinite(pf)):
+        pf = 6.0  # F-10 : aucune perte → plafond qualité, pas sentinelle 999
     if isinstance(pf, str):
         pf = 6.0
     pf = min(float(pf), 6.0)

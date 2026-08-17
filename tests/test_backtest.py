@@ -155,7 +155,14 @@ class TestBacktestResult:
     def test_all_winning(self):
         r = self._make_result([5, 3, 7])
         assert r.win_rate == 100.0
-        assert r.profit_factor == 999.0
+        assert r.profit_factor is None
+
+    def test_by_strategy_matches_global_when_single_strategy(self):
+        """F-08 : une seule stratégie → mêmes agrégats que le run global."""
+        r = self._make_result([10, -5, 8])
+        g = r.by_strategy["dummy"]
+        assert g["final_equity"] == pytest.approx(r.final_equity)
+        assert g["pnl"] == pytest.approx(r.total_pnl)
 
     def test_end_of_data_is_taker_with_spread(self):
         """B-10 : la clôture de fin de série n'est plus un maker gratuit."""

@@ -253,7 +253,9 @@ class BacktestResult:
 
         win_sum  = sum(wins)
         loss_sum = abs(sum(losses))
-        self.profit_factor = win_sum / loss_sum if loss_sum > 0 else (999.0 if win_sum > 0 else 0.0)
+        # F-10 : aucune perte → non mesurable (None), pas une sentinelle 999
+        # qui gagne tous les tris.
+        self.profit_factor = (win_sum / loss_sum) if loss_sum > 0 else (None if win_sum > 0 else 0.0)
 
         maes = [t.get("mae", 0) for t in closed if t.get("mae") is not None]
         mfes = [t.get("mfe", 0) for t in closed if t.get("mfe") is not None]
@@ -488,7 +490,8 @@ class BacktestResult:
             d["avg_win"]      = round(_sf(float(np.mean(wins_s)), 0.0), 4) if wins_s else 0.0
             d["avg_loss"]     = round(_sf(float(np.mean(loss_s)), 0.0), 4) if loss_s else 0.0
             _loss_sum = abs(sum(loss_s))
-            d["profit_factor"] = round(sum(wins_s) / _loss_sum, 3) if _loss_sum > 0 else (999.0 if wins_s else 0.0)
+            d["profit_factor"] = (round(sum(wins_s) / _loss_sum, 3) if _loss_sum > 0
+                                  else (None if wins_s else 0.0))
             d["expectancy"]   = round(
                 len(wins_s) / len(sd_pnls) * d["avg_win"] +
                 len(loss_s) / len(sd_pnls) * d["avg_loss"], 4
@@ -539,7 +542,10 @@ class BacktestResult:
 
     def to_dict(self) -> dict:
         pf = self.profit_factor
-        pf_safe = round(min(pf, 999.0), 3) if math.isfinite(pf) else 999.0
+        if pf is None:
+            pf_safe = None
+        else:
+            pf_safe = round(float(pf), 3) if math.isfinite(float(pf)) else None
         return {
             "initial_capital":    self.initial_capital,
             "rejections":         self.rejections,
@@ -565,8 +571,12 @@ class BacktestResult:
             "sharpe":             (None if self.sharpe is None
                                    else round(_sf(self.sharpe, 0.0), 3)),
             # QW-1 : métriques étendues (S3-07 — branchement a posteriori)
-            "sortino":            round(_sf(getattr(self, "sortino", 0.0), 0.0), 3),
-            "calmar":             round(_sf(getattr(self, "calmar", 0.0), 0.0), 3),
+            "sortino":            (None if getattr(self, "sortino", None) is None
+                                   or not math.isfinite(float(self.sortino))
+                                   else round(float(self.sortino), 3)),
+            "calmar":             (None if getattr(self, "calmar", None) is None
+                                   or not math.isfinite(float(self.calmar))
+                                   else round(float(self.calmar), 3)),
             "cagr":               round(_sf(getattr(self, "cagr", 0.0), 0.0), 3),
             "alpha_vs_bh":        round(_sf(getattr(self, "alpha_vs_bh", 0.0), 0.0), 4),
             "expectancy":         round(_sf(self.expectancy, 0.0), 4),
