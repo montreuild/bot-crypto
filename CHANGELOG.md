@@ -40,6 +40,12 @@ sur le capital à l'ouverture). `Σ trade.pnl == final_equity − initial_capita
 et l'optimiseur / `composite_score` lisent `net_profit`. Les résultats
 persistés portent `schema_version` + `git_commit` (D-06).
 
+### 🐛 F-04 — plus d'emprunt fictif à levier 1
+
+`Venue.effective_borrow_rate` rend 0 quand `max_leverage ≤ 1`. La venue
+par défaut (margin ×1) ne facture plus ~30 %/an de portage sur des fonds
+propres. ⚠️ change les backtests historiques (dans le sens favorable).
+
 ### 🐛 L'overfit résiduel n'existait pas — c'était la métrique
 
 `docs/RECALIBRATION_HTF.md` signalait cinq couples « surappris malgré

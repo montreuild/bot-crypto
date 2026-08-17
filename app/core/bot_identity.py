@@ -104,6 +104,11 @@ class Venue:
         """
         if not self.borrows:
             return 0.0
+        # F-04 : à levier ≤ 1 la position est couverte par les fonds propres —
+        # rien n'est emprunté. Sans ça, la venue par défaut (margin ×1)
+        # facturait ~30 %/an de portage fictif.
+        if float(self.max_leverage or 1.0) <= 1.0:
+            return 0.0
         return float(self.borrow_rate_daily if self.borrow_rate_daily is not None
                      else default_rate)
 

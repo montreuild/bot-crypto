@@ -115,7 +115,7 @@ def _live_close_pnl(margin: bool = True) -> float:
                 "taker_fee": FEE_RATE, "borrow_rate_daily": BORROW_RATE,
                 "borrow_periods_per_day": PERIODS,
                 "reentry_cooldown_bars": 0,
-                **({"margin_mode": "isolated"} if margin else {}),
+                **({"margin_mode": "isolated", "max_leverage": 3} if margin else {}),
             }, "exchange": {"name": "okx", "margin": margin}}
             self.exchange = MagicMock()
             self.exchange.create_order.return_value = {"price": EXIT, "id": "x"}
@@ -153,6 +153,21 @@ def _live_close_pnl(margin: bool = True) -> float:
     base_before = h._paper_base
     h._close_position("p1", EXIT)
     return h._paper_base - base_before
+
+
+def test_no_borrow_at_leverage_one():
+    """F-04 : levier ≤ 1 ⇒ rien n'est emprunté, donc 0 d'intérêt."""
+    from app.core.bot_identity import Venue
+    from app.core.execution import venue_borrow_rate
+    spot = Venue(name="spot")
+    margin_1x = Venue(name="m1", market_type="margin", max_leverage=1.0)
+    margin_3x = Venue(name="m3", market_type="margin", max_leverage=3.0,
+                      borrow_rate_daily=0.00072)
+    assert venue_borrow_rate(0.00072, spot) == 0.0
+    assert venue_borrow_rate(0.00072, margin_1x) == 0.0
+    assert venue_borrow_rate(0.00072, margin_3x) == pytest.approx(0.00072)
+    assert margin_1x.effective_borrow_rate(0.00072) == 0.0
+    assert margin_3x.effective_borrow_rate(0.00072) == pytest.approx(0.00072)
 
 
 def test_backtest_and_live_close_same_net_pnl():

@@ -66,6 +66,10 @@ def venue_borrow_rate(daily_rate: float, venue=None) -> float:
         return float(fn(daily_rate))
     # Venue « canard » (test double, dict-like) : on retombe sur le marché.
     if getattr(venue, "market_type", "spot") == "margin":
+        # F-04 : même garde que Venue.effective_borrow_rate pour les
+        # doubles de test / venues « canard ».
+        if float(getattr(venue, "max_leverage", 1.0) or 1.0) <= 1.0:
+            return 0.0
         return float(daily_rate)
     return 0.0
 

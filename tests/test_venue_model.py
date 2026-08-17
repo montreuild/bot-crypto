@@ -98,13 +98,20 @@ class TestBorrowByVenue:
         assert v.effective_borrow_rate(0.00072) == 0.0
 
     def test_margin_borrows_at_global_rate_by_default(self):
-        v = Venue(name="m", market_type="margin")
+        v = Venue(name="m", market_type="margin", max_leverage=3.0)
         assert v.borrows is True
         assert v.effective_borrow_rate(0.00072) == pytest.approx(0.00072)
 
     def test_venue_rate_overrides_the_global_one(self):
-        v = Venue(name="m", market_type="margin", borrow_rate_daily=0.002)
+        v = Venue(name="m", market_type="margin", max_leverage=3.0,
+                  borrow_rate_daily=0.002)
         assert v.effective_borrow_rate(0.00072) == pytest.approx(0.002)
+
+    def test_margin_at_leverage_one_charges_no_borrow(self):
+        """F-04 : levier 1 = fonds propres, pas d'emprunt."""
+        v = Venue(name="m", market_type="margin", max_leverage=1.0)
+        assert v.borrows is True
+        assert v.effective_borrow_rate(0.00072) == 0.0
 
     def test_perp_borrows(self):
         assert Venue(name="p", market_type="perp").borrows is True
