@@ -89,10 +89,18 @@ présenté comme une victoire.
 gros PnL sur dix trades a la forme d'un tirage heureux, pas d'un edge. Le
 plancher les autorise ; il ne les recommande pas.
 
-**Le surapprentissage n'est pas qu'un problème d'échantillon.** Cinq couples ont
-un `overfit` saturé à 10,0, dont `pullback_trend` BTC 1 h avec **110 trades** et
-`fear_momentum` BTC 4 h avec **130**. Avec de la matière, le ratio IS/OOS reste
-dégradé : ce n'est plus imputable à la rareté.
+~~**Le surapprentissage n'est pas qu'un problème d'échantillon.** Cinq couples
+ont un `overfit` saturé à 10,0, dont `pullback_trend` BTC 1 h avec 110 trades.~~
+
+⚑ **RETIRÉ — c'était une lecture erronée de la métrique.** `overfit = 10,0` ne
+mesure aucun degré de surapprentissage : le garde `max(oos_score, 0.01)` fait
+saturer le ratio dès que le score OOS est **non positif**. Les cinq couples
+« surappris malgré 110 trades » sont exactement, et uniquement, ceux dont le
+score OOS est négatif — un fait déjà lisible dans la colonne « PnL OOS ».
+
+La vérification a mis au jour deux vrais défauts de la métrique, dont un qui
+faussait le classement de l'optimiseur. Corrigés :
+`docs/DEFAUT_METRIQUE_OVERFIT.md`.
 
 ### `fear_momentum` est le résultat négatif le plus solide de la campagne
 
@@ -129,6 +137,5 @@ Ce que la mesure autorise à dire :
 
 - **Élargir l'univers** plutôt que la fenêtre pour les couples à dix trades :
   c'est le nombre de symboles qui manque, pas l'historique.
-- **Chercher la cause du surapprentissage résiduel** sur les cinq couples à
-  `overfit` 10,0 avec échantillon large — c'est le seul signal que ni la fenêtre
-  ni le plancher n'expliquent.
+- ~~Chercher la cause du surapprentissage résiduel~~ — **fait, et il n'y en
+  avait pas** : c'était la métrique. Voir `docs/DEFAUT_METRIQUE_OVERFIT.md`.
