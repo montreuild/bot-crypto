@@ -267,8 +267,10 @@ class PositionCloseMixin:
         # position ne consomme plus rien dès qu'elle est close.
         self.ledger.release(pos_id)
 
-        with session_scope(self.SessionLocal) as _sess:
-            delete_open_position(_sess, pos_id)
+        # A-01 : la suppression de la position ouverte est reportée dans
+        # la même transaction que save_trade + update_daily_stats, plus bas.
+        # Un crash entre les deux commits laissait un trade exécuté nulle
+        # part (ni open_positions, ni trades).
         self._loss_notified.discard(pos_id)
 
         pnl_pct    = round(pnl / pos["notional"] * 100, 4) if pos.get("notional", 0) > 0 else 0.0
@@ -321,12 +323,19 @@ class PositionCloseMixin:
         })
 
         with session_scope(self.SessionLocal) as session:
-            save_trade(session, trade)
+            delete_open_position(session, pos_id, commit=False)
+            save_trade(session, trade, commit=False)
             update_daily_stats(
                 session,
                 datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                pnl, pnl > 0, fees, self.capital_display
+                pnl, pnl > 0, fees, self.capital_display,
+                commit=False,
             )
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
         if exit_reason in ("stop_loss", "trailing_stop", "gap") or pnl < 0:
             cooldown_secs = (

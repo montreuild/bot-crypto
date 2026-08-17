@@ -15,6 +15,14 @@ Historique des versions du Crypto Bot.
   comme amélioration de qualité.
 - **L-05** : `RiskLedger.reserve` refuse une clé déjà réservée (`deja_reserve`)
   au lieu d'écraser et de fuir du budget.
+- **N-02** : le bouton « Appliquer » de l'UI juge le holdout, plus la tranche
+  de sélection. `gate_source` est renvoyé dans la réponse.
+- **N-01** : `required_total_bars` réserve aussi les 20 % de holdout ; un
+  holdout refusé se journalise en WARNING.
+- **F-12 / L-06** : suppression du plafond caché à 25 % du capital en live.
+  Un refus de pré-check laisse désormais une trace (`capital_insuffisant`).
+- **A-01** : clôture en une seule transaction (delete + save_trade +
+  daily_stats). Un crash ne peut plus perdre un trade exécuté.
 
 ### 🐛 L'overfit résiduel n'existait pas — c'était la métrique
 

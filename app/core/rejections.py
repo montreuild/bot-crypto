@@ -15,6 +15,8 @@ REASONS = (
     "evenement_deja_trade",
     # L-05 — 2ᵉ réserve sur une clé déjà engagée (fuite de budget sinon).
     "deja_reserve",
+    # F-12 / L-14 — pré-check live (cash/marge) : plus de refus silencieux.
+    "capital_insuffisant",
 )
 
 

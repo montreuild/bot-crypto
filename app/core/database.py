@@ -308,11 +308,13 @@ def persist_open_position(session: Session, pos: dict) -> None:
         raise
 
 
-def delete_open_position(session: Session, pos_id: str) -> None:
+def delete_open_position(session: Session, pos_id: str, commit: bool = True) -> None:
     """Supprime une position de la table open_positions (appelé à la clôture)."""
     rec = session.get(OpenPosition, pos_id)
     if rec:
         session.delete(rec)
+        if not commit:
+            return
         try:
             session.commit()
         except Exception as e:
@@ -347,7 +349,7 @@ def load_open_positions(session: Session) -> List[dict]:
     return result
 
 
-def save_trade(session: Session, t: dict):
+def save_trade(session: Session, t: dict, commit: bool = True):
     # FIN-06 : si l'appelant ne fournit pas déjà la répartition taker/maker,
     # replie tout l'agrégat `fees` sur `fee_taker` — c'est la réalité actuelle
     # du chemin live (aucune distinction maker/taker implémentée côté
@@ -406,7 +408,8 @@ def save_trade(session: Session, t: dict):
     )
     try:
         session.add(rec)
-        session.commit()
+        if commit:
+            session.commit()
     except Exception:
         session.rollback()
         raise
@@ -604,7 +607,7 @@ def load_risk_state(session: Session, key: str = None) -> dict:
 
 
 def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,
-                       fees: float, equity: float):
+                       fees: float, equity: float, commit: bool = True):
     row = session.query(DailyStats).filter(DailyStats.date == date_str).first()
     if not row:
         row = DailyStats(date=date_str, trades=0, wins=0, pnl=0.0,
@@ -616,6 +619,8 @@ def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,
     row.pnl         = round((row.pnl   or 0.0) + pnl,  6)
     row.fees        = round((row.fees  or 0.0) + fees, 6)
     row.equity_close = equity
+    if not commit:
+        return
     try:
         session.commit()
     except Exception:

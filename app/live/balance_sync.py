@@ -187,18 +187,14 @@ class BalanceSyncMixin:
                     f"[Paper] {symbol} : capital simulé insuffisant "
                     f"(dispo={available:.2f} < notional={notional:.2f})"
                 )
+                self._record_precheck_reject(symbol, "capital_insuffisant")
                 return False
             return True
 
-        if self.capital_display < notional * 0.05:
-            logger.warning(f"[PreCheck] {symbol} : capital insuffisant")
-            return False
-        if notional > self.capital_display * 0.25:
-            logger.warning(
-                f"[PreCheck] {symbol} : notionnel trop élevé ({notional:.2f})"
-            )
-            return False
-
+        # F-12 / L-06 : plus de plafond caché à 25 % du capital, ni de plancher
+        # à 5 %. L'enveloppe (env.max_notional) et RiskLedger.reserve portent
+        # déjà ces bornes, y compris en backtest. Un refus ici doit laisser
+        # une trace dans les compteurs (L-14).
         is_margin = bool(self.cfg.get("exchange", {}).get("margin")
                          or self.cfg["trading"].get("margin_mode") is not None)
         detail = getattr(self, "_balance_detail", None)
@@ -211,6 +207,7 @@ class BalanceSyncMixin:
                     f"[PreCheck] {symbol} : solde spot insuffisant "
                     f"(free={free:.2f} < notional={notional:.2f})"
                 )
+                self._record_precheck_reject(symbol, "capital_insuffisant")
                 return False
         elif is_margin:
             margin_level = getattr(self, "_margin_level", None)
@@ -221,5 +218,12 @@ class BalanceSyncMixin:
                         f"[PreCheck] {symbol} : margin level critique "
                         f"({margin_level:.3f} < {ml_critical}) — entrée refusée"
                     )
+                    self._record_precheck_reject(symbol, "capital_insuffisant")
                     return False
         return True
+
+    def _record_precheck_reject(self, symbol: str, reason: str) -> None:
+        rejections = getattr(self, "rejections", None)
+        if rejections is None:
+            return
+        rejections.record(reason, symbol=symbol)
