@@ -170,29 +170,6 @@ def _parse_ohlcv_bound(raw: str, end_of_day: bool):
     return dt
 
 
-def _limit_for_date_range(tf: str, start_date: str, end_date: str) -> int:
-    """A-03 : nombre de bougies à charger pour couvrir [start, now], pas 50k.
-
-    ``fetch`` renvoie la queue du cache : pour que la plage demandée y
-    figure, il faut assez de bougies depuis ``start`` jusqu'à maintenant
-    (pas seulement start→end). Plafond 50 000, 5 000 en ``1d``.
-    """
-    from app.core.timeframes import TF_SECONDS
-
-    tf_sec = TF_SECONDS.get(tf, 3600) or 3600
-    cap = 5000 if tf == "1d" else 50000
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    start_dt = _parse_ohlcv_bound(start_date, False) if start_date else None
-    end_dt = _parse_ohlcv_bound(end_date, True) if end_date else None
-    if start_dt is None:
-        return cap
-    span_end = now
-    if end_dt is not None and end_dt > span_end:
-        span_end = end_dt
-    bars = int(max(0.0, (span_end - start_dt).total_seconds()) / tf_sec) + 3
-    return max(100, min(bars, cap))
-
-
 def _filter_df_by_date_range(df, start_date: str = "", end_date: str = ""):
     """QW-2 : filtre le DataFrame par plage temporelle (ISO 8601).
 
@@ -374,18 +351,14 @@ def run_backtest(
             logger.warning(f"[backtest] rechargement config KO : {e}")
 
         tf    = timeframe.strip() or state.cfg["trading"].get("timeframe", "1h")
-        # A-03 : une plage de dates ne charge plus 50 000 bougies « au cas où ».
-        # Scan Parquet filtré d'abord ; sinon fetch borné à la span start→now
-        # (plafond 50k, 5k en 1d). Sans dates : comportement historique.
+        # A-03 : le backfill reste celui du CandleStore (50k, 5k en 1d) —
+        # persisté une fois, ça approfondit l'historique. La plage de dates
+        # ne change que ce qui est renvoyé au backtest (scan Parquet filtré).
         use_date_range = bool(start_date.strip() or end_date.strip())
         if use_date_range:
-            try:
-                limit = _limit_for_date_range(tf, start_date.strip(), end_date.strip())
-            except Exception as _e:
-                raise HTTPException(
-                    400,
-                    f"plage de dates invalide (ISO 8601 attendu) : {_e}",
-                )
+            limit = 50000
+            if tf == "1d":
+                limit = 5000
         else:
             limit = max(100, min(limit, 50000))
             if tf == "1d":
@@ -412,18 +385,21 @@ def run_backtest(
         # QW-3 : refresh force prefer_cache=False
         exchange = _get_bt_exchange(effective_cfg)
         store = get_store()
-        df = None
-        if use_date_range and not refresh:
-            start_dt = (
-                _parse_ohlcv_bound(start_date.strip(), False) if start_date.strip() else None
+        if use_date_range:
+            try:
+                start_dt = (
+                    _parse_ohlcv_bound(start_date.strip(), False) if start_date.strip() else None
+                )
+                end_dt = (
+                    _parse_ohlcv_bound(end_date.strip(), True) if end_date.strip() else None
+                )
+            except Exception as _e:
+                raise HTTPException(400, f"plage de dates invalide (ISO 8601 attendu) : {_e}")
+            df = store.fetch_range(
+                exchange, symbol, tf, start=start_dt, end=end_dt,
+                total=limit, prefer_cache=not refresh,
             )
-            end_dt = (
-                _parse_ohlcv_bound(end_date.strip(), True) if end_date.strip() else None
-            )
-            cached = store.load_range(symbol, tf, start=start_dt, end=end_dt)
-            if cached is not None and len(cached) > 0:
-                df = cached
-        if df is None or len(df) == 0:
+        else:
             df = store.fetch(exchange, symbol, tf, total=limit,
                              prefer_cache=not refresh)
         if df is None or len(df) == 0:

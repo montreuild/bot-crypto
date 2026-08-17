@@ -75,8 +75,9 @@ tort). Un long à levier L n'emprunte que `1 − 1/L` du notionnel.
 - **S-03 / A-10** : `?api_key=` sur le WebSocket seulement si
   `ALLOW_WS_QUERY_KEY=1` (WARNING à chaque usage).
 - **S-04** : cookie `api_key` `Secure` si `x-forwarded-proto: https`.
-- **A-03** : un backtest par dates scanne le Parquet filtré ; plus de chargement
-  de 50 000 bougies « au cas où » (plafond `1d` = 5 000 aussi sur cette branche).
+- **A-03** : une plage de dates passe par `CandleStore.fetch_range` — backfill
+  jusqu'à la profondeur habituelle (50k / 5k en `1d`, persisté une fois),
+  puis lecture Parquet filtrée. Le backtest ne matérialise que la fenêtre.
 - **UI** : walk-forward annoncé comme analyse de stabilité ; l'optimiseur
   affiche `val_*` et `gate_source` (holdout vs sélection).
 - **A-08** : `entry_time` vient de `open_time` (live) ou de l'ISO backtest,

@@ -555,6 +555,31 @@ class TestInteriorGaps:
         assert len(cached) == ex.depth
 
 
+def test_fetch_range_approfondit_le_store_et_ne_rend_que_la_plage(tmp_path):
+    """A-03 : le backfill vise la profondeur du store ; le backtest n'en voit
+    que la fenêtre. Une plage de 3 jours ne doit pas empêcher d'aller chercher
+    l'historique manquant — c'est persisté une fois."""
+    from datetime import timedelta
+
+    ex = _FakeExchange(depth=400, tf_ms=3_600_000)
+    store = _store(str(tmp_path))
+    # `_fetch_full(limit=200)` sans `since` ramène les 200 plus anciennes
+    # barres de la source. La fenêtre doit recouvrir ce bloc, pas la queue.
+    first = datetime.fromtimestamp(
+        (ex._now - ex.depth * ex.tf_ms) / 1000, tz=timezone.utc
+    ).replace(tzinfo=None)
+    start, end = first, first + timedelta(hours=10)
+    out = store.fetch_range(
+        ex, "BTC/USDC", "1h", start=start, end=end,
+        total=200, prefer_cache=False,
+    )
+    cached = store.load_cached("BTC/USDC", "1h")
+    assert len(cached) >= 200, "le Parquet doit avoir été approfondi vers `total`"
+    assert out is not None and 0 < len(out) < len(cached)
+    assert out["time"].min() >= start
+    assert out["time"].max() <= end
+
+
 def test_load_range_ne_materialise_que_la_plage(tmp_path):
     """A-03 : scan Parquet filtré — pas les 50k bougies du fichier."""
     import polars as pl
