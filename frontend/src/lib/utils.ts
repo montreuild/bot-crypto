@@ -88,10 +88,10 @@ export function parseSlotKey(slotKey: string): { strategy: string; tf: string; s
 // ── Cycle de vie ────────────────────────────────────────────────────────────
 
 export const LIFECYCLE_COLORS: Record<string, { bg: string; text: string; label: string; icon: string }> = {
-  candidat: { bg: 'bg-amber-500/10', text: 'text-amber-400', label: 'Candidat', icon: '○' },
-  essai: { bg: 'bg-cyan-500/10', text: 'text-cyan-400', label: 'Essai', icon: '◐' },
-  actif: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', label: 'Actif', icon: '●' },
-  retire: { bg: 'bg-red-500/10', text: 'text-red-400', label: 'Retiré', icon: '✕' },
+  candidat: { bg: 'bg-amber-500/10', text: 'text-amber-800 dark:text-amber-400', label: 'Candidat', icon: '○' },
+  essai: { bg: 'bg-cyan-500/10', text: 'text-cyan-800 dark:text-cyan-400', label: 'Essai', icon: '◐' },
+  actif: { bg: 'bg-emerald-500/10', text: 'text-emerald-800 dark:text-emerald-400', label: 'Actif', icon: '●' },
+  retire: { bg: 'bg-red-500/10', text: 'text-red-700 dark:text-red-400', label: 'Retiré', icon: '✕' },
 };
 
 export function lifecycleStyle(state: string) {

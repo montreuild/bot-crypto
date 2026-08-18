@@ -41,9 +41,9 @@ export function ApiStatusBanner() {
   return (
     <div
       role="alert"
-      className="flex items-center gap-3 px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/30 text-amber-200 text-sm flex-shrink-0"
+      className="flex items-center gap-3 px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/30 text-amber-800 dark:text-amber-200 text-sm flex-shrink-0"
     >
-      <PlugZap className="w-4 h-4 flex-shrink-0 text-amber-400" />
+      <PlugZap className="w-4 h-4 flex-shrink-0 text-amber-800 dark:text-amber-400" />
       <p className="flex-1 min-w-0">
         <span className="font-semibold">Backend injoignable</span>
         {' — '}

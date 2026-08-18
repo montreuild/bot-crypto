@@ -445,23 +445,25 @@ function ReplayConfigCard({
           <TimeframeButtons value={timeframe} onChange={setTimeframe} size="sm" />
         </div>
         <div>
-          <Label className="text-xs text-dim block mb-1">
+          <Label htmlFor="replay-months" className="text-xs text-dim block mb-1">
             Mois (1-24) · ≈ {hintBougies.toLocaleString('fr-FR')} bougies
           </Label>
           <input
+            id="replay-months"
             type="range"
             min={1}
             max={24}
             value={months}
             onChange={(e) => setMonths(Number(e.target.value))}
             className="w-full accent-cyan-400"
+            aria-label="Nombre de mois à charger"
           />
           <div className="text-xs text-muted-foreground font-mono text-center mt-1">{months} mois</div>
         </div>
         <div>
           <Label className="text-xs text-dim block mb-1">Stratégie overlay</Label>
           <Select value={strategy} onValueChange={setStrategy}>
-            <SelectTrigger className="text-sm">
+            <SelectTrigger className="text-sm" aria-label="Stratégie overlay">
               <SelectValue placeholder={strategy || 'Sélectionner…'} />
             </SelectTrigger>
             <SelectContent>

@@ -12,11 +12,11 @@ const variants: Record<Variant, string> = {
   // été déclaré ici : `variants[variant]` renvoyait `undefined` et le badge
   // s'affichait sans aucun style.
   muted: 'bg-card-hover/60 text-dim border-border',
-  success: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-  danger: 'bg-red-500/10 text-red-400 border-red-500/30',
-  warning: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-  info: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30',
-  purple: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+  success: 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-400 border-emerald-500/30',
+  danger: 'bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30',
+  warning: 'bg-amber-500/10 text-amber-800 dark:text-amber-400 border-amber-500/30',
+  info: 'bg-cyan-500/10 text-cyan-800 dark:text-cyan-400 border-cyan-500/30',
+  purple: 'bg-purple-500/10 text-purple-800 dark:text-purple-400 border-purple-500/30',
 };
 
 export function Badge({

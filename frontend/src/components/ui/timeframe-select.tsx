@@ -114,7 +114,7 @@ export function TimeframeButtons({
               'rounded-md font-mono border transition-colors',
               size === 'sm' ? 'px-2 py-1 text-[11px]' : 'px-2.5 py-1 text-xs',
               active
-                ? 'bg-primary-500/15 text-primary-400 border-primary-500/40'
+                ? 'bg-primary-500/15 text-primary-800 dark:text-primary-400 border-primary-500/40'
                 : 'bg-card-hover text-muted border-border hover:border-border-hi',
             )}
           >

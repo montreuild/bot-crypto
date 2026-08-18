@@ -22,8 +22,8 @@ const variantClasses: Record<Variant, string> = {
   // Clair : texte slate-900 sur cyan-500 (≥ 7:1). Sombre : même texte sombre
   // (le fond page n'est plus utilisable — en light c'est #f8fafc, 2.3:1).
   primary: 'bg-primary-500 text-slate-900 hover:bg-primary-400 hover:text-slate-900',
-  success: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20',
-  danger: 'bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20',
+  success: 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20',
+  danger: 'bg-red-500/10 text-red-700 dark:text-red-400 border border-red-500/30 hover:bg-red-500/20',
   ghost: 'bg-transparent text-muted hover:bg-card-hover hover:text-foreground',
   outline: 'bg-transparent text-foreground border border-border hover:border-border-hi',
 };
