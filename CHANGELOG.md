@@ -10,6 +10,11 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📝 Backlog revue-complete
+
+- État courant et reste à faire : `audit/20-REVISION-2026-08-18.md` §2.
+- README pointe cette révision.
+
 ### 🐛 Revue 2026-08-18 (75 constats)
 
 - **FIN-01..10** : `entry_fees` ; early/time taker+spread ; borrow accumulé ;

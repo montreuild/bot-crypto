@@ -9,6 +9,7 @@
 >
 > Les dix corrections du §3 sont **faites**, y compris **B-02**.
 > N-01 à N-04 sont traités. O-05 sans retour de scikit-learn.
+> Revue-complete : PR **#249**. Reste : [`20-REVISION` §2](20-REVISION-2026-08-18.md).
 
 **Dépôt** : `bot-crypto` — bot de trading algorithmique multi-stratégies
 (Python 3.14 / FastAPI / polars / LightGBM + Next.js 15 / React 19)
@@ -123,6 +124,8 @@ livrables une par une.
 sont dans `main`. B-02 + R-02 (`RiskLedger`). D-06 posé. Historique `data/`
 vidé. U-05 / U-08 / X-03 livrés — voir
 [`19-REVISION-2026-08-18.md`](19-REVISION-2026-08-18.md).
+Revue-complete livrée (PR #249) — reste listé dans
+[`20-REVISION-2026-08-18.md`](20-REVISION-2026-08-18.md) §2.
 Il reste à **faire tourner le paper** pour les verdicts `oos_tracker` (D-07).
 
 **Avertissement sur l'ordre** : les corrections 3, 6 et 8 modifient les
