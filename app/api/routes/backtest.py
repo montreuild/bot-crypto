@@ -1,8 +1,6 @@
 """Route backtest — POST /api/backtest."""
-import importlib
 import logging
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -12,9 +10,6 @@ from app.api import state
 from app.api.helpers import _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps, verify_api_key
 from app.core.candle_store import get_store
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.risk_gate import _default_venue_capital
-from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer, run_dual_pass
-from app.engine.engine import Engine
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -89,6 +84,8 @@ def backtest_range(request: Request, symbol: str, timeframe: str = "1h"):
 def cancel_backtest(request: Request):
     """Annule le backtest en cours en levant le signal d'arrêt."""
     state._bt_cancel_event.set()
+    from app.engine.compute_pool import request_cancel
+    request_cancel()
     return {"status": "cancelling"}
 
 
@@ -461,115 +458,47 @@ def run_backtest(
 
         by_strategy = {}
 
-        def _run_one(name: str) -> tuple:
-            try:
-                if state._bt_cancel_event.is_set():
-                    return name, {"error": "Backtest annulé", "trades": []}
-                mod  = importlib.import_module(f"app.strategies.{name}")
-                inst = mod.Strategy()
-                # Pass cancel event to ML strategies so they can abort training
-                if hasattr(inst, '_cancel_event'):
-                    inst._cancel_event = state._bt_cancel_event
-                eng = Engine()
-                eng.register(inst, silent=True)
-                env = _slot_envelope(name, tf, symbol) if dual_pass else None
-                runs_payload = None
-                if env is not None:
-                    # La passe LIVE fait foi : c'est l'échelle qui tradera
-                    # réellement, donc celle qui pilote la promotion (§5.1).
-                    # `realistic_risk` doit suivre les deux passes : sans lui,
-                    # la réponse annoncerait `realistic_risk: true` alors que
-                    # les circuit breakers n'auraient pas tourné.
-                    runs = run_dual_pass(eng, effective_cfg, df, env, symbol=symbol,
-                                         timeframe=tf,
-                                         cancel_event=state._bt_cancel_event,
-                                         realistic_risk=realistic_risk)
-                    res = runs["live"]
-                    runs_payload = {k: _pass_summary(r) for k, r in runs.items()}
-                    runs_payload["ecart_pnl_pct"] = round(
-                        runs_payload["live"]["pnl_pct"] - runs_payload["reference"]["pnl_pct"], 4)
-                else:
-                    bt  = Backtester(eng, effective_cfg,
-                                      cancel_event=state._bt_cancel_event,
-                                      realistic_risk=realistic_risk)
-                    res = bt.run(df, symbol, timeframe=tf)
-                d   = res.to_dict()
-                strat_key  = next(iter(res.by_strategy.keys()), name) if res.by_strategy else name
-                strat_data = res.by_strategy.get(strat_key, {})
-                all_trades = strat_data.get("trades", [])
-                entry = {
-                    "total_trades":     strat_data.get("total_trades",  d["total_trades"]),
-                    "win_rate":         strat_data.get("win_rate",      d["win_rate"]),
-                    "total_pnl":        strat_data.get("total_pnl",     d["total_pnl"]),
-                    "total_fees":       strat_data.get("total_fees",    d["total_fees"]),
-                    # QW-3 : agrégats de coûts pour analyse what-if frais/levier
-                    "total_borrow_cost": d.get("total_borrow_cost", 0.0),
-                    "total_slippage_cost": d.get("total_slippage_cost", 0.0),
-                    "max_drawdown":     strat_data.get("max_drawdown",  d["max_drawdown"]),
-                    "sharpe":           strat_data.get("sharpe",        d["sharpe"]),
-                    # QW-6 : diagnostics des circuit breakers. Chaque stratégie
-                    # a SON `Backtester`, donc son propre gate : les
-                    # diagnostics sont par stratégie, pas globaux. Sans cette
-                    # recopie ils ne quittaient jamais le backend, et le
-                    # panneau de l'UI restait vide en permanence.
-                    "realistic_risk_diagnostics": d.get("realistic_risk_diagnostics"),
-                    # QW-1 : métriques étendues (S3-07 — branchement)
-                    "sortino":          d.get("sortino", 0.0),
-                    "calmar":           d.get("calmar", 0.0),
-                    "cagr":             d.get("cagr", 0.0),
-                    "alpha_vs_bh":      d.get("alpha_vs_bh", 0.0),
-                    "expectancy":       strat_data.get("expectancy",    d["expectancy"]),
-                    "profit_factor":    strat_data.get("profit_factor", d["profit_factor"]),
-                    "avg_win":          strat_data.get("avg_win",       d.get("avg_win", 0)),
-                    "avg_loss":         strat_data.get("avg_loss",      d.get("avg_loss", 0)),
-                    "initial_capital":  d["initial_capital"],
-                    "final_equity":     strat_data.get("final_equity",  d["final_equity"]),
-                    "equity_curve":     strat_data.get("equity_curve",  d.get("equity_curve", [])),
-                    "buy_and_hold_pnl": d.get("buy_and_hold_pnl"),
-                    "buy_and_hold_pct": d.get("buy_and_hold_pct"),
-                    "alpha":            d.get("alpha"),
-                    "trades":           all_trades,
-                    "days_covered":     days_covered,
-                    "bars_warning":     _bars_warning,
-                    "diagnostics":      d.get("diagnostics"),
-                    # S12 : motifs de refus, vocabulaire partagé avec le live.
-                    "rejections":       d.get("rejections"),
-                    "envelope":         _envelope_payload(env),
-                    "runs":             runs_payload,
-                }
-                if walk_forward and len(df) >= 200:
-                    wf = WalkForwardAnalyzer(
-                        eng, effective_cfg,
-                        n_folds=effective_cfg.get("backtest", {}).get("walk_forward_folds", 5)
-                    )
-                    entry["walk_forward"] = wf.run(df, symbol, timeframe=timeframe)
-                if monte_carlo and all_trades:
-                    mc = MonteCarlo(
-                        n_runs=effective_cfg.get("backtest", {}).get("monte_carlo_runs", 200)
-                    )
-                    entry["monte_carlo"] = mc.run(all_trades,
-                                                  _default_venue_capital(effective_cfg))
-                # Persiste le résumé du dernier backtest pour ce slot (strategy::tf)
-                # → consommé par la page Audit OOS. Non bloquant.
+        # A-02 : calcul lourd hors process API (ProcessPool spawn). Le fetch
+        # OHLCV ci-dessus reste ici ; record_backtest / recos restent ici
+        # (I/O, pas de GIL).
+        from app.engine.compute_pool import clear_cancel, map_jobs
+        clear_cancel()
+        bt_cfg = effective_cfg.get("backtest") or {}
+        payloads = []
+        for name in strats_to_run:
+            env = _slot_envelope(name, tf, symbol) if dual_pass else None
+            payloads.append({
+                "name": name,
+                "cfg": effective_cfg,
+                "df": df,
+                "symbol": symbol,
+                "timeframe": tf,
+                "realistic_risk": realistic_risk,
+                "dual_pass": bool(dual_pass and env is not None),
+                "envelope": env,
+                "walk_forward": walk_forward,
+                "monte_carlo": monte_carlo,
+                "days_covered": days_covered,
+                "bars_warning": _bars_warning,
+                "wf_folds": bt_cfg.get("walk_forward_folds", 5),
+                "mc_runs": bt_cfg.get("monte_carlo_runs", 200),
+            })
+        computed = map_jobs(payloads, max_workers=min(len(strats_to_run), 4))
+        if state._bt_cancel_event.is_set():
+            raise HTTPException(499, "Backtest annulé par l'utilisateur")
+        for name, entry in computed:
+            if "error" not in entry:
                 try:
                     from app.core.backtest_history import record_backtest
                     record_backtest(name, tf, symbol, entry, n_bars=len(df))
                 except Exception as _rec_e:
                     logger.debug(f"[backtest] record_backtest({name}) KO : {_rec_e}")
-
-                # QW-5 : génération des recommandations post-backtest (exigence 8)
-                # Le moteur applique ~15 règles (échantillon, PnL, outliers,
-                # frais, Sharpe, DD, alpha, win-rate, borrow, régimes, points
-                # forts) et produit une liste ordonnée + une synthèse verdict.
                 try:
-                    from app.engine.recommendations import generate_recommendations, summarize_recommendations
-                    # Construire le contexte complet pour le moteur : on inclut
-                    # ohlcv (pour l'analyse par régime) + les métriques agrégées.
-                    reco_ctx = {
-                        **entry,
-                        "ohlcv": ohlcv_payload,
-                    }
-                    recos = generate_recommendations(reco_ctx)
+                    from app.engine.recommendations import (
+                        generate_recommendations,
+                        summarize_recommendations,
+                    )
+                    recos = generate_recommendations({**entry, "ohlcv": ohlcv_payload})
                     entry["recommendations"] = recos
                     entry["recommendations_summary"] = summarize_recommendations(recos)
                 except Exception as _reco_e:
@@ -579,23 +508,7 @@ def run_backtest(
                         "counts": {}, "verdict": "neutral",
                         "verdict_label": "Analyse indisponible", "total": 0,
                     }
-                return name, entry
-            except InterruptedError:
-                return name, {"error": "Backtest annulé", "trades": []}
-            except Exception as e:
-                logger.error(f"[API] Backtest {name} : {e}", exc_info=True)
-                return name, {"error": str(e), "trades": []}
-
-        with ThreadPoolExecutor(max_workers=min(len(strats_to_run), 4)) as pool:
-            futures = {pool.submit(_run_one, n): n for n in strats_to_run}
-            for fut in as_completed(futures):
-                if state._bt_cancel_event.is_set():
-                    # Cancel remaining futures
-                    for f in futures:
-                        f.cancel()
-                    raise HTTPException(499, "Backtest annulé par l'utilisateur")
-                name, result = fut.result()
-                by_strategy[name] = result
+            by_strategy[name] = entry
 
         ohlcv_gaps   = detect_ohlcv_gaps(df, tf)
         gaps_warning = None

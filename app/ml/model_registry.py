@@ -224,12 +224,22 @@ class ArtifactRef:
         # decision_metrics.overfitting_gate (cf. app/ml/policy.py L304-330).
         decision_metrics = meta.get("decision_metrics") or {}
         overfitting_gate = decision_metrics.get("overfitting_gate")
+        train_meta = meta.get("train_meta") or {}
+        holdout = (decision_metrics.get("candidate") or {}).get("auc_amp")
+        earlystop = train_meta.get("auc_amp_earlystop", train_meta.get("auc_amp", self.auc))
         return {
             "path_prefix": self.path_prefix, "train_symbol": self.train_symbol,
             "tf": self.tf,
             "recipe": self.recipe, "version_id": self.version_id,
             "train_start": self.train_start, "train_end": self.train_end,
             "n_bars": self.n_bars, "auc": round(float(self.auc), 4),
+            # M-01 : distinguer l'AUC d'early-stopping (biaisée) de celle
+            # du holdout de gate (honnête). `auc` reste l'earlystop pour
+            # compat ; l'UI doit préférer auc_holdout quand il est présent.
+            "auc_earlystop": round(float(earlystop or 0.0), 4),
+            "auc_holdout": (
+                round(float(holdout), 4) if holdout is not None else None),
+            "auc_source": "holdout" if holdout is not None else "earlystop",
             "recipe_hash": self.recipe_hash, "git_commit": self.git_commit,
             "source": self.source, "created_at": self.created_at,
             "gate_decision": self.gate_decision,
@@ -241,7 +251,7 @@ class ArtifactRef:
             # médianes/calibrators bruts dedans), donc exposé tel quel plutôt
             # que par une liste de clés à maintenir à la main. Page Modèles
             # (E7) : historique de versions + panneau "top features".
-            "train_meta": meta.get("train_meta") or {},
+            "train_meta": train_meta,
         }
 
 

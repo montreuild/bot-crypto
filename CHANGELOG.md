@@ -6,6 +6,32 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 Audit A-02 / ML / UI / données
+
+- **A-02** : backtest / replay / WF / MC tournent dans un ProcessPool spawn
+  (`app/engine/compute_pool.py`). Le fetch OHLCV reste dans le process API.
+  Sous pytest : calcul in-process (`CRYPTO_BOT_INLINE_COMPUTE`).
+- **M-01** : `auc_*_earlystop` + `auc_*_report` ; `ArtifactRef` expose
+  `auc_holdout` / `auc_source`.
+- **M-03** : `n_train_effective` / `n_valid_effective` = n / H.
+- **M-04** : isotonie ajustée sur la 1re moitié de val, `cal_err` sur la 2e.
+- **M-05** : `policy.auc_floor` = `AUC_WEAK` (0,55). `AUC_GOOD` n'est qu'un
+  libellé.
+- **M-06** : un modèle frozen qui chevauche la fenêtre backtest est invalidé
+  (repli inline).
+- **U-01 / U-11** : i18n branché (nav + sélecteur FR/EN) ; `lang` suit la locale.
+- **U-02** : sentinelles PF / n insuffisant → `n/a` / `∞`.
+- **U-03** : sondage 15–30 s, pause onglet caché, invalidation WS.
+- **U-07** : plus de `dangerouslySetInnerHTML` sur les warnings opti.
+- **U-12** : `?tab=` inconnu remplacé dans l'URL.
+- **D-03** : trous détectés à l'écriture via le calendrier ; `completeness`
+  dans `/api/data/status`.
+- **D-04** : features `{tf}_{catalog_hash8}.parquet` + éviction.
+- **D-05** : `oos_tracker.json` écriture atomique, une fois par passe.
+- **L-16** : `bars_held` live = nombre de bougies, pas l'horloge murale.
+- **A-11** : `Sunset` / `Deprecation` sur les alias HTML (retrait 2026-12-31).
+- **CI GitLab** : `.gitlab-ci.yml` (lint / test / pip-audit / frontend).
+
 ### 🐛 Hygiene audit
 
 - **A-05 / B-14** : OHLCV sous-échantillonné (~4k pts) ; folds WF sans trades ni equity.

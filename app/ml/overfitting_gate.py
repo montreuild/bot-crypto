@@ -19,8 +19,10 @@ logger = logging.getLogger(__name__)
 
 # ── Seuils ──────────────────────────────────────────────────────────────────
 AUC_RANDOM = 0.50        # performance aléatoire (classifier binaire)
-AUC_WEAK = 0.55          # edge faible mais détectable (à surveiller)
-AUC_GOOD = 0.60          # edge acceptable pour production
+# M-05 : AUC_WEAK est AUSSI le plancher de promotion (policy.auc_floor).
+# AUC_GOOD n'est qu'un libellé de qualité — il ne bloque pas la promotion.
+AUC_WEAK = 0.55          # edge faible mais détectable = plancher de promotion
+AUC_GOOD = 0.60          # libellé « acceptable pour production » (pas un gate)
 AUC_STRONG = 0.70        # edge solide
 
 

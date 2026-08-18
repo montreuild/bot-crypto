@@ -13,7 +13,8 @@ const STORAGE_KEY = 'crypto-bot-locale';
 const translations: Record<Locale, Record<string, string>> = {
   fr: {
     'nav.trading': 'Trading', 'nav.research': 'Recherche', 'nav.data': 'Données',
-    'nav.config': 'Configuration', 'nav.dashboard': 'Dashboard', 'nav.bots': 'Mes Bots',
+    'nav.config': 'Configuration', 'nav.dashboard': 'Dashboard', 'nav.lab': 'Laboratoire',
+    'nav.market': 'Marché', 'nav.bots': 'Mes Bots',
     'nav.trades': 'Trades', 'nav.portfolio': 'Portefeuille', 'nav.backtest': 'Backtest',
     'nav.scanner': 'Scanner', 'nav.replay': 'Replay', 'nav.smartgraph': 'Smart Graph',
     'nav.smartreplay': 'Smart Replay', 'nav.compare': 'Comparatif', 'nav.optimizer': 'Optimiseur',
@@ -30,7 +31,8 @@ const translations: Record<Locale, Record<string, string>> = {
   },
   en: {
     'nav.trading': 'Trading', 'nav.research': 'Research', 'nav.data': 'Data',
-    'nav.config': 'Configuration', 'nav.dashboard': 'Dashboard', 'nav.bots': 'My Bots',
+    'nav.config': 'Configuration', 'nav.dashboard': 'Dashboard', 'nav.lab': 'Lab',
+    'nav.market': 'Market', 'nav.bots': 'My Bots',
     'nav.trades': 'Trades', 'nav.portfolio': 'Portfolio', 'nav.backtest': 'Backtest',
     'nav.scanner': 'Scanner', 'nav.replay': 'Replay', 'nav.smartgraph': 'Smart Graph',
     'nav.smartreplay': 'Smart Replay', 'nav.compare': 'Compare', 'nav.optimizer': 'Optimizer',
@@ -67,9 +69,14 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+
   const setLocale = (newLocale: Locale) => {
     setLocaleState(newLocale);
     localStorage.setItem(STORAGE_KEY, newLocale);
+    document.documentElement.lang = newLocale;
   };
 
   const t = (key: string): string => {

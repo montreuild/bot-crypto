@@ -129,8 +129,10 @@ def test_resolve_frozen_ml_model_flags_overlap_at_boundary(tmp_path):
 
     entry = _resolve_frozen_ml_model(strat, "BTC/USDC", "1h",
                                      window_start=boundary, window_end="2020-12-01T00:00:00")
-    assert entry["resolved"] is True
+    assert entry["resolved"] is False
+    assert entry["fallback_to_inline"] is True
     assert entry["overlap_warning"] is True
+    assert entry["invalidated"] is True
 
 
 def test_resolve_frozen_ml_model_no_artifact_is_visible_fallback(tmp_path):

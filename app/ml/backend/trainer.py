@@ -425,7 +425,10 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
 
     boosters: Dict[str, Any] = {}
     aucs: Dict[str, float] = {}
+    aucs_earlystop: Dict[str, float] = {}
+    aucs_report: Dict[str, float] = {}
     cal_err: Dict[str, float] = {}
+    cal_err_source: Dict[str, str] = {}
     calibrators: Dict[str, Any] = {}
     importances: Dict[str, List[tuple]] = {}
     raw_va_by_target: Dict[str, np.ndarray] = {}
@@ -447,7 +450,10 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
             except Exception as e:
                 logger.warning(f"[MLBackend] {tf_key} : entraînement {target} KO ({e})")
                 return False
-            aucs[target] = float(booster.best_score.get("valid_0", {}).get("auc", 0.0))
+            # M-01 : best_score["valid_0"]["auc"] est le MAXIMUM sur les
+            # itérations d'early-stopping — pas une mesure indépendante.
+            aucs_earlystop[target] = float(
+                booster.best_score.get("valid_0", {}).get("auc", 0.0))
             boosters[target] = booster
 
             # Prédictions brutes de validation — réutilisées par la calibration
@@ -455,16 +461,38 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
             raw_va = booster.predict(X_valid)
             raw_va_by_target[target] = raw_va
 
-            # Calibration isotone sur le set de validation.
+            y_va = y[split:n]
+            n_va = len(y_va)
+            # M-04 : ajuster l'isotonie sur la 1re moitié de val, mesurer
+            # cal_err sur la 2e. Trop petit → fit in-sample, flagué.
+            report_auc = None
+            if n_va >= 40:
+                cut = n_va // 2
+                report_auc = rank_auc(y_va[cut:], raw_va[cut:])
+            aucs_report[target] = (
+                float(report_auc) if report_auc is not None
+                else aucs_earlystop[target])
+            # Compat : auc_amp/auc_dir restent l'earlystop (lecteurs existants).
+            aucs[target] = aucs_earlystop[target]
+
             if cfg.calibrate:
                 try:
                     from app.ml.backend.isotonic import IsotonicRegression
-                    y_va = y[split:n]
                     if len(np.unique(y_va)) >= 2:
                         iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
-                        iso.fit(raw_va, y_va)
-                        cal_va = iso.predict(raw_va)
-                        cal_err[target] = round(float(np.mean(np.abs(cal_va - y_va))), 4)
+                        if n_va >= 40:
+                            cut = n_va // 2
+                            iso.fit(raw_va[:cut], y_va[:cut])
+                            cal_hat = iso.predict(raw_va[cut:])
+                            cal_err[target] = round(
+                                float(np.mean(np.abs(cal_hat - y_va[cut:]))), 4)
+                            cal_err_source[target] = "val_eval"
+                        else:
+                            iso.fit(raw_va, y_va)
+                            cal_va = iso.predict(raw_va)
+                            cal_err[target] = round(
+                                float(np.mean(np.abs(cal_va - y_va))), 4)
+                            cal_err_source[target] = "val_insample"
                         calibrators[target] = iso
                 except Exception as ce:
                     logger.debug(f"[MLBackend] {tf_key} calibration {target} KO : {ce}")
@@ -524,6 +552,7 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
                 kept_set.add(c)
     kept_features = [c for c in feature_cols if c in kept_set]
 
+    H = max(int(h) for h in (horizons or [1])) or 1
     auc_combined = (aucs.get("amp", 0.0) + aucs.get("dir", 0.0)) / 2.0
     top_feats = {
         tgt: [c for c, _ in importances.get(tgt, [])[:cfg.importance_top_n]]
@@ -540,10 +569,23 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
     meta = {
         "n_train":      int(train_end),
         "n_valid":      int(n - split),
+        # M-03 : n effectif = n / H — les fenêtres de label se chevauchent.
+        "n_train_effective": round(train_end / H, 2),
+        "n_valid_effective": round((n - split) / H, 2),
+        "label_horizon": H,
         "embargo":      int(plan.embargo),
         "n_features":   len(feature_cols),
+        # M-01 : auc_* = earlystop (compat). Les champs *_earlystop / *_report
+        # distinguent le max d'early-stopping de l'AUC mesurée sur la 2e
+        # moitié de validation (quand n_valid >= 40).
         "auc_amp":      round(aucs.get("amp", 0.0), 4),
         "auc_dir":      round(aucs.get("dir", 0.0), 4),
+        "auc_amp_earlystop": round(aucs_earlystop.get("amp", 0.0), 4),
+        "auc_dir_earlystop": round(aucs_earlystop.get("dir", 0.0), 4),
+        "auc_amp_report":    round(aucs_report.get("amp", 0.0), 4),
+        "auc_dir_report":    round(aucs_report.get("dir", 0.0), 4),
+        "auc_source":   "earlystop",
+        "cal_err_source": cal_err_source,
         "auc_dir_by_regime": auc_dir_by_regime,
         "feature_importance_dir_by_regime": fi_by_regime,
         "regime_feature_similarity": regime_similarity,

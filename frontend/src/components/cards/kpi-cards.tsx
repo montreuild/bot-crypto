@@ -114,14 +114,20 @@ export function WinRateCard({ value, totalTrades }: { value: number; totalTrades
   );
 }
 
-export function ProfitFactorCard({ value }: { value: number }) {
+export function ProfitFactorCard({ value, nObs }: { value: number | null | undefined; nObs?: number }) {
+  const insignificant = nObs != null && nObs < 10;
+  const sentinel = value == null || Math.abs(value) >= 999;
   return (
     <KPICard
       label="Profit Factor"
-      value={value === 999 ? '∞' : value.toFixed(2)}
+      value={insignificant ? 'n/a' : sentinel ? '∞' : value.toFixed(2)}
       icon={Activity}
-      sublabel={value >= 1.5 ? 'Excellent' : value >= 1 ? 'Acceptable' : 'À améliorer'}
-      trend={value >= 1.5 ? 'up' : value >= 1 ? 'neutral' : 'down'}
+      sublabel={
+        insignificant
+          ? `${nObs} obs — non significatif`
+          : value != null && value >= 1.5 ? 'Excellent' : value != null && value >= 1 ? 'Acceptable' : 'À améliorer'
+      }
+      trend={insignificant ? 'neutral' : value != null && value >= 1.5 ? 'up' : value != null && value >= 1 ? 'neutral' : 'down'}
     />
   );
 }

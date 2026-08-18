@@ -228,10 +228,14 @@ def _is_frontend_reachable() -> bool:
     return _frontend_reachable_cache["ok"]
 
 
-def _route_frontend_or_help(path: str):
+def _route_frontend_or_help(path: str, *, legacy: bool = False):
     """Redirige 308 vers le frontend si joignable, sinon sert la page d'aide."""
     if _is_frontend_reachable():
-        return RedirectResponse(url=f"{FRONTEND_URL}{path}", status_code=308)
+        resp = RedirectResponse(url=f"{FRONTEND_URL}{path}", status_code=308)
+        if legacy:
+            resp.headers["Sunset"] = HTML_REDIRECTS_SUNSET_HTTP
+            resp.headers["Deprecation"] = "true"
+        return resp
     # Frontend non joignable : sert la page d'aide HTML (status 200, pas de redirect)
     from starlette.responses import Response
     return Response(
@@ -338,6 +342,18 @@ FRONTEND_URL=https://bot.mondomaine.com</pre>
 # `tests/test_legacy_redirects.py` vérifie qu'elles ne divergent pas : c'est
 # ce test, et non la relecture, qui garantit qu'une future redirection posée
 # côté Next sera répercutée ici.
+#
+# A-11 : date de retrait des alias hérités (favoris / 308 déjà en cache).
+# Après cette date les alias `-v2` et les anciennes pages fusionnées
+# (`/backtest`, `/optimizer`, …) pourront être retirés.
+HTML_REDIRECTS_SUNSET = "2026-12-31"
+HTML_REDIRECTS_SUNSET_HTTP = "Thu, 31 Dec 2026 23:59:59 GMT"
+HTML_LEGACY_ALIASES = {
+    "/bots-v2", "/portfolio-v2", "/settings-v2",
+    "/backtest", "/optimizer", "/ml", "/replay", "/compare",
+    "/scanner", "/smartgraph", "/smartreplay", "/derivatives",
+    "/config", "/slots",
+}
 HTML_ROUTES_TO_REDIRECT = {
     # `/` reste sur `/` : ce n'est pas un alias hérité mais la racine de
     # l'app, et c'est `frontend/src/app/page.tsx` qui décide de la page
@@ -374,18 +390,18 @@ HTML_ROUTES_TO_REDIRECT = {
 }
 for _route, _target in HTML_ROUTES_TO_REDIRECT.items():
     # Capture _target via default arg pour éviter le piège du closure tardif
-    def _make_handler(t):
-        def _handler(request: Request, _t=t):
-            return _route_frontend_or_help(_t)
+    def _make_handler(t, r):
+        def _handler(request: Request, _t=t, _r=r):
+            return _route_frontend_or_help(_t, legacy=_r in HTML_LEGACY_ALIASES)
         return _handler
-    app.add_api_route(_route, _make_handler(_target), methods=["GET"])
+    app.add_api_route(_route, _make_handler(_target, _route), methods=["GET"])
 
 
 # Rétro-compat : /slots redirigeait vers /bots. On vise la cible finale plutôt
 # que d'enchaîner deux sauts.
 @app.get("/slots")
 def slots_legacy():
-    return _route_frontend_or_help("/bots")
+    return _route_frontend_or_help("/bots", legacy=True)
 
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────

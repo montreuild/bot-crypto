@@ -36,6 +36,7 @@ Thread-safety : un verrou par fichier (réutilise le registre de candle_store).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -51,6 +52,9 @@ from app.core.config import DATA_ROOT
 from app.core.singleton import lazy_singleton
 
 FEATURES_DIR = os.path.join(DATA_ROOT, "features")
+# D-04 : plafond d'éviction (octets / fichiers). Surchargeable par env.
+FEATURE_STORE_MAX_BYTES = int(os.environ.get("FEATURE_STORE_MAX_BYTES", 2 * 1024 ** 3))
+FEATURE_STORE_MAX_FILES = int(os.environ.get("FEATURE_STORE_MAX_FILES", 64))
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +107,14 @@ class FeatureProvider:
 # Registre global (nom → provider) — permet le partage entre stratégies.
 _REGISTRY: Dict[str, FeatureProvider] = {}
 _REGISTRY_LOCK = threading.Lock()
+
+
+def catalog_hash() -> str:
+    """Empreinte 8 hex des providers enregistrés (nom + version). D-04."""
+    with _REGISTRY_LOCK:
+        items = sorted((p.name, p.version) for p in _REGISTRY.values())
+    blob = json.dumps(items, separators=(",", ":"))
+    return hashlib.sha256(blob.encode()).hexdigest()[:8]
 
 
 def register_provider(provider: FeatureProvider) -> FeatureProvider:
@@ -328,8 +340,9 @@ class FeatureStore:
     # ── Persistance ─────────────────────────────────────────────────────────
 
     def _path(self, symbol: str, tf: str) -> Path:
+        # D-04 : le hash du catalogue invalide le cache si une feature change.
         safe = symbol.replace("/", "_").replace(":", "_")
-        return self._base / safe / f"{tf}.parquet"
+        return self._base / safe / f"{tf}_{catalog_hash()}.parquet"
 
     def _meta_path(self, path: Path) -> Path:
         return path.with_suffix(".meta.json")
@@ -360,8 +373,30 @@ class FeatureStore:
         try:
             df.write_parquet(path, compression="zstd")
             self._meta_path(path).write_text(json.dumps(meta, indent=0))
+            self._evict_if_needed(keep=path)
         except Exception as e:
             logger.error(f"[FeatureStore] Erreur écriture {path} : {e}")
+
+    def _evict_if_needed(self, keep: Optional[Path] = None) -> None:
+        """Supprime les Parquet les plus anciens au-delà du plafond. D-04."""
+        files = [p for p in self._base.rglob("*.parquet") if p.is_file()]
+        if not files:
+            return
+        files.sort(key=lambda p: p.stat().st_mtime)
+        total = sum(p.stat().st_size for p in files)
+        while files and (total > FEATURE_STORE_MAX_BYTES or len(files) > FEATURE_STORE_MAX_FILES):
+            victim = files.pop(0)
+            if keep is not None and victim.resolve() == keep.resolve():
+                if not files:
+                    break
+                continue
+            try:
+                total -= victim.stat().st_size
+                victim.unlink(missing_ok=True)
+                victim.with_suffix(".meta.json").unlink(missing_ok=True)
+                logger.info("[FeatureStore] éviction %s", victim)
+            except OSError as e:
+                logger.debug("[FeatureStore] éviction KO %s : %s", victim, e)
 
     def stats(self, symbol: str, tf: str) -> dict:
         path = self._path(symbol, tf)

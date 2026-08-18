@@ -12,7 +12,7 @@
 | # | Sévérité | Titre | Fichier | État au 18/08 |
 |---|----------|-------|---------|---------------|
 | A-01 | 🟠 Majeur | Clôture non transactionnelle : fenêtre de perte de trade | `position_close_mixin.py:270-329` | ✅ résolu — une session, un commit |
-| A-02 | 🟠 Majeur | Routes de calcul lourd exécutées dans le threadpool FastAPI | `routes/backtest.py:284`, `routes/replay.py`, `routes/scanner.py` | ouvert |
+| A-02 | 🟠 Majeur | Routes de calcul lourd exécutées dans le threadpool FastAPI | `routes/backtest.py:284`, `routes/replay.py`, `routes/scanner.py` | ✅ résolu — ProcessPool spawn (`compute_pool`) |
 | A-03 | 🟠 Majeur | Un backtest par plage de dates charge 50 000 bougies en mémoire | `routes/backtest.py` (branche `use_date_range`) | ✅ résolu — `fetch_range` : backfill profondeur store, lecture filtrée |
 | A-04 | 🟠 Majeur | `with_retry` bloque le thread jusqu'à 30 s par appel | `core/exchange.py:14-64` | ✅ résolu — tickers 2×0,5 s + cache ; API sans réseau |
 | A-05 | 🟡 Moyen | Réponse `/api/backtest` non bornée (OHLCV + trades + folds) | `routes/backtest.py`, `walk_forward.py:126` | ✅ atténué — OHLCV ~4k pts, folds sans trades |
@@ -21,7 +21,7 @@
 | A-08 | 🟡 Moyen | `entry_time` est reconstruit, pas mesuré | `core/database.py` (`save_trade`) | ✅ résolu — `open_time` / ISO, crypto et actions |
 | A-09 | 🟡 Moyen | `/metrics` sans authentification expose l'activité de trading | `api/main.py:135-155` | ✅ résolu — = S-01 |
 | A-10 | 🟡 Moyen | `api_key` en query string du WebSocket | `routes/ws.py` (`_check_ws_auth`) | ✅ résolu — = S-03, `ALLOW_WS_QUERY_KEY` |
-| A-11 | 🔵 Mineur | Deux tables de redirections héritées à maintenir en miroir | `api/main.py:314-347` | ouvert |
+| A-11 | 🔵 Mineur | Deux tables de redirections héritées à maintenir en miroir | `api/main.py:314-347` | ✅ date de retrait 2026-12-31 + Sunset |
 | A-12 | 🔵 Mineur | Le handler global renvoie le type d'exception au client | `api/middleware.py:49` | ✅ résolu — `correlation_id` |
 | A-13 | 🔵 Mineur | `_is_frontend_reachable` fait un `connect()` bloquant dans la boucle async | `api/main.py:194` | ✅ résolu — ping en thread, timeout 0,2 s |
 
