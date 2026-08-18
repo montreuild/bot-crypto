@@ -17,6 +17,8 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+import { errorMessage } from '@/lib/utils';
+import type { UniverseMember } from '@/types';
 import { useState } from 'react';
 import { Database, Plus, Trash2, ChevronRight, Loader2 } from 'lucide-react';
 
@@ -43,12 +45,12 @@ export function UniverseManager() {
     retry: 1,
   });
 
-  const members = (universeDetailQuery.data?.members ?? []) as any[];
+  const members = (universeDetailQuery.data?.members ?? []) as UniverseMember[];
 
   const addSymbol = useMutation({
     mutationFn: ({ universe, body }: { universe: string; body: { symbol: string; name?: string } }) =>
       api.addUniverseSymbol(universe, body),
-    onSuccess: (res: any) => {
+    onSuccess: (res: { backfill?: { status?: string } }) => {
       qc.invalidateQueries({ queryKey: ['universe', selectedUniverse] });
       qc.invalidateQueries({ queryKey: ['universes'] });
       qc.invalidateQueries({ queryKey: ['dataStatus'] });
@@ -62,7 +64,7 @@ export function UniverseManager() {
       setNewSymbol('');
       setNewName('');
     },
-    onError: (e: any) => toast.error(`Erreur : ${e.message}`),
+    onError: (e) => toast.error(`Erreur : ${errorMessage(e)}`),
   });
 
   const removeSymbol = useMutation({
@@ -73,7 +75,7 @@ export function UniverseManager() {
       toast.success('Symbole retiré');
       setRemoveTarget(null);
     },
-    onError: (e: any) => toast.error(`Erreur : ${e.message}`),
+    onError: (e) => toast.error(`Erreur : ${errorMessage(e)}`),
   });
 
   const handleAdd = () => {
@@ -109,10 +111,10 @@ export function UniverseManager() {
             ) : universesQuery.data?.universes?.length === 0 ? (
               <p className="text-xs text-muted">Aucun univers configuré</p>
             ) : (
-              universesQuery.data?.universes?.map((u: any) => (
+              universesQuery.data?.universes?.map((u) => (
                 <button
                   key={u.id || u.label}
-                  onClick={() => setSelectedUniverse(u.id || u.label)}
+                  onClick={() => setSelectedUniverse(u.id || u.label || null)}
                   className="w-full flex items-center gap-3 p-3 rounded-md border border-border hover:border-border-hi hover:bg-card-hover transition-colors text-left"
                 >
                   <div className="flex-1 min-w-0">
@@ -224,13 +226,13 @@ export function UniverseManager() {
                     </tr>
                   </thead>
                   <tbody>
-                    {members.map((m: any) => (
+                    {members.map((m) => (
                       <tr key={m.symbol} className="border-b border-border/50 hover:bg-card-hover">
                         <td className="p-2 font-mono font-semibold">{m.symbol}</td>
                         <td className="p-2 text-muted truncate max-w-[180px]">{m.name || '—'}</td>
                         <td className="p-2">
                           <button
-                            onClick={() => setRemoveTarget({ universe: selectedUniverse, symbol: m.symbol })}
+                            onClick={() => setRemoveTarget({ universe: selectedUniverse, symbol: m.symbol ?? '' })}
                             className="text-dim hover:text-red-400 transition-colors"
                             aria-label={`Retirer ${m.symbol}`}
                           >

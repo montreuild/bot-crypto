@@ -23,8 +23,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { FlaskConical, Loader2, Dices, LineChart } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn, formatUSD } from '@/lib/utils';
+import {cn, formatUSD, errorMessage} from '@/lib/utils';
 import { useOptimizeValidate } from '@/hooks/use-api';
+import type { OptimizeValidateResult } from '@/types';
 
 type Methode = 'monte_carlo' | 'regime';
 
@@ -42,7 +43,7 @@ const LIBELLE_REGIME: Record<string, string> = {
   unassigned: 'Hors régime identifié',
 };
 
-function ResultatMonteCarlo({ data }: { data: any }) {
+function ResultatMonteCarlo({ data }: { data: OptimizeValidateResult }) {
   const r = data?.result ?? {};
   const cases = [
     { label: 'P5 (pire 5 %)', valeur: r.p5 ?? r.percentile_5, monetaire: true },
@@ -75,9 +76,9 @@ function ResultatMonteCarlo({ data }: { data: any }) {
   );
 }
 
-function ResultatRegimes({ data }: { data: any }) {
-  const parStrategie: Record<string, any> = data?.by_strategy ?? {};
-  const marche: Record<string, any> = data?.market ?? {};
+function ResultatRegimes({ data }: { data: OptimizeValidateResult }) {
+  const parStrategie = data?.by_strategy ?? {};
+  const marche = data?.market ?? {};
   const regimes = Object.keys(parStrategie);
 
   if (regimes.length === 0) {
@@ -154,8 +155,8 @@ export function OptimizerValidatePanel({ jobId, disabled }: { jobId: string; dis
     try {
       const res = await valider.mutateAsync({ jobId, method: m });
       setResultat(res);
-    } catch (e: any) {
-      toast.error(`Validation impossible : ${e?.message ?? 'erreur inconnue'}`);
+    } catch (e) {
+      toast.error(`Validation impossible : ${errorMessage(e) || 'erreur inconnue'}`);
       setMethode(null);
     }
   };

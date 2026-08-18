@@ -23,7 +23,8 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { useUpdateTradingConfig } from '@/hooks/use-api';
-import { toast } from 'sonner';
+import { toast } from 'sonner'
+import { errorMessage } from '@/lib/utils';
 import { AlertTriangle, Loader2, ShieldCheck } from 'lucide-react';
 
 export function PaperLiveSwitch({ paperMode }: { paperMode: boolean | undefined }) {
@@ -48,8 +49,8 @@ export function PaperLiveSwitch({ paperMode }: { paperMode: boolean | undefined 
       await mutation.mutateAsync({ paper_mode: !paperMode });
       toast.success(goingLive ? 'Mode LIVE activé — trading en argent réel' : 'Mode PAPER rétabli');
       handleOpenChange(false);
-    } catch (e: any) {
-      toast.error(`Bascule impossible : ${e?.message ?? e}`);
+    } catch (e) {
+      toast.error(`Bascule impossible : ${errorMessage(e) || e}`);
     }
   };
 

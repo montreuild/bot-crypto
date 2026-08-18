@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Download, FileJson, FileText, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { errorMessage } from '@/lib/utils';
 
 /**
  * Télécharge un blob avec le filename donné.
@@ -47,13 +48,13 @@ function dateStamp(): string {
 /**
  * Export JSON — formate et télécharge.
  */
-export function exportJson(filename: string, data: any) {
+export function exportJson(filename: string, data: unknown) {
   try {
     const json = JSON.stringify(data, null, 2);
     downloadBlob(json, `${filename}_${dateStamp()}.json`, 'application/json');
     toast.success(`Export JSON téléchargé : ${filename}_${dateStamp()}.json`);
-  } catch (e: any) {
-    toast.error(`Erreur export JSON : ${e.message}`);
+  } catch (e) {
+    toast.error(`Erreur export JSON : ${errorMessage(e)}`);
   }
 }
 
@@ -61,13 +62,13 @@ export function exportJson(filename: string, data: any) {
  * Export CSV — génère depuis un tableau d'objets.
  * `headers` : { key: label } pour contrôler l'ordre et les libellés.
  */
-export function exportCsv(filename: string, rows: any[], headers: Record<string, string>) {
+export function exportCsv(filename: string, rows: object[], headers: Record<string, string>) {
   try {
     const headerRow = Object.values(headers).join(',');
     const dataRows = rows.map((row) =>
       Object.keys(headers)
         .map((key) => {
-          const val = row[key];
+          const val = (row as Record<string, unknown>)[key];
           if (val == null) return '';
           // Escape quotes et wrap si contient virgule/quote/newline
           const str = String(val);
@@ -81,8 +82,8 @@ export function exportCsv(filename: string, rows: any[], headers: Record<string,
     const csv = [headerRow, ...dataRows].join('\n');
     downloadBlob(csv, `${filename}_${dateStamp()}.csv`, 'text/csv;charset=utf-8');
     toast.success(`Export CSV téléchargé : ${filename}_${dateStamp()}.csv`);
-  } catch (e: any) {
-    toast.error(`Erreur export CSV : ${e.message}`);
+  } catch (e) {
+    toast.error(`Erreur export CSV : ${errorMessage(e)}`);
   }
 }
 
@@ -90,7 +91,7 @@ export function exportCsv(filename: string, rows: any[], headers: Record<string,
 
 interface JsonExportButtonProps {
   filename: string;
-  data: any;
+  data: unknown;
   disabled?: boolean;
   label?: string;
 }
@@ -119,7 +120,7 @@ export function JsonExportButton({ filename, data, disabled, label = 'JSON' }: J
 
 interface CsvExportButtonProps {
   filename: string;
-  rows: any[];
+  rows: object[];
   headers: Record<string, string>;
   disabled?: boolean;
   label?: string;

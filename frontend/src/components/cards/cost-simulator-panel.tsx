@@ -26,11 +26,12 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { api } from '@/lib/api';
+import type { CostModel, StrategyStats } from '@/types';
 import { toast } from 'sonner';
 import {
   Calculator, ChevronDown, ChevronRight, Loader2, AlertCircle,
 } from 'lucide-react';
-import { cn, formatUSD } from '@/lib/utils';
+import {cn, formatUSD, errorMessage} from '@/lib/utils';
 
 interface Props {
   symbol: string;
@@ -38,7 +39,7 @@ interface Props {
   strategies: string;
   limit: number;
   /** Cost model actuel (pour afficher le contexte). */
-  currentCostModel?: any;
+  currentCostModel?: CostModel;
   className?: string;
 }
 
@@ -132,9 +133,9 @@ export function CostSimulatorPanel({
           cost_override: preset.costOverride,
         });
         // La réponse est { by_strategy: { name: { total_pnl, total_fees, ... } } }
-        const byStrategy = (res as any)?.by_strategy ?? {};
-        // Prendre la 1ère stratégie (le simulateur est mono-stratégie par design)
-        const firstStrat = Object.values(byStrategy)[0] as any ?? {};
+        const payload = Array.isArray(res) ? res[0] : res;
+        const byStrategy = payload?.by_strategy ?? {};
+        const firstStrat = (Object.values(byStrategy)[0] ?? {}) as StrategyStats;
         return {
           preset: preset.label,
           presetKey: preset.key,
@@ -148,14 +149,14 @@ export function CostSimulatorPanel({
           total_trades: firstStrat.total_trades ?? null,
           loading: false,
         } as ComparisonRow;
-      } catch (e: any) {
+      } catch (e) {
         return {
           preset: preset.label,
           presetKey: preset.key,
           label: preset.label,
           pnl: null, fees: null, borrow: null, sharpe: null,
           max_dd: null, win_rate: null, total_trades: null,
-          error: e?.message ?? 'Erreur',
+          error: errorMessage(e) || 'Erreur',
           loading: false,
         } as ComparisonRow;
       }

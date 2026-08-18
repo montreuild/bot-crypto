@@ -36,16 +36,16 @@ export function StrategyParamsPanel() {
 
   /** Stratégies qui déclarent effectivement un bloc `params:` éditable. */
   const strategies = useMemo(() => {
-    const sp = (config as any)?.strategy_params ?? {};
+    const sp = config?.strategy_params ?? {};
     return Object.keys(sp)
       .filter((name) => sp[name] && typeof sp[name] === 'object' && Object.keys(sp[name]).length > 0)
       .sort();
   }, [config]);
 
   const current = selected || strategies[0] || '';
-  const params = ((config as any)?.strategy_params ?? {})[current] ?? {};
+  const params = (config?.strategy_params ?? {})[current] ?? {};
 
-  const handleSave = async (strategy: string, next: Record<string, any>) => {
+  const handleSave = async (strategy: string, next: Record<string, unknown>) => {
     await setParams.mutateAsync({ strategy, params: next });
   };
 

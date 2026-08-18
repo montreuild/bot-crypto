@@ -1,8 +1,8 @@
 # Audit complet — Synthèse
 
 > ⚠️ **RÉVISÉ le 18 août 2026** — état courant :
-> [`18-REVISION-2026-08-18.md`](18-REVISION-2026-08-18.md)
-> (reste optimizer-view / X-02 / X-06). Passes précédentes : [`17`](17-REVISION-2026-08-18.md), [`16`](16-REVISION-2026-08-18.md),
+> [`19-REVISION-2026-08-18.md`](19-REVISION-2026-08-18.md)
+> (reste X-02 / X-06). Passes précédentes : [`18`](18-REVISION-2026-08-18.md), [`17`](17-REVISION-2026-08-18.md), [`16`](16-REVISION-2026-08-18.md),
 > [`15`](15-REVISION-2026-08-18.md), [`14`](14-REVISION-2026-08-18.md),
 > [`13`](13-REVISION-2026-08-17.md).
 >
@@ -94,7 +94,7 @@ Toutes vérifiées sur les données réelles du dépôt.
 | Runs de backtest sur moins de 10 trades | 74 / 158 | F-02 |
 | Modules ≥ 40 lignes sans aucun test | **34** | T-02 |
 | Recouvrement `scoring_statistique_opus_v5` ↔ `_v4` | **80 %** (478/600 lignes) | X-02 |
-| Usages de `any` / `as any` dans le frontend | 212 à l'audit ; contrats métier typés (#244–#246) | U-05 |
+| Usages de `any` / `as any` dans le frontend | 212 à l'audit ; contrats métier typés (#244–#247) | U-05 |
 | Composants `'use client'` | 98 / 122 | U-04 |
 | Consommateurs du module i18n | 0 à l'audit ; branché (nav + sélecteur) | U-01 |
 
@@ -121,7 +121,7 @@ livrables une par une.
 **État au 18/08 (après #244)** : les 10 corrections du tableau
 sont dans `main`. B-02 + R-02 (`RiskLedger`). D-06 posé. Historique `data/`
 vidé. U-05 / U-08 / X-03 livrés — voir
-[`18-REVISION-2026-08-18.md`](18-REVISION-2026-08-18.md).
+[`19-REVISION-2026-08-18.md`](19-REVISION-2026-08-18.md).
 Il reste à **faire tourner le paper** pour les verdicts `oos_tracker` (D-07).
 
 **Avertissement sur l'ordre** : les corrections 3, 6 et 8 modifient les

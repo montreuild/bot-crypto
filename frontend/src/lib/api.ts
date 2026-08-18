@@ -14,7 +14,10 @@ import type {
   RiskOverview, RiskDiagnostics, VenueEnvelopeConfig,
   OptimizeValidateResult, BotThresholds, OosTracker, OptimizeStartResult,
   AuditEvent, CandleStore, AppConfig, ForwardTestResult,
-  DerivativesStatus, DerivativesPayload,
+  DerivativesStatus, DerivativesPayload, PortfolioSnapshot, BacktestSettings,
+  NotificationItem, FeesBreakdown, DailyStat, OptimizeSpaces, OptimizeResults,
+  OptimizeJob, RiskPresetRemote, MlRecipe, MLStrategyInfo,
+  UniverseInfo, UniverseMember,
 } from '@/types';
 import {
   BotStatusSchema, BotsResponseSchema, OosTrackerSchema, MlRecipesResponseSchema,
@@ -186,13 +189,12 @@ export const api = {
     );
   },
   exportTradesCsv: () => `${API_BASE}/trades/export?limit=50000`,
-  getDailyStats: (days = 30) => apiFetch<any[]>(`/stats/daily?days=${days}`, { schema: DailyStatsSchema }),
-  // S3-F1-US4 — Ventilation des frais (taker/maker/borrow/stop)
-  getFeesBreakdown: (days = 30) => apiFetch<any>(`/stats/fees?days=${days}`, { schema: FeesBreakdownSchema }),
+  getDailyStats: (days = 30) => apiFetch<DailyStat[]>(`/stats/daily?days=${days}`, { schema: DailyStatsSchema }),
+  getFeesBreakdown: (days = 30) => apiFetch<FeesBreakdown>(`/stats/fees?days=${days}`, { schema: FeesBreakdownSchema }),
 
   // ── Bots / Portfolio ────────────────────────────────────────────────────
   getBots: () => apiFetch<{ bots: Bot[]; counts: Record<string, number>; reopt_queue: string[]; thresholds: BotThresholds }>('/bots', { schema: BotsResponseSchema }),
-  getPortfolio: () => apiFetch<any>('/portfolio'),
+  getPortfolio: () => apiFetch<PortfolioSnapshot>('/portfolio'),
   forceBotActive: (slotKey: string, enabled = true) =>
     apiFetch(`/bots/${encodeURIComponent(slotKey)}/force-active?enabled=${enabled}`, { method: 'POST' }),
   runBotForwardTest: (slotKey: string) =>
@@ -218,7 +220,7 @@ export const api = {
     apiFetch(`/slots/${encodeURIComponent(slotKey)}/reset`, { method: 'POST' }),
   resetSlotCircuitBreaker: (slotKey: string) =>
     apiFetch(`/circuit-breakers/reset/${encodeURIComponent(slotKey)}`, { method: 'POST' }),
-  getCircuitBreakers: () => apiFetch<any>('/circuit-breakers'),
+  getCircuitBreakers: () => apiFetch<Record<string, unknown>>('/circuit-breakers'),
 
   // ── Config ──────────────────────────────────────────────────────────────
   getConfig: () => apiFetch<AppConfig>('/config'),
@@ -247,7 +249,7 @@ export const api = {
   // S5-01 / SEC-03 : body StrategyParamsBody (strategy, params, timeframe?, symbol?).
   setStrategyParams: (
     strategy: string,
-    params: Record<string, any>,
+    params: Record<string, unknown>,
     opts?: { symbol?: string; timeframe?: string },
   ) =>
     apiFetch('/config/strategy-params', {
@@ -276,9 +278,9 @@ export const api = {
       }),
     }),
   // Legacy aliases (compat with existing code)
-  updateStrategyParams: (payload: any) =>
+  updateStrategyParams: (payload: { strategy: string; params: Record<string, unknown>; symbol?: string; timeframe?: string }) =>
     apiFetch('/config/strategy-params', { method: 'POST', body: JSON.stringify(payload) }),
-  toggleStrategyTimeframeLegacy: (payload: any) =>
+  toggleStrategyTimeframeLegacy: (payload: { strategy: string; timeframe: string; enabled?: boolean; symbol?: string }) =>
     apiFetch('/config/strategy-timeframe', { method: 'POST', body: JSON.stringify(payload) }),
   setStrategies: (enabled: string[]) =>
     apiFetch('/config/strategies', {
@@ -293,15 +295,15 @@ export const api = {
 
   // ── Notifications / Settings ────────────────────────────────────────────
   getNotifications: (limit = 50, level = 'info') =>
-    apiFetch<{ notifications: any[]; levels: string[] }>(`/notifications?limit=${limit}&level=${level}`),
-  getPresets: () => apiFetch<any>('/settings/presets'),
+    apiFetch<{ notifications: NotificationItem[]; levels: string[] }>(`/notifications?limit=${limit}&level=${level}`),
+  getPresets: () => apiFetch<{ current?: string; expert_mode?: boolean; presets?: Record<string, RiskPresetRemote> }>('/settings/presets'),
   setRiskPreset: (preset: string) =>
     apiFetch(`/settings/risk-preset?preset=${preset}`, { method: 'POST' }),
   setExpertMode: (enabled: boolean) =>
     apiFetch(`/settings/expert-mode?enabled=${enabled}`, { method: 'POST' }),
 
   // ── Backtest ────────────────────────────────────────────────────────────
-  getBacktestSettings: () => apiFetch<any>('/backtest/settings'),
+  getBacktestSettings: () => apiFetch<BacktestSettings>('/backtest/settings'),
   // `timeoutMs: 0` : traitement synchrone potentiellement long (plusieurs
   // minutes selon la plage et le nombre de stratégies) — pas d'échéance.
   /**
@@ -422,20 +424,18 @@ export const api = {
 
   // ── Univers ─────────────────────────────────────────────────────────────
   // S8-F2-US1 — Liste des univers
-  getUniverses: () => apiFetch<any>('/universe', { schema: UniversesSchema }),
-  // S8-F2-US2 — Membres d'un univers
+  getUniverses: () => apiFetch<{ universes: UniverseInfo[] }>('/universe', { schema: UniversesSchema }),
   getUniverse: (name: string, opts?: { includeBars?: boolean }) =>
-    apiFetch<any>(
+    apiFetch<{ members: UniverseMember[]; as_of?: string }>(
       `/universe/${encodeURIComponent(name)}${opts?.includeBars ? '?include_bars=true' : ''}`,
     ),
-  // S8-F2-US3 — Ajouter/retirer symbole
   addUniverseSymbol: (universe: string, body: { symbol: string; name?: string; provider_symbol?: string }) =>
-    apiFetch<any>(`/universe/${encodeURIComponent(universe)}/symbols`, {
+    apiFetch<{ backfill?: { status?: string } }>(`/universe/${encodeURIComponent(universe)}/symbols`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
   removeUniverseSymbol: (universe: string, symbol: string) =>
-    apiFetch<any>(`/universe/${encodeURIComponent(universe)}/symbols/${encodeURIComponent(symbol)}`, {
+    apiFetch<{ removed?: boolean }>(`/universe/${encodeURIComponent(universe)}/symbols/${encodeURIComponent(symbol)}`, {
       method: 'DELETE',
     }),
 
@@ -467,7 +467,7 @@ export const api = {
 
   // ── Optimizer ───────────────────────────────────────────────────────────
   getOptimizeStatus: (jobId?: string) =>
-    apiFetch<any>(`/optimize/status${jobId ? `?job_id=${jobId}` : ''}`, { schema: OptimizeStatusSchema }),
+    apiFetch<OptimizeJob[] | OptimizeJob | { jobs?: OptimizeJob[] }>(`/optimize/status${jobId ? `?job_id=${jobId}` : ''}`, { schema: OptimizeStatusSchema }),
   startOptimize: (params: {
     symbol?: string; symbols?: string; strategies?: string; timeframes?: string;
     method?: string; n_trials?: number; limit?: number; auto_apply?: boolean;
@@ -481,21 +481,20 @@ export const api = {
     return apiFetch<OptimizeStartResult>(`/optimize/start?${q.toString()}`, { method: 'POST' });
   },
   applyOptimize: (jobId: string, force = false) =>
-    apiFetch<any>(`/optimize/apply?job_id=${jobId}&force=${force}`, { method: 'POST' }),
+    apiFetch<{ applied?: boolean; gate_source?: string }>(`/optimize/apply?job_id=${jobId}&force=${force}`, { method: 'POST' }),
   cancelOptimize: (jobId: string) =>
-    apiFetch<any>(`/optimize/cancel?job_id=${jobId}`, { method: 'POST' }),
+    apiFetch<{ cancelled?: boolean }>(`/optimize/cancel?job_id=${jobId}`, { method: 'POST' }),
   deleteOptimizeJob: (jobId: string) =>
-    apiFetch<any>(`/optimize/job?job_id=${jobId}`, { method: 'DELETE' }),
-  getOptimizeResults: () => apiFetch<any>('/optimize/results', { schema: OptimizeResultsSchema }),
-  getOptimizeSpaces: () => apiFetch<any>('/optimize/spaces', { schema: OptimizeSpacesSchema }),
+    apiFetch<{ deleted?: boolean }>(`/optimize/job?job_id=${jobId}`, { method: 'DELETE' }),
+  getOptimizeResults: () => apiFetch<OptimizeResults>('/optimize/results', { schema: OptimizeResultsSchema }),
+  getOptimizeSpaces: () => apiFetch<OptimizeSpaces>('/optimize/spaces', { schema: OptimizeSpacesSchema }),
   // Same-origin comme le reste : passe par le proxy, donc authentifié.
   optimizeStreamUrl: (jobId: string) => `${API_BASE}/optimize/stream?job_id=${jobId}`,
 
   // ── ML ──────────────────────────────────────────────────────────────────
-  getMLStrategyInfo: () => apiFetch<{ strategies: Record<string, any> }>('/ml/strategy-info'),
+  getMLStrategyInfo: () => apiFetch<{ strategies: Record<string, MLStrategyInfo> }>('/ml/strategy-info'),
   getCandlesStats: () => apiFetch<{ store: CandleStore }>('/candles/stats'),
-  // S9-F3-US1 — Recettes ML disponibles
-  getMLRecipes: () => apiFetch<{ recipes: any[] }>('/ml/recipes', { schema: MlRecipesResponseSchema }),
+  getMLRecipes: () => apiFetch<{ recipes: MlRecipe[] }>('/ml/recipes', { schema: MlRecipesResponseSchema }),
 
   // ── Config (S9-F3-US3 changelog optimizer + S9-F3-US4 test notif) ──────
   getConfigChangelog: (limit = 100) => apiFetch<any>(`/config/changelog?limit=${limit}`),
@@ -570,7 +569,7 @@ export const api = {
 
   // P1-3 — Audit trail global des décisions ML (toutes recettes)
   getMLDecisionsRecent: (limit = 100) =>
-    apiFetch<{ decisions: any[]; total: number }>(`/ml/registry/decisions/recent?limit=${limit}`),
+    apiFetch<{ decisions: ModelDecision[]; total: number }>(`/ml/registry/decisions/recent?limit=${limit}`),
 
   // P1-4 — Garde anti-chevauchement (fuite temporelle frozen)
   getMLOverlaps: (tf: string, recipe: string, windowStart: string, windowEnd: string) =>
