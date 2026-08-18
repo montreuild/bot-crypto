@@ -41,6 +41,26 @@ from app.live.position_open_mixin import (
     _order_failed,
 )
 
+
+def bars_held_from_ohlcv(df, open_time, tf_secs: float) -> int:
+    """L-16 : nombre de bougies depuis ``open_time``, pas l'horloge murale.
+
+    Un week-end XPAR (vendredi 17:30 → lundi 09:00) n'est pas 62 barres 1h.
+    Repli horloge seulement si le DataFrame est indisponible.
+    """
+    try:
+        ot = float(open_time or 0.0)
+    except (TypeError, ValueError):
+        ot = 0.0
+    fallback = max(0, int((time.time() - ot) / max(float(tf_secs) or 1.0, 1.0)))
+    if df is None or len(df) == 0 or "time" not in getattr(df, "columns", []):
+        return fallback
+    try:
+        epochs = df["time"].dt.epoch(time_unit="s")
+        return max(0, int((epochs >= int(ot)).sum()))
+    except Exception:
+        return fallback
+
 logger = logging.getLogger(__name__)
 
 
@@ -165,7 +185,14 @@ class PositionManageMixin:
                     return
 
         _pos_tf_secs = _TF_SECS.get(pos.get("timeframe", "1h"), 3600)
-        bars_held    = int((time.time() - pos["open_time"]) / _pos_tf_secs)
+        # L-16 : compter les bougies depuis open_time, pas l'horloge murale
+        # (un week-end XPAR n'est pas 62 barres 1h).
+        bars_held = bars_held_from_ohlcv(
+            self.ohlcv_cache.get(symbol, pos_tf, self.open_positions)
+            if hasattr(self, "ohlcv_cache") else None,
+            pos.get("open_time"),
+            _pos_tf_secs,
+        )
         trailing     = pos.get("_trailing")
         if trailing is None:
             trail_cfg        = _apply_trail_override(self._trailing_cfg, pos.get("trail_override"))

@@ -1,0 +1,52 @@
+# Miroir de .github/workflows/ci.yml — le dépôt n'avait pas de pipeline GitLab.
+# Jobs : lint (ruff) → test (pytest) → security (pip-audit) → frontend.
+
+stages:
+  - lint
+  - test
+  - security
+  - frontend
+
+default:
+  interruptible: true
+
+lint:
+  stage: lint
+  image: python:3.14-bookworm
+  script:
+    - pip install ruff==0.15.8
+    - ruff check .
+
+test:
+  stage: test
+  image: python:3.14-bookworm
+  variables:
+    CRYPTO_BOT_INLINE_COMPUTE: "1"
+  script:
+    - pip install -r requirements.txt -r requirements-dev.txt
+    - python -m pytest tests/ -q --tb=short -m "not slow"
+
+security:
+  stage: security
+  image: python:3.14-bookworm
+  script:
+    - pip install pip-audit
+    - pip-audit -r requirements.txt -r requirements-dev.txt
+  allow_failure: false
+
+frontend:
+  stage: frontend
+  image: node:20-bookworm
+  cache:
+    key:
+      files:
+        - frontend/package-lock.json
+    paths:
+      - frontend/node_modules/
+  script:
+    - cd frontend
+    - npm ci
+    - npm run lint
+    - npm run type-check
+    - npm test
+    - npm run build

@@ -5,16 +5,30 @@
 
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { BotStatus } from '@/types';
 
-// ── Bot status (polling 3s) ─────────────────────────────────────────────────
+/** U-03 : un onglet caché ne sonde pas. */
+function usePageVisible() {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const onVis = () => setVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+  return visible;
+}
+
+// ── Bot status (polling 15s, WS = source) ───────────────────────────────────
 export function useBotStatus() {
+  const visible = usePageVisible();
   return useQuery<BotStatus>({
     queryKey: ['status'],
     queryFn: api.getStatus,
-    refetchInterval: 3000, // 3s — temps réel via polling, complété par WS
+    refetchInterval: visible ? 15_000 : false,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   });
 }
@@ -32,7 +46,8 @@ export function useHealth() {
       const data = await api.getHealth();
       return { ...data, client_latency_ms: Math.round(performance.now() - t0) };
     },
-    refetchInterval: 10000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -67,7 +82,8 @@ export function useBots() {
   return useQuery({
     queryKey: ['bots'],
     queryFn: api.getBots,
-    refetchInterval: 10000,
+    refetchInterval: 20_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -75,7 +91,8 @@ export function usePortfolio() {
   return useQuery({
     queryKey: ['portfolio'],
     queryFn: api.getPortfolio,
-    refetchInterval: 5000,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
   });
 }
 

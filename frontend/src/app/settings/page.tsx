@@ -26,6 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { cn, getStoredTheme, setStoredTheme } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
 import { usePresets, useSetRiskPreset, useSetExpertMode, useBotStatus } from '@/hooks/use-api';
 import { toast } from 'sonner';
 import {
@@ -170,6 +171,7 @@ function SettingsV2Content() {
 
   // Lot Réglages — thème et permission de notification, portés depuis
   // /settings. Lus côté client uniquement (localStorage / API Notification).
+  const { locale, setLocale, t } = useI18n();
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [notifPermission, setNotifPermission] =
     useState<'default' | 'granted' | 'denied' | 'unsupported'>('default');
@@ -497,7 +499,35 @@ function SettingsV2Content() {
               */}
               <div className="flex items-center justify-between pt-3 border-t border-border gap-4">
                 <div>
-                  <Label>Thème</Label>
+                  <Label htmlFor="locale-fr">{t('settings.language')}</Label>
+                  <p className="text-xs text-muted mt-0.5">
+                    Interface — FR / EN
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    id="locale-fr"
+                    variant={locale === 'fr' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => setLocale('fr')}
+                    aria-pressed={locale === 'fr'}
+                  >
+                    FR
+                  </Button>
+                  <Button
+                    variant={locale === 'en' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => setLocale('en')}
+                    aria-pressed={locale === 'en'}
+                  >
+                    EN
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-border gap-4">
+                <div>
+                  <Label>{t('settings.theme')}</Label>
                   <p className="text-xs text-muted mt-0.5">
                     Sombre / Clair — également accessible depuis la topbar
                   </p>

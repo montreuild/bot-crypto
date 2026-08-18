@@ -392,6 +392,12 @@ class CandleStore:
         if len(df) == 0:
             return {"symbol": symbol, "tf": tf, "bars": 0,
                     "from": None, "to": None, "size_kb": 0}
+        from app.core.ohlcv_gaps import (
+            calendar_for_symbol,
+            completeness_from_gaps,
+            detect_ohlcv_gaps,
+        )
+        gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol))
         return {
             "symbol":  symbol,
             "tf":      tf,
@@ -399,6 +405,8 @@ class CandleStore:
             "from":    str(df["time"].min()),
             "to":      str(df["time"].max()),
             "size_kb": round(path.stat().st_size / 1024, 1) if path.exists() else 0,
+            "gaps":    len(gaps),
+            "completeness": completeness_from_gaps(len(df), gaps),
         }
 
     def all_stats(self) -> list:
@@ -440,7 +448,18 @@ class CandleStore:
                     "from": None,
                     "to": None,
                     "size_kb": round(st.st_size / 1024, 1),
+                    "completeness": None,
+                    "gaps": 0,
                 }
+                sidecar = parquet.with_suffix(".gaps.json")
+                if sidecar.exists():
+                    try:
+                        import json as _json
+                        info = _json.loads(sidecar.read_text(encoding="utf-8"))
+                        row["gaps"] = int(info.get("gaps") or 0)
+                        row["completeness"] = info.get("completeness")
+                    except Exception:
+                        pass
                 self._all_stats_cache[key] = (mtime, row)
                 return row
             except Exception:
@@ -753,12 +772,45 @@ class CandleStore:
         try:
             df.write_parquet(tmp, compression="zstd")
             os.replace(tmp, path)
+            self._warn_write_gaps(path, df)
         except Exception as e:
             logger.error(f"[CandleStore] Erreur écriture {path} : {e}")
             try:
                 tmp.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def _warn_write_gaps(self, path: Path, df: pl.DataFrame) -> None:
+        """D-03 : journalise les trous non calendaires à l'écriture."""
+        try:
+            from app.core.ohlcv_gaps import (
+                calendar_for_symbol,
+                completeness_from_gaps,
+                detect_ohlcv_gaps,
+            )
+            tf = path.stem
+            symbol = path.parent.name.replace("_", "/", 1)
+            gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol))
+            missing = sum(int(g.get("gap_bars") or 0) for g in gaps)
+            comp = completeness_from_gaps(len(df), gaps)
+            try:
+                import json as _json
+                path.with_suffix(".gaps.json").write_text(
+                    _json.dumps({"gaps": len(gaps), "missing_bars": missing,
+                                 "completeness": comp}),
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+            if not gaps:
+                return
+            logger.warning(
+                "[CandleStore] %s/%s : %d trou(s) non calendaire(s), "
+                "%d barre(s) manquante(s), complétude=%.1f%%",
+                symbol, tf, len(gaps), missing, comp * 100,
+            )
+        except Exception as e:
+            logger.debug("[CandleStore] detect_ohlcv_gaps KO : %s", e)
 
     @staticmethod
     def _raw_to_df(raw: List[list]) -> pl.DataFrame:

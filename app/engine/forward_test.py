@@ -24,13 +24,14 @@ from datetime import datetime, timezone
 import numpy as np
 
 from app.core.bot_identity import build_slot_key
+from app.core.is_oos import WARMUP_BARS_DEFAULT as _WARMUP_BARS
 from app.core.oos_tracker import (
     _closed_trades,
     _edge_contract,
     _mc_contract,
     _per_trade_returns_pct,
-    _save_record,
     _verdict,
+    save_records,
 )
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.core.risk_envelope import envelope_base as _envelope_base
@@ -40,7 +41,6 @@ from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 logger = logging.getLogger(__name__)
 
 # Bougies de chauffe : même constante que le split IS/OOS et le backtest.
-from app.core.is_oos import WARMUP_BARS_DEFAULT as _WARMUP_BARS
 # Garde-fou : on ne demande jamais plus que ça de bougies pour un forward-test.
 _MAX_BARS = 4000
 # Plafond plus large pour le backtest d'edge (fenêtre longue, ex. 365 j :
@@ -257,7 +257,6 @@ def run_forward_test(cfg: dict, fetch_ohlcv, active_per_tf: dict,
                 continue
             if rec is None:
                 continue
-            _save_record(rec["slot_key"], rec)
             results[rec["slot_key"]] = rec
             c = rec["contract"]
             logger.info(
@@ -265,4 +264,7 @@ def run_forward_test(cfg: dict, fetch_ohlcv, active_per_tf: dict,
                 f"({rec['sim']['return_pct']:+.2f}%) | live {rec['live']['n_trades']} tr "
                 f"| verdict={c['verdict']}"
             )
+    # D-05 : une seule écriture atomique en fin de passe, pas une par slot.
+    if results:
+        save_records(results)
     return results

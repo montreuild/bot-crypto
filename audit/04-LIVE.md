@@ -26,7 +26,7 @@
 | L-13 | 🟡 Moyen | Positions mutées hors verrou pendant que l'API les sérialise | `position_manage_mixin.py:53` | ✅ résolu — snapshot sous `_positions_lock` |
 | L-14 | 🔵 Mineur | `_pre_execution_check` échoue sans trace dans les compteurs | `position_open_mixin.py:559-561` | ✅ déjà en place — `_record_precheck_reject` |
 | L-15 | 🔵 Mineur | Seuil de gap à 2 % en dur | `position_manage_mixin.py:77,84` | ✅ résolu — `trading.gap_threshold` |
-| L-16 | 🔵 Mineur | `bars_held` live en horloge murale, backtest en index de bougie | `position_manage_mixin.py:153` | ouvert |
+| L-16 | 🔵 Mineur | `bars_held` live en horloge murale, backtest en index de bougie | `position_manage_mixin.py:153` | ✅ résolu — compte les bougies |
 
 > N-04 (`apply_exit_mode` live) est résolu. Détail : [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
 

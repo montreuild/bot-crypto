@@ -120,11 +120,19 @@ function LabContent() {
   // Un `?tab=` inconnu (ancien favori, faute de frappe) retombe sur Backtest
   // plutôt que d'afficher une page d'onglets vide.
   const requestedTab = searchParams.get('tab');
-  const initialTab = TABS.includes(requestedTab as (typeof TABS)[number])
-    ? requestedTab!
-    : 'backtest';
+  const tabValid = TABS.includes(requestedTab as (typeof TABS)[number]);
+  const initialTab = tabValid ? requestedTab! : 'backtest';
   const intent = searchParams.get('intent'); // 'create' si arrivé depuis /bots
   const [tab, setTab] = useState(initialTab);
+
+  // U-12 : un `?tab=` inconnu est remplacé dans l'URL, pas seulement ignoré.
+  useEffect(() => {
+    if (requestedTab && !tabValid) {
+      const q = new URLSearchParams(searchParams.toString());
+      q.set('tab', 'backtest');
+      router.replace(`/lab?${q.toString()}`, { scroll: false });
+    }
+  }, [requestedTab, tabValid, router, searchParams]);
 
   // Mode expert — source de vérité = le backend (`/api/settings/presets`), comme
   // sur /settings. Cette page lisait auparavant uniquement `localStorage`, via

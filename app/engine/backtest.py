@@ -110,11 +110,19 @@ def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
         return entry
     overlap = ml_registry.overlaps(art, window_start, window_end)
     if overlap:
+        # M-06 : un modèle qui a vu la fenêtre évaluée n'est pas utilisable.
         logger.warning(
             f"[Backtest] ml_mode=frozen : {strat.name}/{tf} — la fenêtre d'entraînement "
             f"de {art.version_id} ({art.train_start}..{art.train_end}) chevauche la "
-            f"fenêtre backtestée ({window_start}..{window_end}) : fuite potentielle."
+            f"fenêtre backtestée ({window_start}..{window_end}) : modèle invalidé, "
+            f"repli inline."
         )
+        return {
+            "resolved": False, "fallback_to_inline": True,
+            "overlap_warning": True, "invalidated": True,
+            "version_id": art.version_id,
+            "train_start": art.train_start, "train_end": art.train_end,
+        }
     if not strat.load_model(art.path_prefix):
         logger.warning(
             f"[Backtest] ml_mode=frozen : {strat.name}/{tf} — modèle {art.version_id} "
