@@ -26,10 +26,10 @@ def lazy_singleton(factory, doc: str | None = None):
 
     def set_instance(obj) -> None:
         with lock:
-            get.instance = obj
+            get.instance = obj  # type: ignore[attr-defined]
 
-    get.instance = None
-    get.set = set_instance
+    get.instance = None  # type: ignore[attr-defined]
+    get.set = set_instance  # type: ignore[attr-defined]
     get.__name__ = f"get_{getattr(factory, '__name__', 'instance').lower()}"
     if doc:
         get.__doc__ = doc

@@ -13,8 +13,8 @@
  */
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { useFeesBreakdown } from '@/hooks/use-api';
-import { formatUSD } from '@/lib/utils';
+import { useFeesBreakdown, useRisk } from '@/hooks/use-api';
+import { formatMoney, quoteCurrency } from '@/lib/utils';
 import { Loader2 } from 'lucide-react';
 
 interface FeesData {
@@ -33,6 +33,8 @@ const SEGMENTS = [
 
 export function FeesBreakdown({ days = 30 }: { days?: number }) {
   const { data, isLoading, isError } = useFeesBreakdown(days);
+  const { data: risk } = useRisk();
+  const ccy = quoteCurrency(risk?.venues?.[0]);
 
   if (isLoading) {
     return (
@@ -81,7 +83,7 @@ export function FeesBreakdown({ days = 30 }: { days?: number }) {
       <CardHeader>
         <CardTitle className="text-sm flex items-center justify-between">
           <span>Ventilation des frais ({days}j)</span>
-          <span className="font-mono text-xs text-muted">{formatUSD(total)}</span>
+          <span className="font-mono text-xs text-muted">{formatMoney(total, ccy)}</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -96,7 +98,7 @@ export function FeesBreakdown({ days = 30 }: { days?: number }) {
                 key={seg.key}
                 className={seg.color}
                 style={{ width: `${pct}%` }}
-                title={`${seg.label}: ${formatUSD(value)} (${pct.toFixed(1)}%)`}
+                title={`${seg.label}: ${formatMoney(value, ccy)} (${pct.toFixed(1)}%)`}
               />
             );
           })}
@@ -113,7 +115,7 @@ export function FeesBreakdown({ days = 30 }: { days?: number }) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <span className="text-muted">{seg.label}</span>
-                    <span className="font-mono">{formatUSD(value)}</span>
+                    <span className="font-mono">{formatMoney(value, ccy)}</span>
                   </div>
                   <div className="text-[10px] text-dim">
                     {pct.toFixed(1)}% · {seg.desc}

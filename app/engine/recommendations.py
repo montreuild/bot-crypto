@@ -510,7 +510,7 @@ def generate_recommendations(backtest_result: dict) -> List[dict]:
     """
     # Si on reçoit le payload global avec by_strategy, on prend la 1ère stratégie
     if "by_strategy" in backtest_result and isinstance(backtest_result["by_strategy"], dict):
-        strat_data = next(iter(backtest_result["by_strategy"].values()), {})
+        strat_data: dict = next(iter(backtest_result["by_strategy"].values()), {})
         # Fusionner avec les champs globaux (ohlcv, etc.)
         result = {**backtest_result, **strat_data}
     else:

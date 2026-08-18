@@ -10,6 +10,19 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 ML-03 / UX-01 / FE-02 / ARCH-04 / FE-03
+
+- **ML-03** : `fit_trace` sur les entraînements inline. Mesure : le repli
+  `frozen` → inline est **causal** (`aligned_train_window(ctx.window)`), pas
+  un fit sur toute la série. `any_full_series` irait en P0.
+- **UX-01** : `quoteCurrency()` + `formatMoney` câblés (backtest, compare,
+  portefeuille, positions, trades, topbar, bandeau).
+- **FE-02 / UX-03 / UX-04** : toast config en lecture ; POST config déjà
+  toasts ; compare / backtest-results distinguent en cours / vide / erreur.
+- **ARCH-04** : 5 modules mypy de plus (33 `ignore_errors` restants).
+- **FE-03** : `scripts/gen_frontend_types.py` régénère `types/generated.ts`
+  (dont `TradeRow.quote_currency`).
+
 ### 🐛 ARCH-04 suite + ML-05 + FE-03
 
 - **ARCH-04** : RUF013 sur `app/` ; mypy CI = `app/core` + `app/engine`

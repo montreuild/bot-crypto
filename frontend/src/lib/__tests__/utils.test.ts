@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   formatMoney,
   formatUSD,
+  quoteCurrency,
+  inferQuoteFromSymbol,
   formatPct,
   formatNumber,
   formatCompact,
@@ -32,6 +34,35 @@ describe('formatMoney', () => {
 
   it('formatUSD reste un alias', () => {
     expect(formatUSD(10)).toBe(formatMoney(10, 'USD'));
+  });
+});
+
+describe('quoteCurrency', () => {
+  it('lit cost_model.quote_currency', () => {
+    expect(quoteCurrency({ cost_model: { quote_currency: 'EUR' } })).toBe('EUR');
+  });
+
+  it('lit envelope.currency', () => {
+    expect(quoteCurrency({ envelope: { currency: 'EUR' } })).toBe('EUR');
+  });
+
+  it('lit RiskVenue.currency (envelope est un montant)', () => {
+    expect(quoteCurrency({ currency: 'EUR', envelope: 1000 })).toBe('EUR');
+  });
+
+  it('infère EUR depuis un ticker .PA', () => {
+    expect(inferQuoteFromSymbol('BNP.PA')).toBe('EUR');
+    expect(quoteCurrency('AIR.PA')).toBe('EUR');
+  });
+
+  it('infère le quote d\'une paire', () => {
+    expect(quoteCurrency('BTC/EUR')).toBe('EUR');
+    expect(quoteCurrency('BTC/USDC')).toBe('USD');
+  });
+
+  it('replie sur USD', () => {
+    expect(quoteCurrency(null)).toBe('USD');
+    expect(quoteCurrency({})).toBe('USD');
   });
 });
 

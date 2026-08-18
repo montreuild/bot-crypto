@@ -1,7 +1,7 @@
 'use client';
 
 import { Card } from '@/components/ui/card';
-import { cn, formatUSD, formatPct, formatNumber } from '@/lib/utils';
+import { cn, formatMoney, formatPct, formatNumber } from '@/lib/utils';
 import { LucideIcon, TrendingUp, TrendingDown, Wallet, Activity, Percent, Trophy, Zap } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -14,10 +14,11 @@ interface KPICardProps {
   trendValue?: string;
   flashOnChange?: boolean;
   format?: 'usd' | 'pct' | 'number';
+  currency?: string;
 }
 
 export function KPICard({
-  label, value, sublabel, icon: Icon, trend, trendValue, flashOnChange = true, format = 'usd',
+  label, value, sublabel, icon: Icon, trend, trendValue, flashOnChange = true, format = 'usd', currency = 'USD',
 }: KPICardProps) {
   const [flashClass, setFlashClass] = useState('');
 
@@ -27,7 +28,7 @@ export function KPICard({
   // render pour comparer à la valeur précédente.
   const prevRef = useRef<string>('');
   const currentFormatted = typeof value === 'number'
-    ? (format === 'usd' ? formatUSD(value) : format === 'pct' ? formatPct(value) : formatNumber(value))
+    ? (format === 'usd' ? formatMoney(value, currency) : format === 'pct' ? formatPct(value) : formatNumber(value))
     : String(value);
 
   useEffect(() => {
@@ -44,7 +45,7 @@ export function KPICard({
   }, [currentFormatted, flashOnChange]);
 
   const displayValue = typeof value === 'number'
-    ? (format === 'usd' ? formatUSD(value) : format === 'pct' ? formatPct(value) : formatNumber(value))
+    ? (format === 'usd' ? formatMoney(value, currency) : format === 'pct' ? formatPct(value) : formatNumber(value))
     : value;
 
   const trendColor = trend === 'up' ? 'text-emerald-400' : trend === 'down' ? 'text-red-400' : 'text-muted';
@@ -84,19 +85,20 @@ export function KPICard({
 }
 
 // Variantes pré-configurées
-export function CapitalCard({ value }: { value: number }) {
-  return <KPICard label="Capital" value={value} format="usd" icon={Wallet} sublabel="Total balance" />;
+export function CapitalCard({ value, currency = 'USD' }: { value: number; currency?: string }) {
+  return <KPICard label="Capital" value={value} format="usd" currency={currency} icon={Wallet} sublabel="Total balance" />;
 }
 
-export function PnLCard({ value, pct }: { value: number; pct: number }) {
+export function PnLCard({ value, pct, currency = 'USD' }: { value: number; pct: number; currency?: string }) {
   return (
     <KPICard
       label="PnL Total"
       value={pct}
       format="pct"
+      currency={currency}
       icon={pct >= 0 ? TrendingUp : TrendingDown}
       trend={pct >= 0 ? 'up' : 'down'}
-      trendValue={formatUSD(value, { sign: true })}
+      trendValue={formatMoney(value, currency, { sign: true })}
       sublabel="vs initial"
     />
   );

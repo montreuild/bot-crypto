@@ -1,8 +1,8 @@
 'use client';
 
-import { useBotStatus, useHealth, useRiskDiagnostics } from '@/hooks/use-api';
+import { useBotStatus, useHealth, useRisk, useRiskDiagnostics } from '@/hooks/use-api';
 import { useWebSocket } from '@/lib/ws-provider';
-import { cn, formatUSD, getStoredTheme, setStoredTheme, errorMessage } from '@/lib/utils';
+import { cn, formatMoney, quoteCurrency, getStoredTheme, setStoredTheme, errorMessage } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import {
   Play, Square, RefreshCw, AlertTriangle, Wifi, WifiOff, Loader2,
@@ -14,6 +14,8 @@ import { useMemo, useState, useEffect } from 'react';
 
 export function Topbar() {
   const router = useRouter();
+  const { data: risk } = useRisk();
+  const displayCcy = quoteCurrency(risk?.venues?.[0]);
   const { data: diagnostics } = useRiskDiagnostics();
   const diagErrors = diagnostics?.errors ?? 0;
   const diagWarnings = diagnostics?.warnings ?? 0;
@@ -174,7 +176,7 @@ export function Topbar() {
         <div className="flex items-center gap-6">
           <div className="text-right">
             <div className="text-[10px] uppercase tracking-wider text-dim">Capital</div>
-            <div className="font-mono font-semibold text-sm">{formatUSD(status.capital)}</div>
+            <div className="font-mono font-semibold text-sm">{formatMoney(status.capital, displayCcy)}</div>
           </div>
           <div className="text-right">
             <div className="text-[10px] uppercase tracking-wider text-dim">PnL Total</div>

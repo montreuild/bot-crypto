@@ -286,6 +286,7 @@ class TradeRow(BaseModel):
     side: Optional[str] = None
     strategy: Optional[str] = None
     pnl: Optional[float] = None
+    quote_currency: Optional[str] = None
 
 
 class TradesListResponse(BaseModel):

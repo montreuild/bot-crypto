@@ -12,7 +12,8 @@ import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatUSD, formatPct, errorMessage } from '@/lib/utils';
+import { cn, formatMoney, formatPct, errorMessage, quoteCurrency } from '@/lib/utils';
+import { LoadingState, EmptyState, ErrorState } from '@/components/ui/query-state';
 import { useBacktestSettings } from '@/hooks/use-api';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
@@ -79,7 +80,7 @@ const COLUMNS: Array<{ key: SortKey; label: string; numeric: boolean; higherBett
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmtCell(key: SortKey, value: ResultRow[SortKey] | undefined): string {
+function fmtCell(key: SortKey, value: ResultRow[SortKey] | undefined, currency = 'USD'): string {
   if (value == null) return '—';
   switch (key) {
     case 'strategy': return String(value);
@@ -90,7 +91,7 @@ function fmtCell(key: SortKey, value: ResultRow[SortKey] | undefined): string {
     case 'best_trade':
     case 'worst_trade':
     case 'equity_final':
-      return (key !== 'total_pnl' && Number(value) >= 0 ? '+' : '') + formatUSD(Number(value));
+      return (key !== 'total_pnl' && Number(value) >= 0 ? '+' : '') + formatMoney(Number(value), currency);
     case 'sharpe': return Number(value).toFixed(2);
     case 'max_drawdown': return `${Number(value).toFixed(2)}%`;
     case 'profit_factor': return Number(value) === 999 ? '∞' : Number(value).toFixed(2);
@@ -128,6 +129,9 @@ export function CompareView() {
   const [selected, setSelected] = useState<string[]>(['pullback_trend', 'trend_rider', 'breakout']);
 
   const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [attempted, setAttempted] = useState(false);
+  const [currency, setCurrency] = useState('USD');
   const [rows, setRows] = useState<ResultRow[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>('total_pnl');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -155,6 +159,8 @@ export function CompareView() {
       return;
     }
     setRunning(true);
+    setAttempted(true);
+    setRunError(null);
     setRows([]);
     try {
       const settled = await Promise.allSettled(
@@ -167,6 +173,8 @@ export function CompareView() {
         if (res.status === 'fulfilled') {
           const r: BacktestResult | BacktestResult[] = res.value;
           const bt: BacktestResult = Array.isArray(r) ? r[0] : r;
+          const ccy = quoteCurrency(bt);
+          if (ccy && ccy !== 'USD') setCurrency(ccy);
           return {
             strategy,
             total_trades: bt.total_trades ?? 0,
@@ -202,7 +210,9 @@ export function CompareView() {
         toast.error('Tous les backtests ont échoué');
       }
     } catch (e) {
-      toast.error(`Erreur: ${errorMessage(e)}`);
+      const msg = errorMessage(e);
+      setRunError(msg);
+      toast.error(`Erreur: ${msg}`);
     } finally {
       setRunning(false);
     }
@@ -441,6 +451,22 @@ export function CompareView() {
         </CardContent>
       </Card>
 
+      {/* UX-04 : en cours / vide / cassé ne se ressemblent plus. */}
+      {running && (
+        <LoadingState label={`Comparaison en cours — ${selected.length} backtest(s)…`} className="min-h-[240px]" />
+      )}
+      {!running && !attempted && rows.length === 0 && (
+        <EmptyState
+          label="Aucune comparaison lancée"
+          description="Sélectionnez des stratégies puis cliquez sur Comparer. Un écran vide ici n'est pas un plantage."
+        />
+      )}
+      {!running && attempted && rows.length === 0 && (
+        <ErrorState
+          error={runError || 'La comparaison n’a renvoyé aucun résultat.'}
+        />
+      )}
+
       {/* Results table */}
       {rows.length > 0 && !running && (
         <Card>
@@ -525,7 +551,7 @@ export function CompareView() {
                               ) : r.error ? (
                                 <span className="text-dim">—</span>
                               ) : (
-                                fmtCell(col.key, v)
+                                fmtCell(col.key, v, currency)
                               )}
                             </td>
                           );
@@ -556,11 +582,11 @@ export function CompareView() {
                   <YAxis
                     stroke="#6b7280"
                     fontSize={10}
-                    tickFormatter={(v) => `$${Number(v).toFixed(0)}`}
+                    tickFormatter={(v) => formatMoney(Number(v), currency, { decimals: 0 })}
                   />
                   <Tooltip
                     contentStyle={{ backgroundColor: '#141a23', border: '1px solid #1f2937', borderRadius: '8px' }}
-                    formatter={(v: any, name: string) => [`$${Number(v).toFixed(2)}`, name]}
+                    formatter={(v: any, name: string) => [formatMoney(Number(v), currency), name]}
                     labelFormatter={(l) => `Trade ${l}`}
                   />
                   <Legend

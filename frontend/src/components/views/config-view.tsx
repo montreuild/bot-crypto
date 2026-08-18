@@ -20,9 +20,11 @@ import { useConfig } from '@/hooks/use-api';
 import type { AppConfig } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { QueryBoundary } from '@/components/ui/query-state';
 import { PaperLiveSwitch } from '@/components/cards/paper-live-switch';
+import { toast } from 'sonner';
+import { errorMessage } from '@/lib/utils';
 
 /**
  * S6-12 : le titre reste monté même sans config chargée, et l'échec est
@@ -30,9 +32,17 @@ import { PaperLiveSwitch } from '@/components/cards/paper-live-switch';
  */
 function ConfigGate({ title, children }: { title: string; children: (config: AppConfig) => ReactNode }) {
   const configQuery = useConfig();
-  const { data: config } = configQuery;
+  const { data: config, isLoading, isError, error } = configQuery;
 
-  if (!config) {
+  // UX-03 : un échec de lecture ne reste pas un spinner. Les POST
+  // (PaperLiveSwitch, strategy-params, enveloppes) toastent déjà via sonner.
+  useEffect(() => {
+    if (isError && error) {
+      toast.error(`Configuration : ${errorMessage(error)}`);
+    }
+  }, [isError, error]);
+
+  if (isLoading || isError || !config) {
     return (
       <QueryBoundary
         title={<h2 className="text-lg font-semibold tracking-tight">{title}</h2>}

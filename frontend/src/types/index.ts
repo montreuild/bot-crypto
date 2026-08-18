@@ -1,6 +1,6 @@
 /**
  * Contrats API consommés par l'UI.
- * Les 5 routes chaudes : `types/generated.ts` (dérivé des response_model).
+ * Les routes chaudes : `types/generated.ts` (`python scripts/gen_frontend_types.py`).
  * Schéma brut : `python scripts/export_openapi.py` → `types/openapi.json`.
  * Zod (lib/schemas.ts) reste non bloquant.
  */
@@ -63,6 +63,7 @@ export interface Position {
   upnl: number;
   open_time: number;
   reason: string;
+  quote_currency?: string;
 }
 
 /**
@@ -317,6 +318,7 @@ export interface Trade {
   status: string;
   score: number;
   reason: string;
+  quote_currency?: string;
 }
 
 export interface DualPassRuns {
@@ -1468,5 +1470,6 @@ export type {
   OptimizeResultsResponse,
   PortfolioResponse,
   RiskOverviewResponse,
+  TradeRow,
   TradesListResponse,
 } from './generated';

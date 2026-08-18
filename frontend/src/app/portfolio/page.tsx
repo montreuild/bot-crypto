@@ -55,7 +55,8 @@ import { Button } from '@/components/ui/button';
 import { QueryBoundary } from '@/components/ui/query-state';
 import { MetricValue } from '@/components/ui/metric-value';
 import type { StrategyStats } from '@/types';
-import { useBotStatus, usePortfolio } from '@/hooks/use-api';
+import { useBotStatus, usePortfolio, useRisk } from '@/hooks/use-api';
+import { quoteCurrency } from '@/lib/utils';
 import { Play, Square, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -71,6 +72,8 @@ export default function PortfolioV2Page() {
 
   const { data: status } = statusQuery;
   const { data: portfolio } = portfolioQuery;
+  const { data: risk } = useRisk();
+  const displayCcy = quoteCurrency(risk?.venues?.[0]);
 
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
   const [stopLoading, setStopLoading] = useState(false);
@@ -155,7 +158,7 @@ export default function PortfolioV2Page() {
       {header}
 
       {/* Bandeau de santé en français */}
-      <HealthBanner status={status} portfolio={portfolio} />
+      <HealthBanner status={status} portfolio={portfolio} currency={displayCcy} />
 
       {/* S3-F3-US3 — Bandeau HALT avec acquittement (si circuit breaker actif) */}
       <HaltBanner
@@ -166,8 +169,8 @@ export default function PortfolioV2Page() {
 
       {/* KPIs row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <CapitalCard value={status.capital || 1000} />
-        <PnLCard value={status.total_pnl || 0} pct={status.total_pnl_pct || 0} />
+        <CapitalCard value={status.capital || 1000} currency={displayCcy} />
+        <PnLCard value={status.total_pnl || 0} pct={status.total_pnl_pct || 0} currency={displayCcy} />
         <WinRateCard value={status.win_rate || 0} totalTrades={status.total_trades || 0} />
         <ProfitFactorCard value={status.profit_factor || 0} />
         <DrawdownCard value={status.global_dd_pct || 0} limit={status.global_dd_limit || 0.20} />

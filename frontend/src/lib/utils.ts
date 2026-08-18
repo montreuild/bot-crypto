@@ -47,6 +47,50 @@ export function formatUSD(value: number, opts: { decimals?: number; sign?: boole
   return formatMoney(value, 'USD', opts);
 }
 
+/** Source de devise : cost_model backtest, enveloppe live, ou symbole. */
+export type CurrencySource = {
+  quote_currency?: string | null;
+  currency?: string | null;
+  symbol?: string | null;
+  cost_model?: { quote_currency?: string | null } | null;
+  /** Objet `{currency}` (étude) ou montant numérique (RiskVenue.envelope). */
+  envelope?: { currency?: string | null } | number | null;
+};
+
+/** Infère EUR/GBP depuis un ticker actions, sinon le quote d'une paire. */
+export function inferQuoteFromSymbol(symbol?: string | null): string {
+  if (!symbol) return '';
+  const s = symbol.toUpperCase();
+  if (/\.(PA|AS|BR|DE|MC|MI|MA)$/.test(s)) return 'EUR';
+  if (s.endsWith('.L')) return 'GBP';
+  const slash = s.lastIndexOf('/');
+  if (slash >= 0) {
+    const q = s.slice(slash + 1);
+    if (q === 'USDC' || q === 'USDT') return 'USD';
+    if (q.length === 3) return q;
+  }
+  return '';
+}
+
+/** UX-01 : devise réelle du payload, pas USD en dur. */
+export function quoteCurrency(
+  src?: CurrencySource | string | null,
+  fallback = 'USD',
+): string {
+  if (typeof src === 'string') {
+    return inferQuoteFromSymbol(src) || fallback;
+  }
+  const env = src?.envelope;
+  const envCcy = env && typeof env === 'object' ? env.currency : undefined;
+  const fromPayload =
+    src?.quote_currency
+    || src?.currency
+    || src?.cost_model?.quote_currency
+    || envCcy
+    || inferQuoteFromSymbol(src?.symbol);
+  return fromPayload || fallback;
+}
+
 export function formatPct(value: number, decimals = 2, sign = true): string {
   const formatted = value.toFixed(decimals);
   return sign && value > 0 ? `+${formatted}%` : `${formatted}%`;

@@ -66,6 +66,7 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
     strategies: [],
   });
   const [result, setResult] = useState<BacktestResult | BacktestResult[] | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
 
   useEffect(() => {
     if (defaultTf) {
@@ -100,6 +101,7 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
 
   const handleClearSession = () => {
     setResult(null);
+    setRunError(null);
     setStartedAt(null);
     session.clear();
     toast.success('Résultat et session effacés');
@@ -138,6 +140,7 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
       if (rangeCheck.warning) toast.warning(rangeCheck.warning);
     }
     setResult(null);
+    setRunError(null);
     setStartedAt(Date.now());
     try {
       const res = await runBacktest.mutateAsync({
@@ -173,7 +176,9 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
       }
       toast.success('Backtest terminé');
     } catch (e) {
-      toast.error(`Erreur : ${errorMessage(e)}`);
+      const msg = errorMessage(e);
+      setRunError(msg);
+      toast.error(`Erreur : ${msg}`);
     } finally {
       setStartedAt(null);
     }
@@ -549,6 +554,9 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
           />
         )}
 
+        {!result && runError && !isLoading && (
+          <BacktestResults error={runError} />
+        )}
         {result && <BacktestResults result={result} scoreThreshold={settings?.score_threshold} />}
       </div>
     </div>

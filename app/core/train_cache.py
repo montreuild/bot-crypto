@@ -122,6 +122,12 @@ def cached_train(strategy, df, tf_key: str, params: dict,
       l'entraînement (les autres — seuils de décision — sont ignorés
       pour maximiser les hits entre trials de l'optimiseur).
     """
+    try:
+        from app.ml.fit_trace import record as _record_fit
+        _record_fit(df, site="cached_train")
+    except Exception:
+        pass
+
     if _MAX <= 0:
         return train_impl(df, tf_key, params)
 
