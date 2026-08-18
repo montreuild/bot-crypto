@@ -48,7 +48,8 @@ Seule dépendance vérifiée vers le hors-périmètre : **aucun module de `app/`
    | `mypy app` | **1 084 erreurs dans 120 fichiers** (206 fichiers analysés) |
    | `tsc --noEmit` | **0 erreur** |
    | `vitest run` | **126 tests, 10 fichiers, tous passés** |
-   | `eslint` | non concluant (formateur `compact` absent, cf. TEST-06) |
+   | Couverture `frontend/src` | **4,84 %** |
+   | `eslint .` | **0 erreur, 5 avertissements** |
 
 5. **Reproduction** — les constats marqués `CONFIRMÉ` ont été reproduits par exécution,
    en réutilisant le harnais de test du dépôt (`tests/test_partial_exits.py`).
