@@ -33,6 +33,7 @@ export interface SmcZoneRow {
 export interface ChartIndicators {
   ema20?: SeriesPoint[];
   ema50?: SeriesPoint[];
+  ema200?: SeriesPoint[];
   bb_upper?: SeriesPoint[];
   bb_mid?: SeriesPoint[];
   bb_lower?: SeriesPoint[];

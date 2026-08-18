@@ -18,9 +18,10 @@ export interface FastAnalysisResult {
   error?: string;
   rows?: Array<{
     signal?: string;
-    maker?: { oos?: { pnl?: number; pf?: number; wr?: number }; full?: { pnl?: number } };
+    kind?: string;
     family?: string;
     edge?: string;
+    maker?: { oos?: { pnl?: number; pf?: number; wr?: number; n?: number }; full?: { pnl?: number } };
   }>;
 }
 
