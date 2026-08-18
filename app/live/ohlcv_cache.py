@@ -45,7 +45,6 @@ _OHLCV_TTL: Dict[str, int] = {
 # Durée d'un timeframe en millisecondes — source unique (V4-A).
 # (_OHLCV_TTL ci-dessus reste local : c'est un intervalle de POLLING, pas
 # une durée de timeframe.)
-from app.core.timeframes import TF_MS as _TF_MS  # noqa: E402
 
 
 class OHLCVCache:
