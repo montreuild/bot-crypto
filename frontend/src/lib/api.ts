@@ -12,7 +12,9 @@ import type {
   BotStatus, Trade, Bot, SlotBudget, BacktestResult,
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
   RiskOverview, RiskDiagnostics, VenueEnvelopeConfig,
-  OptimizeValidateResult,
+  OptimizeValidateResult, BotThresholds, OosTracker, OptimizeStartResult,
+  AuditEvent, CandleStore, AppConfig, ForwardTestResult,
+  DerivativesStatus, DerivativesPayload,
 } from '@/types';
 import {
   BotStatusSchema, BotsResponseSchema, OosTrackerSchema, MlRecipesResponseSchema,
@@ -189,13 +191,13 @@ export const api = {
   getFeesBreakdown: (days = 30) => apiFetch<any>(`/stats/fees?days=${days}`, { schema: FeesBreakdownSchema }),
 
   // ── Bots / Portfolio ────────────────────────────────────────────────────
-  getBots: () => apiFetch<{ bots: Bot[]; counts: Record<string, number>; reopt_queue: string[]; thresholds: any }>('/bots', { schema: BotsResponseSchema }),
+  getBots: () => apiFetch<{ bots: Bot[]; counts: Record<string, number>; reopt_queue: string[]; thresholds: BotThresholds }>('/bots', { schema: BotsResponseSchema }),
   getPortfolio: () => apiFetch<any>('/portfolio'),
   forceBotActive: (slotKey: string, enabled = true) =>
     apiFetch(`/bots/${encodeURIComponent(slotKey)}/force-active?enabled=${enabled}`, { method: 'POST' }),
   runBotForwardTest: (slotKey: string) =>
-    apiFetch(`/bots/${encodeURIComponent(slotKey)}/forward-test`, { method: 'POST', timeoutMs: 0 }),
-  getOosTracker: () => apiFetch<any>('/oos-tracker', { schema: OosTrackerSchema }),
+    apiFetch<ForwardTestResult>(`/bots/${encodeURIComponent(slotKey)}/forward-test`, { method: 'POST', timeoutMs: 0 }),
+  getOosTracker: () => apiFetch<OosTracker>('/oos-tracker', { schema: OosTrackerSchema }),
 
   // ── Enveloppes de risque (S12) ──────────────────────────────────────────
   getRisk: () => apiFetch<RiskOverview>('/risk', { schema: RiskSchema }),
@@ -219,7 +221,7 @@ export const api = {
   getCircuitBreakers: () => apiFetch<any>('/circuit-breakers'),
 
   // ── Config ──────────────────────────────────────────────────────────────
-  getConfig: () => apiFetch<any>('/config'),
+  getConfig: () => apiFetch<AppConfig>('/config'),
   /**
    * POST /api/config/trading — paramètres de trading globaux (SEC-03 body JSON).
    *
@@ -476,7 +478,7 @@ export const api = {
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null) q.set(k, String(v));
     });
-    return apiFetch<any>(`/optimize/start?${q.toString()}`, { method: 'POST' });
+    return apiFetch<OptimizeStartResult>(`/optimize/start?${q.toString()}`, { method: 'POST' });
   },
   applyOptimize: (jobId: string, force = false) =>
     apiFetch<any>(`/optimize/apply?job_id=${jobId}&force=${force}`, { method: 'POST' }),
@@ -491,7 +493,7 @@ export const api = {
 
   // ── ML ──────────────────────────────────────────────────────────────────
   getMLStrategyInfo: () => apiFetch<{ strategies: Record<string, any> }>('/ml/strategy-info'),
-  getCandlesStats: () => apiFetch<{ store: any }>('/candles/stats'),
+  getCandlesStats: () => apiFetch<{ store: CandleStore }>('/candles/stats'),
   // S9-F3-US1 — Recettes ML disponibles
   getMLRecipes: () => apiFetch<{ recipes: any[] }>('/ml/recipes', { schema: MlRecipesResponseSchema }),
 
@@ -599,9 +601,9 @@ export const api = {
 
   // ── Derivatives ─────────────────────────────────────────────────────────
   getDerivativesData: (symbol = 'BTC/USDC', period = '1h', limit = 1000, refresh = false) =>
-    apiFetch<any>(`/derivatives/data?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${limit}&refresh=${refresh}`, { schema: DerivativesDataSchema }),
+    apiFetch<DerivativesPayload>(`/derivatives/data?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${limit}&refresh=${refresh}`, { schema: DerivativesDataSchema }),
   getDerivativesStatus: (symbol = 'BTC/USDC') =>
-    apiFetch<any>(`/derivatives/status?symbol=${encodeURIComponent(symbol)}`),
+    apiFetch<DerivativesStatus>(`/derivatives/status?symbol=${encodeURIComponent(symbol)}`),
 
   // ── Replay ──────────────────────────────────────────────────────────────
   runReplay: (params: {
@@ -627,11 +629,11 @@ export const api = {
     if (params.action) q.set('action', params.action);
     if (params.actor) q.set('actor', params.actor);
     const qs = q.toString();
-    return apiFetch<{ events: any[]; total: number; limit: number; offset: number }>(
+    return apiFetch<{ events: AuditEvent[]; total: number; limit: number; offset: number }>(
       `/audit/log${qs ? `?${qs}` : ''}`,
     );
   },
-  getAuditLogStats: () => apiFetch<{ by_action: Record<string, number>; total: number; last_event: any }>('/audit/log/stats'),
+  getAuditLogStats: () => apiFetch<{ by_action: Record<string, number>; total: number; last_event: AuditEvent | null }>('/audit/log/stats'),
 
   // ── SMC / Scanner ───────────────────────────────────────────────────────
   getSMC: (symbol = 'BTC/USDC', timeframe = '1h', limit = 1000) =>

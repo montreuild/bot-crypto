@@ -3,12 +3,20 @@
 Historique des versions du Crypto Bot.
 
 > X-07 : l'état **actuel** des constats d'audit est dans
-> [`audit/17-REVISION-2026-08-18.md`](audit/17-REVISION-2026-08-18.md),
+> [`audit/18-REVISION-2026-08-18.md`](audit/18-REVISION-2026-08-18.md),
 > pas dans ce fichier (narratif historique, parfois en retard).
 
 ---
 
 ## [Non publié]
+
+### 🐛 U-08 vues + U-05 types restants
+
+- **U-08** : Verdict / résultats → `backtest-results.tsx`. Chart SMC →
+  `use-smart-graph-chart.ts`. `backtest-view` ~525 L, `smart-graph-view` ~556 L.
+- **U-05** : session backtest, OOS, forward-test, audit, cache bougies,
+  enveloppes, start optimize typés. `errorMessage` sur les catch métier.
+- Commentaires réduits aux contraintes non lisibles dans le code.
 
 ### 🐛 X-03 optimizer/SMC, U-08 Smart Graph, U-05
 

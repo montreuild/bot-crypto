@@ -5,10 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatDateTime } from '@/lib/utils';
+import type { AuditEvent } from '@/types';
+import type { LucideIcon } from 'lucide-react';
 import { ScrollText, Download, Activity, AlertTriangle, Shield, Power, Settings } from 'lucide-react';
 import { useState } from 'react';
 
-const ACTION_ICONS: Record<string, any> = {
+const ACTION_ICONS: Record<string, LucideIcon> = {
   'bot.start': Power,
   'bot.stop': Power,
   'circuit_breaker.reset': AlertTriangle,
@@ -38,7 +40,7 @@ export default function AuditLogPage() {
   const exportCsv = () => {
     if (!events.length) return;
     const headers = ['id', 'ts', 'action', 'actor', 'ip', 'method', 'path', 'status_code', 'details'];
-    const rows = events.map((e: any) => [
+    const rows = events.map((e: AuditEvent) => [
       e.id, e.ts, e.action, e.actor, e.ip, e.method, e.path, e.status_code,
       JSON.stringify(e.details),
     ]);
@@ -163,7 +165,7 @@ export default function AuditLogPage() {
                     Aucun événement d&apos;audit. Les actions sensibles (start/stop bot, apply params, etc.) apparaîtront ici.
                   </td></tr>
                 ) : (
-                  events.map((evt: any) => {
+                  events.map((evt: AuditEvent) => {
                     const Icon = ACTION_ICONS[evt.action] || Activity;
                     const color = ACTION_COLORS[evt.action] || 'text-muted';
                     return (
@@ -186,7 +188,7 @@ export default function AuditLogPage() {
                         </td>
                         <td className="p-3 text-xs font-mono text-dim truncate max-w-xs">{evt.path}</td>
                         <td className="p-3">
-                          {evt.status_code > 0 && (
+                          {evt.status_code != null && evt.status_code > 0 && (
                             <span className={cn(
                               'text-xs font-mono',
                               evt.status_code < 300 ? 'text-emerald-400' :

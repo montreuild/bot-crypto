@@ -22,7 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
-import { cn, lifecycleStyle, parseSlotKey } from '@/lib/utils';
+import { cn, lifecycleStyle, parseSlotKey, errorMessage } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   Bot as BotIcon, RefreshCw, Star, AlertCircle, Plus, X,
@@ -34,7 +34,7 @@ import { QueryBoundary, EmptyState } from '@/components/ui/query-state';
 import { LifecycleFrieze } from '@/components/cards/lifecycle-frieze';
 import { MonteCarloCone } from '@/components/cards/monte-carlo-cone';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
-import type { Bot } from '@/types';
+import type { Bot, ForwardTestResult, OosSlot } from '@/types';
 import { isForcedActive } from '@/lib/schemas';
 
 /** Extrait le TF d'un slot_key (ex. smart_money::4h::BTC/USDC → 4h). */
@@ -214,7 +214,7 @@ function BotsV2Content() {
     const slots = oosData?.slots;
     if (!selectedSlotKey || !slots) return undefined;
     return Array.isArray(slots)
-      ? slots.find((s: any) => s.slot_key === selectedSlotKey)
+      ? slots.find((s: OosSlot) => s.slot_key === selectedSlotKey)
       : slots[selectedSlotKey];
   })();
 
@@ -234,8 +234,8 @@ function BotsV2Content() {
     try {
       await forceActive.mutateAsync({ slotKey, enabled });
       toast.success(enabled ? 'Bot forcé en ACTIF' : 'Forçage levé');
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -243,7 +243,7 @@ function BotsV2Content() {
     setForwardingSlot(slotKey);
     try {
       toast.info('Recalcul edge en cours…');
-      const res: any = await runForward.mutateAsync(slotKey);
+      const res = await runForward.mutateAsync(slotKey) as ForwardTestResult;
       const edge = res?.edge;
       const sim = res?.sim;
       const parts: string[] = [];
@@ -270,8 +270,8 @@ function BotsV2Content() {
             : 'Recalcul terminé — pas de données edge',
         { duration: 8000 },
       );
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     } finally {
       setForwardingSlot(null);
     }
@@ -281,8 +281,8 @@ function BotsV2Content() {
     try {
       await resetSlot.mutateAsync(slotKey);
       toast.success('Circuit breaker du slot réinitialisé');
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 

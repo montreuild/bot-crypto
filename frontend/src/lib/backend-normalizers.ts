@@ -12,6 +12,8 @@ import type {
   BacktestTrade,
   OptimizeJob,
   OptimizeTrial,
+  MlInfoEntry,
+  MlInfoPayload,
 } from '@/types';
 
 /** BT-002 — normalise un trade backend vers un trade frontend.
@@ -92,7 +94,7 @@ export interface NormalizedMlInfo {
   fallback_to_inline: boolean;
 }
 
-function _fromEntry(entry: any): NormalizedMlInfo {
+function _fromEntry(entry: MlInfoEntry): NormalizedMlInfo {
   return {
     auc: entry.auc ?? null,
     n_features: entry.n_features ?? entry.nFeatures ?? null,
@@ -107,28 +109,26 @@ function _fromEntry(entry: any): NormalizedMlInfo {
 }
 
 export function normalizeMlInfo(
-  mlInfo: any,
+  mlInfo: unknown,
   strategy: string,
 ): NormalizedMlInfo | null {
   if (!mlInfo || typeof mlInfo !== 'object') return null;
 
   if (Array.isArray(mlInfo)) {
-    const entry = mlInfo.find((m: any) => m?.strategy === strategy) ?? mlInfo[0];
+    const list = mlInfo as MlInfoEntry[];
+    const entry = list.find((m) => m?.strategy === strategy) ?? list[0];
     return entry ? _fromEntry(entry) : null;
   }
 
-  // Forme réelle du backend : `{mode, symbol, timeframe, models: {nom: entry}}`
-  // (cf. `Backtester.run`). Elle n'était pas reconnue : on retombait sur la
-  // branche « objet plat » et on lisait `mlInfo.auc`, absent à ce niveau — le
-  // panneau ML affichait donc « — » sur les quatre indicateurs, à chaque fois.
-  if (mlInfo.models && typeof mlInfo.models === 'object') {
-    const models = mlInfo.models as Record<string, any>;
+  const payload = mlInfo as MlInfoPayload;
+  if (payload.models && typeof payload.models === 'object') {
+    const models = payload.models;
     const entry = models[strategy] ?? Object.values(models)[0];
     return entry ? _fromEntry(entry) : null;
   }
 
   // Objet déjà aplati (déjà normalisé en amont, ou payload legacy).
-  return _fromEntry(mlInfo);
+  return _fromEntry(payload as MlInfoEntry);
 }
 
 /** OPT-001 — reconstruit le bloc `after` depuis `best_oos_*` si le backend
@@ -197,12 +197,12 @@ export function normalizeTopTrials(result: OptimizeJob['result']): OptimizeTrial
 }
 
 /** BT-006 — equity finale (alias backend `final_equity`). */
-export function equityFinal(r: BacktestResult): number | null {
+export function equityFinal(r: Pick<BacktestResult, 'equity_final' | 'final_equity'>): number | null {
   return r.equity_final ?? r.final_equity ?? null;
 }
 
 /** BT-006 — buy & hold (PnL ou %). */
-export function buyHold(r: BacktestResult): { pnl: number | null; pct: number | null } {
+export function buyHold(r: Pick<BacktestResult, 'buy_and_hold_pnl' | 'buy_and_hold_pct'>): { pnl: number | null; pct: number | null } {
   return {
     pnl: r.buy_and_hold_pnl ?? null,
     pct: r.buy_and_hold_pct ?? null,

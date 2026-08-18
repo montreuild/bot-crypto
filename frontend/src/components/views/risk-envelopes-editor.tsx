@@ -19,7 +19,7 @@ import {
   useUpdateEnvelopes,
 } from '@/hooks/use-api';
 import type { VenueEnvelopeConfig } from '@/types';
-import { cn } from '@/lib/utils';
+import { cn, errorMessage } from '@/lib/utils';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { AlertTriangle, Info, Lock, Save } from 'lucide-react';
@@ -194,15 +194,15 @@ export function VenueEnvelopesEditor() {
   const riskFieldsLocked = !isCustom;
 
   const envelopes: Record<string, VenueEnvelopeConfig> = useMemo(
-    () => (risk as any)?.envelopes_config ?? {},
+    () => risk?.envelopes_config ?? {},
     [risk],
   );
 
-  const venueDefs: Record<string, any> = useMemo(
-    () => (config as any)?.venues?.defs ?? {},
+  const venueDefs = useMemo(
+    () => config?.venues?.defs ?? {},
     [config],
   );
-  const defaultVenue = (config as any)?.venues?.default as string | undefined;
+  const defaultVenue = config?.venues?.default;
 
   // Venues = déclarées (defs) ∪ enveloppes — même liste que « Venues déclarées ».
   const venueNames = useMemo(() => {
@@ -247,8 +247,8 @@ export function VenueEnvelopesEditor() {
       await update.mutateAsync(draft);
       setDraft({});
       toast.success('Enveloppes enregistrées');
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Édition refusée', { duration: 12000 });
+    } catch (e) {
+      toast.error(errorMessage(e, 'Édition refusée'), { duration: 12000 });
     }
   };
 

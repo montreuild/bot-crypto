@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { formatUSD } from '@/lib/utils';
+import { formatUSD, errorMessage } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   useApplyOptimize,
@@ -73,10 +73,8 @@ export function JobCard({
         qc.invalidateQueries({ queryKey: ['mlInfo'] });
         qc.invalidateQueries({ queryKey: ['ml-recipes'] });
       }
-    } catch (e: any) {
-      // P1-8 : si le gate refuse (409), afficher un ConfirmDialog avec la
-      // raison et un bouton "Forcer l'application" (force=true).
-      const msg = e?.message ?? '';
+    } catch (e) {
+      const msg = errorMessage(e, '');
       if (msg.includes('409') || msg.includes('refusé') || msg.includes('refused')) {
         setForceApplyDialog({ jobId: job.job_id, reason: msg, strategy: job.strategy, tf: job.timeframe });
       } else {
@@ -97,8 +95,8 @@ export function JobCard({
         qc.invalidateQueries({ queryKey: ['mlInfo'] });
         qc.invalidateQueries({ queryKey: ['ml-recipes'] });
       }
-    } catch (e: any) {
-      toast.error(`Force apply failed: ${e.message}`);
+    } catch (e) {
+      toast.error(`Force apply failed: ${errorMessage(e)}`);
     } finally {
       setForceApplyDialog(null);
     }
@@ -108,8 +106,8 @@ export function JobCard({
     try {
       await cancel.mutateAsync(job.job_id);
       toast.success('Job annulé');
-    } catch (e: any) {
-      toast.error(`Cancel failed: ${e.message}`);
+    } catch (e) {
+      toast.error(`Cancel failed: ${errorMessage(e)}`);
     }
   };
 
@@ -117,8 +115,8 @@ export function JobCard({
     try {
       await del.mutateAsync(job.job_id);
       toast.success('Job supprimé');
-    } catch (e: any) {
-      toast.error(`Delete failed: ${e.message}`);
+    } catch (e) {
+      toast.error(`Delete failed: ${errorMessage(e)}`);
     }
   };
 
