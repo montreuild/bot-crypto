@@ -163,7 +163,7 @@ export function TradesTable({ trades, meta, onRowClick }: Props) {
               }}
               className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
                 filter === f
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                  ? 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border border-cyan-500/40'
                   : 'bg-surface border border-border text-muted-foreground hover:text-foreground'
               }`}
             >

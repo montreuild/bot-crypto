@@ -96,8 +96,8 @@ export function Topbar() {
         className={cn(
           'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all',
           isRunning
-            ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30'
-            : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/30',
+            ? 'bg-red-500/10 text-red-700 dark:text-red-400 hover:bg-red-500/20 border border-red-500/30'
+            : 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/30',
           (startBot.isPending || stopBot.isPending) && 'opacity-50 cursor-not-allowed',
         )}
       >
@@ -115,8 +115,8 @@ export function Topbar() {
       <div className={cn(
         'px-3 py-1.5 rounded-full text-xs font-semibold border',
         isPaperMode
-          ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-          : 'bg-red-500/10 text-red-400 border-red-500/30 animate-pulse',
+          ? 'bg-amber-500/10 text-amber-800 dark:text-amber-400 border-amber-500/30'
+          : 'bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30 animate-pulse',
       )}>
         {isPaperMode ? 'PAPER' : 'LIVE'}
       </div>

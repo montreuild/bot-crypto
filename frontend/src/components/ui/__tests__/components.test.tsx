@@ -48,6 +48,7 @@ describe('Badge', () => {
   it('applique les variants', () => {
     const { container } = render(<Badge variant="success">OK</Badge>);
     expect(container.firstChild).toHaveClass('bg-emerald-500/10');
+    expect(container.firstChild).toHaveClass('text-emerald-800');
   });
 });
 

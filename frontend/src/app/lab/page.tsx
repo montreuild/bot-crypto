@@ -534,7 +534,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
                   className={cn(
                     'px-2 py-1 rounded text-[11px] transition-colors',
                     config.dateMode === m.key
-                      ? 'bg-cyan-500/20 text-cyan-300'
+                      ? 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300'
                       : 'text-muted hover:text-foreground',
                   )}
                 >
@@ -634,7 +634,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
                   className={cn(
                     'px-2 py-0.5 rounded text-[10px] border transition-colors',
                     config.limit === n
-                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                      ? 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border-cyan-500/40'
                       : 'bg-surface border-border text-muted hover:text-foreground hover:border-border-hi',
                   )}
                 >
