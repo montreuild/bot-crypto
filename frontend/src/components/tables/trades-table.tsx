@@ -342,7 +342,7 @@ function TradeDetail({ trade }: { trade: BacktestTrade }) {
             </div>
             <ul className="space-y-0.5">
               {conditions.map((c, i) => (
-                <li key={i} className="text-xs flex items-center gap-2">
+                <li key={c.label ?? i} className="text-xs flex items-center gap-2">
                   <span className={c.passed ? 'text-emerald-400' : 'text-rose-400'}>
                     {c.passed ? '✓' : '✗'}
                   </span>

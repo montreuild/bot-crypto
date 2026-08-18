@@ -1139,7 +1139,7 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
           <div className="space-y-2">
             {warnings.map((w, i) => (
               <div
-                key={i}
+                key={`${w.tone}-${w.text.slice(0, 48)}-${i}`}
                 className={
                   w.tone === 'red'
                     ? 'rounded-md border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-300'

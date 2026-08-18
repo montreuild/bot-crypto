@@ -73,7 +73,9 @@ class PositionCloseMixin:
         try:
             close_id = str((close_order or {}).get("id") or "")
             if close_id and not close_id.startswith("paper_"):
-                my_trades = self.exchange.fetch_my_trades(symbol, since=since) or []
+                # P-07 : depuis l'ouverture + 50 fills max, pas tout l'historique.
+                my_trades = self.exchange.fetch_my_trades(
+                    symbol, since=since, limit=50) or []
                 total, found, convertible = 0.0, False, True
                 for t in my_trades:
                     if str(t.get("order")) != close_id:

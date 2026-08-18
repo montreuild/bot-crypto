@@ -2,9 +2,31 @@
 
 Historique des versions du Crypto Bot.
 
+> X-07 : l'état **actuel** des constats d'audit est dans
+> [`audit/14-REVISION-2026-08-18.md`](audit/14-REVISION-2026-08-18.md),
+> pas dans ce fichier (narratif historique, parfois en retard).
+
 ---
 
 ## [Non publié]
+
+### 🐛 Reste d'audit (hors X-01 / X-02 / X-06)
+
+- **P-03** : `_find_strategy` en dict O(1).
+- **P-05** : `df.slice` zéro-copie + `ctx.bar_index`.
+- **P-06** : taille IPC mémoïsée dans `_safe_worker_count`.
+- **P-07** : `fetch_my_trades(..., limit=50)`.
+- **P-09** : cache mtime pour la découverte des stratégies.
+- **P-08 / U-04** : `dynamic()` equity / donut / enveloppes sur `/portfolio`.
+- **U-09** : clés stables (WF, activity, warnings, trades).
+- **X-04** : `_sf` = `safe_float` unique.
+- **X-07** : le changelog pointe vers la révision d'audit.
+- **S-06 / T-06** : job mypy (non bloquant) sur 3 modules purs.
+- **S-09** : `GIT_COMMIT` env, un subprocess max.
+- **M-08** : hash de recette typé (plus de collision datetime/str).
+- **T-03** : `--cov-fail-under=25` en CI.
+- **T-05** : workflow hebdo `slow.yml`.
+- **T-07** : ruff / mypy ciblent Python 3.14.
 
 ### 🐛 CI après #235–#237
 

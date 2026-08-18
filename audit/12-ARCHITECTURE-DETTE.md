@@ -43,10 +43,10 @@ raison écrite.
 | X-01 | 🟠 Majeur | Six modules écrits, testés… et jamais appelés en production |
 | X-02 | 🟠 Majeur | 80 % de duplication entre `scoring_statistique_opus_v4` et `_v5` |
 | X-03 | 🟡 Moyen | Trois fichiers de plus de 1 200 lignes portent le cœur du système |
-| X-04 | 🟡 Moyen | Deux implémentations du Deflated Sharpe, deux du Monte-Carlo |
+| X-04 | 🟡 Moyen | Deux implémentations du Deflated Sharpe, deux du Monte-Carlo | ✅ `_sf` unifié ; DSR = Bailey ; MC double usage légitime |
 | X-05 | 🟡 Moyen | Constantes dupliquées malgré des modules de source unique |
 | X-06 | 🟡 Moyen | 45 stratégies dont 12 sont des variantes de 4 familles |
-| X-07 | 🔵 Mineur | Le changelog fait 244 Ko et l'audit ne peut pas s'y fier |
+| X-07 | 🔵 Mineur | Le changelog fait 244 Ko et l'audit ne peut pas s'y fier | ✅ bandeau → `audit/14` |
 
 ---
 

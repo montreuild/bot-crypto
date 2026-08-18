@@ -26,18 +26,30 @@
 import {
   CapitalCard, PnLCard, WinRateCard, ProfitFactorCard, DrawdownCard,
 } from '@/components/cards/kpi-cards';
-import { EquityCurve } from '@/components/charts/equity-curve';
 import { PositionsTable } from '@/components/cards/positions-table';
 import { LiveTradesFeed } from '@/components/cards/live-trades-feed';
 import { SignalsFeed } from '@/components/cards/signals-feed';
 import { RiskPanel } from '@/components/cards/risk-panel';
 import { HealthBanner } from '@/components/cards/health-banner';
-import { AllocationDonut } from '@/components/cards/allocation-donut';
-import { AllocationsGrid } from '@/components/cards/allocations-grid';
-import { RiskEnvelopesCard } from '@/components/cards/risk-envelopes-card';
 import { HaltBanner } from '@/components/cards/halt-banner';
 import { FeesBreakdown } from '@/components/cards/fees-breakdown';
 import { ActivityFeed } from '@/components/cards/activity-feed';
+import dynamic from 'next/dynamic';
+
+const EquityCurve = dynamic(
+  () => import('@/components/charts/equity-curve').then((m) => m.EquityCurve),
+  { ssr: false },
+);
+const AllocationDonut = dynamic(
+  () => import('@/components/cards/allocation-donut').then((m) => m.AllocationDonut),
+  { ssr: false },
+);
+const AllocationsGrid = dynamic(
+  () => import('@/components/cards/allocations-grid').then((m) => m.AllocationsGrid),
+);
+const RiskEnvelopesCard = dynamic(
+  () => import('@/components/cards/risk-envelopes-card').then((m) => m.RiskEnvelopesCard),
+);
 import { SignificantBotsTable } from '@/components/cards/significant-bots-table';
 import { Button } from '@/components/ui/button';
 import { QueryBoundary } from '@/components/ui/query-state';

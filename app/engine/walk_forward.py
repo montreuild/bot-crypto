@@ -14,24 +14,10 @@ import polars as pl
 
 from app.core.is_oos import WARMUP_BARS_DEFAULT
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.core.sanitize import safe_float as _sf
 from app.engine.engine import Engine
 
 logger = logging.getLogger(__name__)
-
-
-def _sf(v, fallback=None):
-    """Safe float : convertit nan/inf en fallback pour JSON.
-
-    Dupliqué depuis ``app.engine.backtest`` pour éviter un import circulaire
-    (backtest ré-exporte WalkForwardAnalyzer en fin de module).
-    """
-    import math
-
-    try:
-        f = float(v)
-        return fallback if (math.isnan(f) or math.isinf(f)) else f
-    except (TypeError, ValueError):
-        return fallback
 
 
 # ── Walk-Forward ──
