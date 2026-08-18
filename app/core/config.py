@@ -386,7 +386,7 @@ def _validate_venues(cfg: dict) -> None:
             f"market_type: spot ; pour du margin réel, max_leverage > 1."
         )
 
-    if borrows and t.get("paper_mode"):
+    if borrows and t.get("paper_mode", True):
         logger.warning(
             f"⚠ [Config] paper_mode + venue par défaut '{default}' en {market} : "
             f"les coûts d'emprunt sont simulés au taux "
@@ -574,7 +574,7 @@ def load_config(path: str = "config.yaml") -> dict:
     api_key = cfg.get("exchange", {}).get("api_key", "")
     if api_key in ("", "YOUR_KEY"):
         logger.warning("⚠ Clés API exchange non configurées — mode backtest uniquement.")
-    if not cfg["trading"].get("paper_mode"):
+    if not cfg["trading"].get("paper_mode", True):
         logger.warning("🔴 LIVE TRADING ACTIVÉ — vérifiez bien vos paramètres !")
 
     # OKX (et Kucoin/Coinbase) exigent une passphrase API en plus de la clé/secret.

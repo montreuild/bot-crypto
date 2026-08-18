@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * BT-004 — sync serveur + persistance session pour le backtest.
  *

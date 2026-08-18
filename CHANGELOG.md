@@ -3,12 +3,31 @@
 Historique des versions du Crypto Bot.
 
 > X-07 : l'état **actuel** des constats d'audit est dans
-> [`audit/19-REVISION-2026-08-18.md`](audit/19-REVISION-2026-08-18.md),
+> [`audit/20-REVISION-2026-08-18.md`](audit/20-REVISION-2026-08-18.md),
 > pas dans ce fichier (narratif historique, parfois en retard).
 
 ---
 
 ## [Non publié]
+
+### 🐛 Revue 2026-08-18 (75 constats)
+
+- **FIN-01..10** : `entry_fees` ; early/time taker+spread ; borrow accumulé ;
+  `update_risk` / `resize` ; plafond slot cumulé (slot par stratégie) ;
+  pyramidage sous courbe de DD ; BE venue ; `cible` dans `round_trip_cost` ;
+  `venue=None` → levier 1.
+- **OPT-01..06** : DSR off par défaut ; `dd_factor` sans saturation ;
+  holdout/WF non évaluable bloquent l'auto-apply ; WR seul insuffisant.
+- **BT-01..10** : warmup OOS ; `realistic_risk` hérité ; folds échoués
+  comptés ; MTM / B&H alignés ; MC renommé + hypothèse ; OOS vide signalé.
+- **LIVE-01..06** : 3 issues d'annulation stop ; fill nul refusé ; paper
+  `partial_fill` ; `paper_mode` défaut sûr ; ScoreFactor retiré ; logs
+  rollback.
+- **PERF-01** : repli HTF irrégulier mémoïsé. **ML-01/02/03** : IC AUC ;
+  embargo ; `fallback_to_inline` racine.
+- **TEST-01/02/06** : cov 64 % ; vitest coverage en CI ; eslint ignore
+  coverage. **ARCH-04** : `LiveHost`. **UX-01** : `formatMoney`.
+- Commentaires réduits aux contraintes non lisibles dans le code.
 
 ### 🐛 U-08 optimizer + U-05 contrats restants
 

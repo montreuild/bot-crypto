@@ -40,6 +40,7 @@ from app.live.position_open_mixin import (
     _order_fail_reason,
     _order_failed,
 )
+from app.live.protocols import LiveHost
 
 
 def bars_held_from_ohlcv(df, open_time, tf_secs: float) -> int:
@@ -64,7 +65,7 @@ def bars_held_from_ohlcv(df, open_time, tf_secs: float) -> int:
 logger = logging.getLogger(__name__)
 
 
-class PositionManageMixin:
+class PositionManageMixin(LiveHost):
     """Gestion des positions ouvertes (voir docstring module)."""
 
     # ── Gestion (suivi tick-by-tick) ──────────────────────────────────────
@@ -259,7 +260,7 @@ class PositionManageMixin:
         if trailing.is_triggered(probe, new_stop, pos["side"]):
             # L-02 : en paper, simuler le stop exchange — fill au niveau
             # (le slippage paper est appliqué dans _close_position).
-            fill = new_stop if self.cfg["trading"].get("paper_mode") else price
+            fill = new_stop if self.cfg["trading"].get("paper_mode", True) else price
             self._close_position(pos_id, fill, exit_reason=(
                 "stop_loss" if pos.get("disable_trailing") else "trailing_stop"))
 
@@ -284,7 +285,7 @@ class PositionManageMixin:
     # mais déclenche une notification.
 
     def _exchange_stops_enabled(self) -> bool:
-        return (not self.cfg["trading"].get("paper_mode")
+        return (not self.cfg["trading"].get("paper_mode", True)
                 and bool(self.cfg["trading"].get("exchange_stop_orders", True)))
 
     def _exchange_oco_supported(self) -> bool:
@@ -357,9 +358,11 @@ class PositionManageMixin:
             )
 
     def _cancel_exchange_stop(self, pos: dict):
-        """Annule le stop exchange. Retourne l'ordre s'il a DÉJÀ été exécuté
-        (position clôturée côté exchange pendant que le bot ne regardait pas),
-        None sinon."""
+        """Annule le stop exchange.
+
+        Retourne l'ordre s'il a déjà été exécuté, None s'il est annulé.
+        Relève ``RuntimeError`` si l'annulation échoue (l'id est restauré).
+        """
         oid = pos.pop("stop_order_id", None)
         if not oid:
             return None
@@ -375,7 +378,12 @@ class PositionManageMixin:
             if status not in ("canceled", "cancelled", "expired", "rejected"):
                 self.exchange.cancel_order(oid, pos["symbol"])
         except Exception as e:
-            logger.warning(f"[StopExchange] Annulation stop {pos['symbol']} KO : {e}")
+            pos["stop_order_id"] = oid
+            logger.error(
+                f"[StopExchange] Annulation stop {pos['symbol']} KO : {e} "
+                f"— id conservé, nouveau stop non posé"
+            )
+            raise RuntimeError(f"cancel_stop_failed:{oid}") from e
         return None
 
     def _update_exchange_stop(self, pos: dict):
@@ -384,7 +392,20 @@ class PositionManageMixin:
         localement sans nouvel ordre), None sinon."""
         if not self._exchange_stops_enabled():
             return None
-        filled = self._cancel_exchange_stop(pos)
+        try:
+            filled = self._cancel_exchange_stop(pos)
+        except RuntimeError as e:
+            logger.error(
+                f"[StopExchange] Trailing {pos.get('symbol')} : annulation "
+                f"échouée ({e}) — l'ancien stop reste en place"
+            )
+            if hasattr(self, "notif"):
+                self.notif.send(
+                    f"⚠️ *Stop exchange non remplacé* `{pos.get('symbol')}` : {e}\n"
+                    f"L'ancien stop reste en place (niveau plus prudent).",
+                    async_=True,
+                )
+            return None
         if filled is not None:
             return filled
         self._place_exchange_stop(pos)
@@ -455,7 +476,7 @@ class PositionManageMixin:
                          f"{_order_fail_reason(order)}")
             return
         exec_price = order.get("price") or order.get("average") or price
-        if self.cfg["trading"].get("paper_mode"):
+        if self.cfg["trading"].get("paper_mode", True):
             slip = self._paper_slippage_fraction(
                 symbol, pos.get("timeframe", self.tf), part * exec_price)
             exec_price *= (1 - slip) if side == "long" else (1 + slip)
@@ -473,7 +494,7 @@ class PositionManageMixin:
             venue=venue,
         )
         with self._capital_lock:
-            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+            if self.cfg["trading"].get("paper_mode", True) and hasattr(self, "_paper_base"):
                 self._paper_base += pnl
             else:
                 self.capital_display += pnl
@@ -599,7 +620,7 @@ class PositionManageMixin:
                 f"[SCALE-IN] {symbol} : ordre non exécuté — {_order_fail_reason(order)}"
             )
         exec_price = order.get("price") or order.get("average") or price
-        if self.cfg["trading"].get("paper_mode"):
+        if self.cfg["trading"].get("paper_mode", True):
             slip = self._paper_slippage_fraction(
                 symbol, pos.get("timeframe", self.tf), add_notional)
             exec_price *= (1 + slip) if side == "long" else (1 - slip)
@@ -608,7 +629,7 @@ class PositionManageMixin:
         add_fees = venue_trade_cost(exec_price, add_size, fee_rate,
                                     side=side, venue=venue, is_entry=True)
         with self._capital_lock:
-            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+            if self.cfg["trading"].get("paper_mode", True) and hasattr(self, "_paper_base"):
                 self._paper_base -= add_fees
             else:
                 self.capital_display -= add_fees

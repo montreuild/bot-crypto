@@ -70,7 +70,9 @@ class MonteCarlo:
             # négatif). Le quantile de risque à 95 % est la queue basse :
             # percentile 5, puis valeur absolue pour l'affichage.
             "max_dd_p95":         round(_sf(abs(float(np.percentile(max_dds, 5))), 0.0), 2),
+            "max_dd_p95_par_trade": round(_sf(abs(float(np.percentile(max_dds, 5))), 0.0), 2),
             "prob_profit":        round(sum(1 for f in finals if f > initial_capital) / self.n_runs * 100, 1),
             "prob_ruin_10pct":    round(sum(1 for d in max_dds if d < -10) / self.n_runs * 100, 1),
+            "hypothese":          "PnL i.i.d., sizing path-dépendant non rejoué",
             "mc_version":         2,
         }

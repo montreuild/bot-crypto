@@ -184,7 +184,8 @@ class Backtester(PositionLifecycleMixin):
 
     def _ledger_envelope(self, ctx):
         """Envelope RiskLedger. Sans slot : budgets symbole/venue = base×1e6
-        (ne lient pas — B-02 multi-stratégies), plafond slot = base×levier.
+        (ne lient pas — B-02 multi-stratégies). ``slot_key`` est un repli ;
+        ``_try_enter`` le rebind par stratégie avant ``reserve``.
         """
         if self.envelope is not None:
             return self.envelope
@@ -438,6 +439,8 @@ class Backtester(PositionLifecycleMixin):
             u = 0.0
             _c = float(close_arr[bar_i])
             for _pos in positions.values():
+                if int(_pos.get("bar") or 0) > bar_i:
+                    continue
                 _e = float(_pos.get("entry") or 0.0)
                 _sz = float(_pos.get("size") or 0.0)
                 u += ((_e - _c) if _pos.get("side") == "short" else (_c - _e)) * _sz
@@ -680,7 +683,7 @@ class Backtester(PositionLifecycleMixin):
             # on recalcule les métriques étendues maintenant, sinon `alpha_vs_bh`
             # resterait à 0 pour tous les backtests.
             try:
-                result._close_prices = [float(x) for x in df["close"][warmup:].to_list()]
+                result._close_prices = [float(x) for x in df["close"][warmup + 1:].to_list()]
                 result._compute_extended_metrics()
             except Exception:
                 result._close_prices = []

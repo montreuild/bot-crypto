@@ -38,7 +38,9 @@ def data_status():
         return JSONResponse({"datasets": get_store().all_stats()})
     except Exception as e:                       # pragma: no cover
         logger.error(f"[data] status KO : {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        err_id = uuid.uuid4().hex[:8]
+        logger.error(f"[data] status KO {err_id} : {e}", exc_info=True)
+        return JSONResponse({"error": f"Erreur interne ({err_id})"}, status_code=500)
 
 
 @router.post("/api/data/refetch", dependencies=[Depends(verify_api_key)])
@@ -60,7 +62,9 @@ def data_refetch(request: Request, symbol: str = None, tf: str = None, bars: int
         exchange = create_exchange(cfg)
     except Exception as e:
         logger.error(f"[data] exchange KO : {e}")
-        return JSONResponse({"error": f"Exchange indisponible : {e}"},
+        err_id = uuid.uuid4().hex[:8]
+        logger.error(f"[data] exchange KO {err_id} : {e}", exc_info=True)
+        return JSONResponse({"error": f"Erreur interne ({err_id})"},
                             status_code=500)
 
     store = get_store()

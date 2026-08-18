@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * RPL-005 — Raccourcis clavier pour le replay interactif.
  *

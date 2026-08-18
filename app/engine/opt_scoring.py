@@ -83,7 +83,7 @@ def composite_score(res, min_trades: int = MIN_SIGNIFICANT_TRADES) -> float:
     pf = min(float(pf), 6.0)
 
     trade_factor = min(n / 10, 1.0)
-    dd_factor    = max(0, 1.0 - dd / 30)
+    dd_factor    = 1.0 / (1.0 + dd / 15.0)
     alpha_norm   = max(min(alpha / 50.0, 1.0), -1.0)
     alpha_bonus  = alpha_norm * 0.10
 
@@ -179,7 +179,10 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
                    oos_sharpe: float, baseline: dict,
                    min_trades: int = MIN_SIGNIFICANT_TRADES,
                    n_trials: int = 1,
-                   min_deflated_sharpe: Optional[float] = None) -> tuple:
+                   min_deflated_sharpe: Optional[float] = None,
+                   oos_dd: float | None = None,
+                   oos_pf: float | None = None,
+                   oos_expectancy: float | None = None) -> tuple:
     """Garde-fou UNIQUE d'application d'un paramétrage optimisé (BT-04/BT-06).
 
     Retourne ``(ok, raison)``. Partagé par l'auto-apply (AutoOptimizer) et
@@ -215,11 +218,28 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
     _sharpe_ok = (oos_sharpe is not None
                   and b_sharpe is not None
                   and oos_sharpe > b_sharpe)
-    if not (oos_wr > b_wr or _sharpe_ok):
+    b_pf = baseline.get("profit_factor")
+    b_exp = baseline.get("expectancy")
+    _exp_ok = (oos_expectancy is not None and b_exp is not None
+               and oos_expectancy > b_exp)
+    _pf_ok = (oos_pf is not None and b_pf is not None and oos_pf > b_pf)
+    if not (_sharpe_ok or _exp_ok or _pf_ok or oos_wr > b_wr):
         _sh_txt = "—" if oos_sharpe is None else f"{oos_sharpe:.2f}"
         _bsh_txt = "—" if b_sharpe is None else f"{b_sharpe:.2f}"
         return False, (f"aucune amélioration de qualité (WR {oos_wr:.1f}% vs "
                        f"{b_wr:.1f}%, Sharpe {_sh_txt} vs {_bsh_txt})")
+    if oos_wr > b_wr and not (_sharpe_ok or _exp_ok or _pf_ok):
+        return False, (
+            f"win-rate seul insuffisant (WR {oos_wr:.1f}% vs {b_wr:.1f}%) "
+            f"— exiger Sharpe, expectancy ou profit factor"
+        )
+    b_dd = baseline.get("dd", baseline.get("max_drawdown"))
+    if oos_dd is not None and b_dd is not None:
+        if abs(float(oos_dd)) > abs(float(b_dd)) * 1.25 + 1e-9:
+            return False, (
+                f"drawdown OOS ({oos_dd:.1f}%) dégrade le baseline "
+                f"({b_dd:.1f}%) au-delà de +25 %"
+            )
 
     # ── 5. Deflated Sharpe gate (P0 — câblage TODO auto_optimizer.py:521) ──
     # Ne s'active QUE si n_trials > 1 (sinon pas de biais de sélection à

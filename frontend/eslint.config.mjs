@@ -10,5 +10,6 @@ const compat = new FlatCompat({
 });
 
 export default [
+  { ignores: ['coverage/**', '.next/**'] },
   ...compat.extends('next/core-web-vitals'),
 ];

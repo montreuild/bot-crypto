@@ -126,6 +126,9 @@ def bb_squeeze(close: pl.Series, lookback: int = 15,
                 cache[key] = arr
             if arr is not None:
                 return bool(arr[pos])
+            # PERF-02 : si la série vectorisée rend None (grille irrégulière),
+            # le repli ci-dessous est O(lookback) via troncature — pas O(n²).
+            # Contrairement à htf_trend, mémoïser ce repli ne change pas l'ordre.
 
     if len(close) < bb_period + lookback:
         return False

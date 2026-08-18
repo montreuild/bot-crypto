@@ -139,7 +139,7 @@ def close_pnl(side: str, entry: float, exit_price: float, size: float,
     # long à levier 1 → 0 ; short → notionnel entier ; long à levier L →
     # la part non couverte par les fonds propres.
     if venue is None:
-        borrowed = float(notional)
+        borrowed = borrowed_notional(notional, side, max_leverage=1.0)
     else:
         lev = float(getattr(venue, "max_leverage", 1.0) or 1.0)
         borrowed = borrowed_notional(notional, side, max_leverage=lev)

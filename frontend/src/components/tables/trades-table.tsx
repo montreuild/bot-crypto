@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * BT-002 — Tableau des trades (sortable, paginé, filtrable, expandable).
  *

@@ -37,11 +37,12 @@ from app.live.position_open_mixin import (
     _order_failed,
     publish_trade_closed,
 )
+from app.live.protocols import LiveHost
 
 logger = logging.getLogger(__name__)
 
 
-class PositionCloseMixin:
+class PositionCloseMixin(LiveHost):
     """Clôture, PnL et sérialisation (voir docstring module)."""
 
     # ── Réconciliation des coûts réels (live) ──────────────────────────────
@@ -137,8 +138,10 @@ class PositionCloseMixin:
                     self.notif.notify_reconciliation_mismatch(
                         symbol, label, est, real, gap_pct
                     )
-                except Exception:
-                    pass
+                except Exception as _nerr:
+                    logger.error(
+                        f"[Reconcile] notification mismatch {symbol} KO : {_nerr}"
+                    )
         return pnl, fees, borrow
 
     # ── Clôture ───────────────────────────────────────────────────────────
@@ -207,7 +210,7 @@ class PositionCloseMixin:
                 )
                 return
             exec_price = order.get("price") or order.get("average") or 0
-            if not exec_price and not self.cfg["trading"].get("paper_mode"):
+            if not exec_price and not self.cfg["trading"].get("paper_mode", True):
                 # Ordres market réels : récupérer le prix moyen réellement exécuté
                 try:
                     filled = self.exchange.fetch_order(order.get("id", ""), pos["symbol"])
@@ -222,7 +225,7 @@ class PositionCloseMixin:
                 exec_price = exit_price
 
         # Slippage adverse en paper mode (vente moins chère)
-        if self.cfg["trading"].get("paper_mode"):
+        if self.cfg["trading"].get("paper_mode", True):
             slip = self._paper_slippage_fraction(
                 pos["symbol"], pos.get("timeframe", self.tf), pos.get("notional", 0.0))
             exec_price *= (1 - slip) if pos["side"] == "long" else (1 + slip)
@@ -243,7 +246,7 @@ class PositionCloseMixin:
         # Réconciliation avec les coûts RÉELS de l'exchange (live uniquement) :
         # frais du fill de clôture via fetch_my_trades, intérêts d'emprunt réels
         # via l'historique margin. Remplace les estimations dans le PnL persisté.
-        if (not self.cfg["trading"].get("paper_mode")
+        if (not self.cfg["trading"].get("paper_mode", True)
                 and self.cfg["trading"].get("reconcile_real_costs", True)):
             pnl, fees, borrow_cost = self._reconcile_close_costs(
                 pos, order, fees, borrow_cost, pnl
@@ -251,7 +254,7 @@ class PositionCloseMixin:
         self._margin_interest += borrow_cost
 
         with self._capital_lock:
-            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+            if self.cfg["trading"].get("paper_mode", True) and hasattr(self, "_paper_base"):
                 self._paper_base += pnl
             else:
                 self.capital_display += pnl

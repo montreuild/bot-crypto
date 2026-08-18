@@ -142,8 +142,6 @@ export async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {
   const parsed = schema.safeParse(payload);
   if (parsed.success) return parsed.data as T;
 
-  // Contrat rompu : on ne casse pas l'UI, mais l'écart doit être visible.
-  // eslint-disable-next-line no-console
   console.warn(
     `[api] ${endpoint} : la réponse ne correspond pas au schéma attendu. ` +
       'Les composants qui en dépendent peuvent se comporter anormalement.',

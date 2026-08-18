@@ -131,11 +131,15 @@ class TestClosePnlVenue:
 
     def test_margin_long_at_3x_borrows_two_thirds(self):
         """F-04 : long ×3 n'emprunte que 2/3 du notionnel."""
+        from app.core.execution import borrow_cost, venue_borrow_rate
         args = dict(side="long", entry=100.0, exit_price=110.0, size=2.0,
                     notional=200.0, fee_rate=0.001, daily_rate=0.0002,
                     hours_held=5.0)
-        _, _, full = close_pnl(**args)
+        _, _, none_borrow = close_pnl(**args)
         _, _, lev3 = close_pnl(**args, venue=CRYPTO_MARGIN)
+        # FIN-10 : venue=None → levier 1 → un long n'emprunte rien.
+        assert none_borrow == 0.0
+        full = borrow_cost(200.0, venue_borrow_rate(0.0002, CRYPTO_MARGIN), 5.0)
         assert lev3 == pytest.approx(full * (2.0 / 3.0))
 
     def test_spot_venue_charges_no_borrow(self):

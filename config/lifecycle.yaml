@@ -44,6 +44,11 @@ optimizer:
   # paramètres à faible impact (param_search_optim), déjà actif par défaut.
   max_trials: 400
   out_of_sample_ratio: 0.35
+  # OPT-01/02 : le DSR n'est pas calibré (trial_sharpes_std jamais mesuré,
+  # Sharpe annualisé passé à une formule par observation). Désactivé jusqu'à
+  # calibration — un gate non interprétable est pire qu'un gate absent.
+  deflated_sharpe_gate: false
+  deflated_sharpe_min: 0.5
 
 forward_test:
   enabled: true

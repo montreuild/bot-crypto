@@ -294,9 +294,10 @@ def _slices_for(df, strategy_name: str, timeframe: str, min_bars: int,
             f"[AutoOpt] {strategy_name}/{timeframe} : pas de holdout — "
             f"{len(df)} bougies ne permettent pas d'en réserver une tranche "
             f"exploitable ({min_bars} barres min pour cette stratégie). "
-            f"Le gate d'apply reste mesuré sur la tranche de sélection.")
+            f"L'auto-apply sera refusé (OPT-04) ; le chiffre affiché reste "
+            f"mesuré sur la tranche de sélection.")
     # Le baseline se mesure là où le candidat sera jugé, sinon la comparaison
-    # n'a pas de sens.
+    # n'a pas de sens. Sans holdout, df_gate sert à AFFICHER, pas à décider.
     df_gate = df_holdout if df_holdout is not None else df_oos
     return df_is, df_oos, split, df_recherche, df_holdout, df_gate
 
@@ -640,7 +641,7 @@ class AutoOptimizer:
 
             # Lecture de la config du gate Deflated Sharpe (P0)
             _opt_cfg = (self.cfg.get("optimizer") or {})
-            _ds_gate_enabled = bool(_opt_cfg.get("deflated_sharpe_gate", True))
+            _ds_gate_enabled = bool(_opt_cfg.get("deflated_sharpe_gate", False))
             _ds_min = float(_opt_cfg.get("deflated_sharpe_min", 0.5))
             # Le nombre d'essais RÉELLEMENT tirés, pas celui demandé : c'est
             # lui qui mesure le biais de sélection multiple à corriger.
@@ -652,7 +653,8 @@ class AutoOptimizer:
                 ok, reason = _bb(oos_trades, best_oos_pnl, best_oos_wr,
                                  best_oos_sharpe, _baseline,
                                  n_trials=_ds_n_trials,
-                                 min_deflated_sharpe=_ds_min_arg)
+                                 min_deflated_sharpe=_ds_min_arg,
+                                 oos_dd=result.get("best_oos_dd") or result.get("best_val_dd"))
                 if not ok:
                     logger.info(f"[AutoOpt] {job_id} : gate d'apply refusé "
                                 f"[{gate_source}] — {reason}")
@@ -667,8 +669,12 @@ class AutoOptimizer:
                 de recherche manquent, ou si le walk-forward est indisponible
                 (historique trop court) : on ne durcit pas à l'aveugle."""
                 opt_cfg = (self.cfg.get("optimizer") or {})
-                if not bool(opt_cfg.get("wf_gate", True)) or df_recherche is None:
+                if not bool(opt_cfg.get("wf_gate", True)):
                     return True
+                if df_recherche is None:
+                    logger.info(f"[AutoOpt] {job_id} : walk-forward non évaluable "
+                                f"(pas de données) — auto-apply bloqué")
+                    return False
                 min_cons = float(opt_cfg.get("wf_min_consistency", 60.0))
                 try:
                     from app.engine.backtest import WalkForwardAnalyzer
@@ -678,7 +684,7 @@ class AutoOptimizer:
                     frozen.update(result["best_params"])
                     sp[strategy_name] = frozen
                     cfg2["strategy_params"] = sp
-                    cfg2["optimizer_results"] = {}   # params figés, pas d'overlay
+                    cfg2["optimizer_results"] = {}
                     mod = importlib.import_module(f"app.strategies.{strategy_name}")
                     eng = Engine()
                     eng.register(mod.Strategy(), silent=True)
@@ -686,9 +692,14 @@ class AutoOptimizer:
                                              n_folds=int(opt_cfg.get("wf_folds", 5)))
                     res_wf = wf.run(df_recherche, symbol, timeframe=timeframe)
                     if "error" in res_wf:
-                        logger.info(f"[AutoOpt] {job_id} : walk-forward indisponible "
-                                    f"({res_wf['error']}) — gate neutre")
-                        return True
+                        logger.info(f"[AutoOpt] {job_id} : walk-forward non évaluable "
+                                    f"({res_wf['error']}) — auto-apply bloqué")
+                        return False
+                    if int(res_wf.get("n_folds_failed") or 0) > 0:
+                        logger.info(f"[AutoOpt] {job_id} : walk-forward partiel "
+                                    f"({res_wf.get('n_folds_failed')} fold(s) échoué(s)) "
+                                    f"— auto-apply bloqué")
+                        return False
                     cons = float(res_wf.get("consistency", 0.0))
                     _update_job(job_id, wf_consistency=cons)
                     if cons < min_cons:
@@ -697,11 +708,16 @@ class AutoOptimizer:
                         return False
                     return True
                 except Exception as e:
-                    logger.warning(f"[AutoOpt] {job_id} : walk-forward KO ({e}) — gate neutre")
-                    return True
+                    logger.warning(f"[AutoOpt] {job_id} : walk-forward KO ({e}) "
+                                   f"— auto-apply bloqué")
+                    return False
 
             _update_job(job_id, gate_source=gate_source)
-            gate_ok = bool(auto_apply and result.get("best_params")
+            if auto_apply and df_holdout is None:
+                logger.info(f"[AutoOpt] {job_id} : pas de holdout — auto-apply "
+                            f"refusé (OPT-04), apply manuel requis")
+            gate_ok = bool(auto_apply and df_holdout is not None
+                           and result.get("best_params")
                            and _beats_baseline() and _wf_consistent())
 
             if gate_ok:

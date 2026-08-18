@@ -467,7 +467,7 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
             )
 
         # 6. Synchro solde + rapport périodique
-        if self.cfg["trading"].get("paper_mode"):
+        if self.cfg["trading"].get("paper_mode", True):
             self._sync_paper_balance()
         elif self._margin_enabled and time.time() >= self._margin_next_sync:
             self._sync_margin_account()

@@ -204,6 +204,14 @@ def test_l_equite_finale_reste_coherente():
         res.final_equity - res.initial_capital, abs=1e-6)
 
 
+def test_total_pnl_egale_net_profit_avec_et_sans_jambes():
+    """FIN-01 : l'invariant revendiqué par to_dict (total_pnl == net_profit)."""
+    sans = _run(_SansJambes())
+    assert sans.total_pnl == pytest.approx(sans.net_profit, abs=1e-4)
+    avec = _run(_AvecJambes())
+    assert avec.total_pnl == pytest.approx(avec.net_profit, abs=1e-4)
+
+
 def test_le_stop_passe_au_point_mort_apres_la_premiere_jambe():
     res = _run(_AvecJambes())
     t = res.trades[0]
