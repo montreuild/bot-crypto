@@ -4,6 +4,7 @@ Même calcul de risque que le live : ``RiskLedger.reserve`` dans ``_try_enter``
 et le scale-in.
 """
 import logging
+from dataclasses import dataclass
 from typing import Optional
 
 from app.core.bot_identity import build_pos_key as _bpk_enter
@@ -15,11 +16,21 @@ from app.core.execution import quantize_size as _quantize_size
 from app.core.risk_curve import risk_multiplier as _risk_multiplier
 from app.core.risk_sizer import _floor_to
 from app.core.timeframes import bar_to_days as _bar_to_days
+from app.live.protocols import LifecycleHost
 
 logger = logging.getLogger(__name__)
 
 
-class PositionLifecycleMixin:
+@dataclass(frozen=True)
+class RaisonDeSortie:
+    """Résultat de ``_evaluer_sorties`` — clôture totale, pas une jambe."""
+    reason: str
+    exec_price: float
+    ref_price: Optional[float]
+    maker: bool
+
+
+class PositionLifecycleMixin(LifecycleHost):
     def _close_at(self, ctx, position: dict, i: int, exec_price: float,
                   exit_reason: str, *, maker: bool, status: str = "closed",
                   append_ts: bool = True, ref_price: Optional[float] = None) -> float:
@@ -195,96 +206,60 @@ class PositionLifecycleMixin:
             else ref * (1 + self.spread_pct)
         return exec_price, ref, gapped
 
-    def _manage_open_position(self, ctx, position: dict, i: int):
-        """Gère la position ouverte sur la barre ``i`` : MAE/MFE, sorties
-        (early-exit stratégie, time-exit, TP, stop intrabar), sinon mise à
-        jour du trailing et pyramidage. Retourne la position (None si close)."""
-        diag    = ctx.diag
-        diag["bars_in_position"] += 1
-        ctx.bars_current_position += 1
-        side    = position["side"]
-        entry   = position["entry"]
-        stop    = position["stop"]
-        c_high  = ctx.high_arr[i]
-        c_low   = ctx.low_arr[i]
-        c_close = ctx.close_arr[i]
-        c_open  = ctx.open_arr[i] if getattr(ctx, "open_arr", None) is not None \
-            else c_close
+    def _evaluer_sorties(self, ctx, position: dict, i: int) -> Optional[RaisonDeSortie]:
+        """Décide d'une clôture totale sur la barre ``i``, ou None.
 
+        Early / time / TP / stop. Ne mute pas le capital — l'appelant clôture.
+        """
+        side, entry, stop = position["side"], position["entry"], position["stop"]
+        c_high, c_low, c_close = ctx.high_arr[i], ctx.low_arr[i], ctx.close_arr[i]
+        c_open = ctx.open_arr[i] if getattr(ctx, "open_arr", None) is not None else c_close
         if side == "long":
-            mae_pts = c_low  - entry
-            mfe_pts = c_high - entry
+            mae_pts, mfe_pts = c_low - entry, c_high - entry
         else:
-            mae_pts = entry - c_high
-            mfe_pts = entry - c_low
+            mae_pts, mfe_pts = entry - c_high, entry - c_low
         if entry > 0:
             position["mae"] = min(position.get("mae", 0.0), mae_pts / entry * 100)
             position["mfe"] = max(position.get("mfe", 0.0), mfe_pts / entry * 100)
-
-        # ── Sortie temporelle (exit_after_bars) — prioritaire sur trailing.
-        # Utilisée par les stratégies type rapport V4 : sortie à la clôture
-        # de la barre suivante, sans SL/TP (mesure pure du signal directionnel).
         exit_after = position.get("exit_after_bars")
-        time_exit  = (exit_after is not None
-                      and (i - position["bar"]) >= int(exit_after))
-
-        stop_hit = (side == "long"  and c_low  <= stop) or \
-                   (side == "short" and c_high >= stop)
-
-        # ── Sortie anticipée pilotée par la stratégie ────────────────────────
-        # Hook BaseStrategy.check_early_exit (changement de régime, inversion
-        # du signal…). Non priorisée sur le SL : si SL touché intrabar, le SL
-        # l'emporte.
+        time_exit = (exit_after is not None
+                     and (i - position["bar"]) >= int(exit_after))
+        stop_hit = ((side == "long" and c_low <= stop)
+                    or (side == "short" and c_high >= stop))
         early_exit_reason = None
         if not stop_hit and not time_exit:
             strat = self._find_strategy(position.get("strategy", ""))
             if strat is not None:
                 try:
                     early_exit_reason = strat.check_early_exit(
-                        ctx.window, position, ctx.strat_params
-                    )
+                        ctx.window, position, ctx.strat_params)
                 except Exception as _ee:
                     logger.warning(
                         f"[Backtest] check_early_exit({position.get('strategy', '')}) "
-                        f"KO : {_ee}"
-                    )
-
-        # ── Take-profit fixe (intrabar) — optionnel via signal["tp_hint"].
-        # Vérifié seulement si stop NON touché (priorité conservative au stop
-        # en cas d'ambiguïté intrabar high/low).
+                        f"KO : {_ee}")
         tp_val = position.get("take_profit")
         tp_hit = False
         if tp_val is not None and not stop_hit:
-            tp_hit = (side == "long"  and c_high >= tp_val) or \
-                     (side == "short" and c_low  <= tp_val)
+            tp_hit = ((side == "long" and c_high >= tp_val)
+                      or (side == "short" and c_low <= tp_val))
         elif tp_val is not None and stop_hit:
-            # STRAT-06/BT-13 : diagnostic pur — le stop l'emporte toujours
-            # (comportement inchangé), on compte seulement les barres où le TP
-            # aurait AUSSI été touché (ambiguïté intrabar réelle, mesurable
-            # seulement en high/low faute de données tick).
-            would_tp_hit = (side == "long"  and c_high >= tp_val) or \
-                           (side == "short" and c_low  <= tp_val)
-            if would_tp_hit:
-                diag["tp_sl_ambiguous_bars"] += 1
-
+            would_tp = ((side == "long" and c_high >= tp_val)
+                        or (side == "short" and c_low <= tp_val))
+            if would_tp:
+                ctx.diag["tp_sl_ambiguous_bars"] += 1
         if early_exit_reason and not stop_hit and not tp_hit:
-            _px = c_close * (1 - self.spread_pct) if side == "long" else c_close * (1 + self.spread_pct)
-            self._close_at(ctx, position, i, _px, early_exit_reason, maker=False, ref_price=c_close)
-            return None
-
+            px = c_close * (1 - self.spread_pct) if side == "long" \
+                else c_close * (1 + self.spread_pct)
+            return RaisonDeSortie(early_exit_reason, px, c_close, False)
         if time_exit and not stop_hit and not tp_hit:
-            _px = c_close * (1 - self.spread_pct) if side == "long" else c_close * (1 + self.spread_pct)
-            self._close_at(ctx, position, i, _px, "exit_after_bars", maker=False, ref_price=c_close)
-            return None
-
+            px = c_close * (1 - self.spread_pct) if side == "long" \
+                else c_close * (1 + self.spread_pct)
+            return RaisonDeSortie("exit_after_bars", px, c_close, False)
         if tp_hit:
             exec_price, ref, gapped = self._fill_at_level(
                 side, tp_val, c_open, stop=False)
-            self._close_at(ctx, position, i, exec_price,
-                           "gap" if gapped else "take_profit",
-                           maker=not gapped, ref_price=ref)
-            return None
-
+            return RaisonDeSortie(
+                "gap" if gapped else "take_profit", exec_price, ref, not gapped)
         if stop_hit:
             exec_price, ref, gapped = self._fill_at_level(
                 side, stop, c_open, stop=True)
@@ -294,88 +269,95 @@ class PositionLifecycleMixin:
             else:
                 position["trail_phase"] = "unknown"
             reason = "gap" if gapped else (
-                "stop_loss" if position.get("disable_trailing")
-                else "trailing_stop")
-            self._close_at(ctx, position, i, exec_price, reason,
-                           maker=False, ref_price=ref)
-            return None
+                "stop_loss" if position.get("disable_trailing") else "trailing_stop")
+            return RaisonDeSortie(reason, exec_price, ref, False)
+        return None
 
-        # ── L1 (§29) — sorties partielles TP1 / TP2, runner ──────────────────
-        # Vérifiées seulement si le stop n'a pas été touché : même priorité
-        # conservative que le TP fixe en cas d'ambiguïté intrabar.
+    def _appliquer_jambes(self, ctx, position: dict, i: int) -> bool:
+        """Exécute les cibles partielles. True si la position est soldée."""
         cibles = position.get("_targets")
-        if cibles:
-            atteintes = [c for c in cibles
-                         if (side == "long" and c_high >= c["price"])
-                         or (side == "short" and c_low <= c["price"])]
-            for cible in atteintes:
-                cibles.remove(cible)
-                px, ref, gapped = self._fill_at_level(
-                    side, cible["price"], c_open, stop=False)
-                self._close_partial_at(ctx, position, i, px,
-                                       cible["fraction"],
-                                       "gap" if gapped else cible["reason"],
-                                       maker=not gapped, ref_price=ref)
-                # §30 — après la première jambe, le stop passe au point mort
-                # frais compris : le trade ne peut plus coûter d'argent.
-                if position.get("be_after_partial") and not position.get("_be_done"):
-                    from app.core.execution import venue_trade_cost
-                    _sz = float(position.get("size") or 0.0) or 1.0
-                    _fin = venue_trade_cost(entry, _sz, self.taker_fee, side=side,
-                                            venue=getattr(self, "_venue", None), is_entry=True)
-                    _fout = venue_trade_cost(entry, _sz, self.taker_fee, side=side,
-                                             venue=getattr(self, "_venue", None), is_entry=False)
-                    cout = (_fin + _fout) / max(entry * _sz, 1e-12) + self.spread_pct
-                    be = entry * (1 + cout) if side == "long" else entry * (1 - cout)
-                    if (side == "long" and be > position["stop"]) or \
-                            (side == "short" and be < position["stop"]):
-                        position["stop"] = round(be, 6)
-                    position["_be_done"] = True
-            if atteintes:
-                # Reliquat non négociable (quantification venue) : on solde.
-                if position["size"] <= 0 or \
-                        position["size"] * c_close < self._min_notional():
-                    self._close_at(ctx, position, i, c_close, "partial_final",
-                                   maker=True)
-                    return None
-                stop = position["stop"]
+        if not cibles:
+            return False
+        side, entry = position["side"], position["entry"]
+        c_high, c_low, c_close = ctx.high_arr[i], ctx.low_arr[i], ctx.close_arr[i]
+        c_open = ctx.open_arr[i] if getattr(ctx, "open_arr", None) is not None else c_close
+        atteintes = [c for c in cibles
+                     if (side == "long" and c_high >= c["price"])
+                     or (side == "short" and c_low <= c["price"])]
+        for cible in atteintes:
+            cibles.remove(cible)
+            px, ref, gapped = self._fill_at_level(
+                side, cible["price"], c_open, stop=False)
+            self._close_partial_at(ctx, position, i, px, cible["fraction"],
+                                   "gap" if gapped else cible["reason"],
+                                   maker=not gapped, ref_price=ref)
+            if position.get("be_after_partial") and not position.get("_be_done"):
+                from app.core.execution import venue_trade_cost
+                _sz = float(position.get("size") or 0.0) or 1.0
+                _fin = venue_trade_cost(entry, _sz, self.taker_fee, side=side,
+                                        venue=getattr(self, "_venue", None), is_entry=True)
+                _fout = venue_trade_cost(entry, _sz, self.taker_fee, side=side,
+                                         venue=getattr(self, "_venue", None), is_entry=False)
+                cout = (_fin + _fout) / max(entry * _sz, 1e-12) + self.spread_pct
+                be = entry * (1 + cout) if side == "long" else entry * (1 - cout)
+                if (side == "long" and be > position["stop"]) or \
+                        (side == "short" and be < position["stop"]):
+                    position["stop"] = round(be, 6)
+                position["_be_done"] = True
+        if atteintes:
+            if position["size"] <= 0 or \
+                    position["size"] * c_close < self._min_notional():
+                self._close_at(ctx, position, i, c_close, "partial_final", maker=True)
+                return True
+        return False
 
-        # ── Position conservée : trailing + pyramidage ───────────────────────
-        atr_v         = float(ctx.atr_arr[i]) or 1e-8
-        bars_held_now = i - position["bar"]
-        # Skip trailing si désactivé via signal["disable_trailing"]=True :
-        # le stop reste fixe (V4 standalone style : SL = entry ∓ 1.5×ATR).
-        _tr = (None if position.get("disable_trailing")
-               else position.get("_trailing"))
-        # §5 — armement différé : tant que le profit courant n'atteint pas
-        # `_trail_activate_r` fois le risque initial, on laisse le stop initial
-        # tranquille. Resserrer trop tôt est ce qui coupait les positions avant
-        # leur cible (cf. docs/STRATEGY_SMC_ML_EDGE.md §4).
+    def _mettre_a_jour_trailing(self, ctx, position: dict, i: int) -> None:
+        """Remonte le stop logiciel et libère le risque au registre."""
+        if position.get("disable_trailing"):
+            return
+        _tr = position.get("_trailing")
+        if not _tr:
+            return
+        side, entry, stop = position["side"], position["entry"], position["stop"]
+        c_close = ctx.close_arr[i]
         _act_r = position.get("_trail_activate_r")
-        if _tr and _act_r is not None:
+        if _act_r is not None:
             _risque = abs(entry - position.get("planned_stop", stop))
             _profit = (c_close - entry) if side == "long" else (entry - c_close)
             if _risque <= 0 or _profit < float(_act_r) * _risque:
-                _tr = None
-        if _tr:
-            lo20 = ctx.low_arr[max(0, i - 19):i + 1].tolist()
-            hi20 = ctx.high_arr[max(0, i - 19):i + 1].tolist()
-            new_stop = _tr.update_stop(
-                current_price = c_close,
-                current_stop  = stop,
-                atr           = atr_v, side = side, entry = entry,
-                bars_held     = bars_held_now,
-                recent_lows   = lo20,
-                recent_highs  = hi20,
-            )
-            position["stop"] = new_stop
-            _ledger = getattr(ctx, "ledger", None)
-            if _ledger is not None and (_pk := position.get("_pos_key")):
-                _ledger.update_risk(_pk, abs(entry - new_stop) * position["size"])
-            if hasattr(_tr, "_dts") and _tr._dts:
-                position["trail_phase"] = _tr._dts.phase_name
-            if i % 3 == 0:
-                position["_stop_trail"].append({"bar": i, "stop": round(new_stop, 6)})
+                return
+        atr_v = float(ctx.atr_arr[i]) or 1e-8
+        lo20 = ctx.low_arr[max(0, i - 19):i + 1].tolist()
+        hi20 = ctx.high_arr[max(0, i - 19):i + 1].tolist()
+        new_stop = _tr.update_stop(
+            current_price=c_close, current_stop=stop,
+            atr=atr_v, side=side, entry=entry,
+            bars_held=i - position["bar"],
+            recent_lows=lo20, recent_highs=hi20,
+        )
+        position["stop"] = new_stop
+        _ledger = getattr(ctx, "ledger", None)
+        if _ledger is not None and (_pk := position.get("_pos_key")):
+            _ledger.update_risk(_pk, abs(entry - new_stop) * position["size"])
+        if hasattr(_tr, "_dts") and _tr._dts:
+            position["trail_phase"] = _tr._dts.phase_name
+        if i % 3 == 0:
+            position["_stop_trail"].append({"bar": i, "stop": round(new_stop, 6)})
+
+    def _manage_open_position(self, ctx, position: dict, i: int):
+        """Orchestre sorties / jambes / trailing / pyramidage (ARCH-02)."""
+        ctx.diag["bars_in_position"] += 1
+        ctx.bars_current_position += 1
+        sortie = self._evaluer_sorties(ctx, position, i)
+        if sortie is not None:
+            self._close_at(ctx, position, i, sortie.exec_price, sortie.reason,
+                           maker=sortie.maker, ref_price=sortie.ref_price)
+            return None
+        if self._appliquer_jambes(ctx, position, i):
+            return None
+        self._mettre_a_jour_trailing(ctx, position, i)
+        side = position["side"]
+        c_close = ctx.close_arr[i]
 
         # ── Pyramidage (check_scale_in) ──────────────────────────────────────
         # La stratégie peut demander l'ajout d'une unité sur une position
@@ -478,7 +460,7 @@ class PositionLifecycleMixin:
                         position["fees"]     = round(
                             position.get("fees", 0.0) + add_fees, 6)
                         position["scale_ins"] = position.get("scale_ins", 0) + 1
-                        diag["scale_ins"] = diag.get("scale_ins", 0) + 1
+                        ctx.diag["scale_ins"] = ctx.diag.get("scale_ins", 0) + 1
 
         return position
 

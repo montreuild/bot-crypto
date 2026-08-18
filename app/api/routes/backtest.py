@@ -4,10 +4,10 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
 
 from app.api import state
 from app.api.helpers import _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps, verify_api_key
+from app.api.schemas import BacktestRunResponse
 from app.core.candle_store import get_store
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
@@ -278,7 +278,8 @@ def _apply_cost_override(cfg: dict, cost_override: dict) -> dict:
     return new_cfg
 
 
-@router.post("/api/backtest", dependencies=[Depends(verify_api_key)])
+@router.post("/api/backtest", dependencies=[Depends(verify_api_key)],
+             response_model=BacktestRunResponse)
 @state.limiter.limit("10/minute")
 def run_backtest(
     request:       Request,
@@ -550,7 +551,7 @@ def run_backtest(
             # puisqu'il ne dépend que du couple (symbole, timeframe).
             "cost_model":      _cost_model_for(symbol, tf),
         }
-        return JSONResponse(content=_clean(payload))
+        return _clean(payload)
     except HTTPException:
         raise
     except Exception as e:

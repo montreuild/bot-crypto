@@ -69,8 +69,9 @@ variables), pas des formules.
      séparées par des virgules, ex. `TRUSTED_PROXIES=127.0.0.1`). **Derrière
      un reverse proxy, définissez cette variable** ; sinon le header est
      ignoré (anti-spoofing).
-   - **`ALLOW_WS_QUERY_KEY=1`** : seul moyen d'authentifier le WebSocket via
-     `?api_key=` (fuit dans les logs nginx). Défaut : cookie HttpOnly seulement.
+   - WebSocket : cookie HttpOnly `api_key` (chemin nominal). `?api_key=` n'est
+     plus honoré (SEC-02). Un client sans cookie obtient un jeton éphémère via
+     `POST /api/ws/ticket` (authentifié, usage unique, 30 s).
    - **`METRICS_TOKEN`** (ou `web.api_key`) : requis pour `GET /metrics` dès
      qu'une des deux est posée. Configurer `bearer_token` côté Prometheus.
    - Cookie `api_key` : `HttpOnly; SameSite=Lax` et `Secure` dès que

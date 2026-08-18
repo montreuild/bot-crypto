@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.api import state
 from app.api.helpers import verify_api_key
 from app.api.routes._config_helpers import _save_yaml
-from app.api.schemas import RiskEnvelopesBody
+from app.api.schemas import RiskEnvelopesBody, RiskOverviewResponse
 from app.core.risk_diagnostics import diagnose
 from app.core.risk_envelope import envelopes_for_active_slots
 
@@ -71,7 +71,8 @@ def _edges() -> dict:
 
 # ── GET /api/risk ──────────────────────────────────────────────────────────
 
-@router.get("/api/risk", dependencies=[Depends(verify_api_key)])
+@router.get("/api/risk", dependencies=[Depends(verify_api_key)],
+            response_model=RiskOverviewResponse)
 def get_risk():
     """Enveloppes et risque engagé aux trois niveaux."""
     if not state.cfg:

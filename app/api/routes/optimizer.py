@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api import state
 from app.api.helpers import _clean, _discover_strategies, verify_api_key
+from app.api.schemas import OptimizeResultsResponse
 from app.core.candle_store import get_store
 from app.core.exchange import create_exchange
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
@@ -418,7 +419,8 @@ def optimizer_delete_job(request: Request, job_id: str):
     return {"status": "deleted", "job_id": job_id}
 
 
-@router.get("/api/optimize/results", dependencies=[Depends(verify_api_key)])
+@router.get("/api/optimize/results", dependencies=[Depends(verify_api_key)],
+            response_model=OptimizeResultsResponse)
 def optimizer_results():
     """Retourne les résultats d'optimisation classés par (strategy, tf)."""
     if not state.cfg:

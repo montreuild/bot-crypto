@@ -10,6 +10,17 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 ARCH / SEC / API (revue-complete)
+
+- **SEC-02** : `?api_key=` retiré ; `POST /api/ws/ticket` + `?ticket=`.
+- **ARCH-01** : `BacktestPayload` dataclass ; `to_dict()` en dérive.
+- **ARCH-02** : `_evaluer_sorties` / `_appliquer_jambes` / `_mettre_a_jour_trailing`.
+- **API-01 / FE-03** : `response_model` sur backtest, portfolio, trades, risk,
+  optimize/results ; types dans `frontend/src/types/generated.ts`.
+- **ARCH-03** : `app/core/smc/` et `app/core/risk/` ; shims aux anciens chemins.
+- **ARCH-04 / TEST-03** : `OptimizerHost` / `LifecycleHost` ; mypy CI élargi
+  et bloquant.
+
 ### 📝 Backlog revue-complete
 
 - État courant et reste à faire : `audit/20-REVISION-2026-08-18.md` §2.

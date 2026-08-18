@@ -5,11 +5,12 @@ import random
 from typing import Dict, List, Optional
 
 from app.engine.opt_workers import _eval_worker, _worker_init
+from app.live.protocols import OptimizerHost
 
 logger = logging.getLogger(__name__)
 
 
-class OptimizerBayesianMixin:
+class OptimizerBayesianMixin(OptimizerHost):
     def bayesian_search(self, n_trials: int = 40, n_jobs: int = 1,
                         early_stop_patience: int = 0,
                         param_search_optim: bool = True) -> dict:

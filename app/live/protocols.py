@@ -48,3 +48,21 @@ class LiveHost:
     _adopt_or_place_exchange_stop: Any
     _sync_spot_balance: Any
     _cancel_exchange_stop: Any
+
+
+class OptimizerHost:
+    """Attributs de ``OptimizerSearchEngine`` pour les mixins bayésien / budget."""
+    param_space: dict
+    strategy_name: str
+    cfg: dict
+
+
+class LifecycleHost:
+    """Attributs de ``Backtester`` pour ``PositionLifecycleMixin``."""
+    spread_pct: float
+    taker_fee: float
+    partial_fill: float
+    exit_mode: str
+    exit_mode_params: dict
+    _venue: Any
+    rejections: Any
