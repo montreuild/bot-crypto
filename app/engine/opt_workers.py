@@ -115,7 +115,7 @@ def _worker_init(strategy_name: str, cfg_yaml: str,
     import importlib as _imp
 
     import polars as _pl
-    import yaml as _yaml  # type: ignore[import-untyped]
+    import yaml as _yaml  # type: ignore[import-untyped,unused-ignore]
 
     _W["strategy_name"] = strategy_name
     _W["cfg"]           = _yaml.safe_load(cfg_yaml)

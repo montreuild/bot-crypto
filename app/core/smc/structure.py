@@ -27,6 +27,15 @@ from app.core.smc.volume import _regression_channel
 
 logger = logging.getLogger(__name__)
 
+
+def _as_int(v: Any) -> int:
+    return int(v)
+
+
+def _as_float(v: Any) -> float:
+    return float(v)
+
+
 def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
     """Analyse SMC complète du DataFrame OHLCV (colonnes open/high/low/close/volume).
 
@@ -64,32 +73,32 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
     conf_low  = {i + R: i for i in piv_low}
 
     # ── 2. Boucle chronologique : structure, pools, sweeps, OB, FVG ──────────
-    swings: List[dict] = []          # {index, kind, price, label, confirmed_at}
-    struct_events: List[dict] = []   # {index, kind BOS/CHoCH, direction, level, swing_index}
-    pools: List[dict] = []           # {kind, level, top, bottom, indices, formed_at, swept_at}
-    sweeps: List[dict] = []          # {index, kind, level, rejected, source, ref_index}
-    obs: List[dict] = []             # order blocks
-    fvgs: List[dict] = []
-    voids: List[dict] = []           # liquidity voids (runs directionnels)
-    breakers: List[dict] = []        # order blocks invalidés → polarité inversée
-    rejections: List[dict] = []      # rejection blocks (mèches de swing)
+    swings: List[Dict[str, Any]] = []          # {index, kind, price, label, confirmed_at}
+    struct_events: List[Dict[str, Any]] = []   # {index, kind BOS/CHoCH, direction, level, swing_index}
+    pools: List[Dict[str, Any]] = []           # {kind, level, top, bottom, indices, formed_at, swept_at}
+    sweeps: List[Dict[str, Any]] = []          # {index, kind, level, rejected, source, ref_index}
+    obs: List[Dict[str, Any]] = []             # order blocks
+    fvgs: List[Dict[str, Any]] = []
+    voids: List[Dict[str, Any]] = []           # liquidity voids (runs directionnels)
+    breakers: List[Dict[str, Any]] = []        # order blocks invalidés → polarité inversée
+    rejections: List[Dict[str, Any]] = []      # rejection blocks (mèches de swing)
     trend_arr = np.zeros(n, dtype=np.int8)
 
     trend = 0
-    last_sh: Optional[dict] = None   # dernier swing high confirmé non cassé
-    last_sl: Optional[dict] = None
+    last_sh: Optional[Dict[str, Any]] = None   # dernier swing high confirmé non cassé
+    last_sl: Optional[Dict[str, Any]] = None
     prev_high_price: Optional[float] = None   # pour labels HH/LH
     prev_low_price:  Optional[float] = None   # pour labels HL/LL
-    swing_highs: List[dict] = []     # swings kind=high (réfs partagées avec `swings`)
-    swing_lows:  List[dict] = []
+    swing_highs: List[Dict[str, Any]] = []     # swings kind=high (réfs partagées avec `swings`)
+    swing_lows:  List[Dict[str, Any]] = []
     # Listes d'entités « actives » (non consommées) — la boucle ne parcourt que
     # celles-ci, pas l'historique complet : passe O(n × actives) au lieu de O(n²).
-    active_pools: List[dict] = []
-    active_obs:   List[dict] = []
-    active_fvgs:  List[dict] = []
-    active_voids: List[dict] = []
-    active_breakers: List[dict] = []
-    active_rejections: List[dict] = []
+    active_pools: List[Dict[str, Any]] = []
+    active_obs:   List[Dict[str, Any]] = []
+    active_fvgs:  List[Dict[str, Any]] = []
+    active_voids: List[Dict[str, Any]] = []
+    active_breakers: List[Dict[str, Any]] = []
+    active_rejections: List[Dict[str, Any]] = []
     rb_wick = float(p["rb_wick_atr"])
     # État du run directionnel courant (détection des liquidity voids)
     run_dir = 0          # +1 haussier, −1 baissier, 0 neutre
@@ -199,21 +208,21 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
         # confirmation du nouveau pivot) — comportement stop-hunt réaliste.
         tol_i = float(p["eq_tol_atr"]) * atr[i]
         for sw in swing_highs[-4:]:
-            if sw["swept_at"] is None and sw["confirmed_at"] < i \
-                    and h_i > sw["price"] + tol_i:
+            if sw["swept_at"] is None and _as_int(sw["confirmed_at"]) < i \
+                    and h_i > _as_float(sw["price"]) + tol_i:
                 sw["swept_at"] = i
                 sweeps.append({
                     "index": i, "kind": "buy_side", "level": sw["price"],
-                    "rejected": bool(c_i < sw["price"]),
+                    "rejected": bool(c_i < _as_float(sw["price"])),
                     "source": "swing", "ref_index": sw["index"],
                 })
         for sw in swing_lows[-4:]:
-            if sw["swept_at"] is None and sw["confirmed_at"] < i \
-                    and l_i < sw["price"] - tol_i:
+            if sw["swept_at"] is None and _as_int(sw["confirmed_at"]) < i \
+                    and l_i < _as_float(sw["price"]) - tol_i:
                 sw["swept_at"] = i
                 sweeps.append({
                     "index": i, "kind": "sell_side", "level": sw["price"],
-                    "rejected": bool(c_i > sw["price"]),
+                    "rejected": bool(c_i > _as_float(sw["price"])),
                     "source": "swing", "ref_index": sw["index"],
                 })
 
@@ -251,18 +260,18 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
 
         # ── Rejection blocks : cycle de vie (même sémantique que les OB) ─────
         for rb in active_rejections[:]:
-            if i <= rb["created_at"]:
+            if i <= _as_int(rb["created_at"]):
                 continue
             if rb["kind"] == "bullish":
-                if rb["touched_at"] is None and l_i <= rb["top"]:
+                if rb["touched_at"] is None and l_i <= _as_float(rb["top"]):
                     rb["touched_at"] = i
-                if c_i < rb["bottom"]:
+                if c_i < _as_float(rb["bottom"]):
                     rb["invalidated_at"] = i
                     active_rejections.remove(rb)
             else:
-                if rb["touched_at"] is None and h_i >= rb["bottom"]:
+                if rb["touched_at"] is None and h_i >= _as_float(rb["bottom"]):
                     rb["touched_at"] = i
-                if c_i > rb["top"]:
+                if c_i > _as_float(rb["top"]):
                     rb["invalidated_at"] = i
                     active_rejections.remove(rb)
 

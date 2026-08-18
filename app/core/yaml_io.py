@@ -17,7 +17,7 @@ import logging
 import os
 import threading
 
-import yaml as _pyyaml  # type: ignore[import-untyped]
+import yaml as _pyyaml  # type: ignore[import-untyped,unused-ignore]
 
 logger = logging.getLogger(__name__)
 

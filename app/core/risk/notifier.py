@@ -15,7 +15,7 @@ Responsabilité :
 import logging
 import time
 from datetime import datetime, timezone
-from typing import List
+from typing import Any, Dict, List
 
 from app.core.risk.state import SlotRiskState, _locked, _safe_div, today_utc
 
@@ -27,6 +27,33 @@ class RiskNotifier:
 
     Aucune initialisation propre — doit être combiné à ``RiskGate`` (ou tout
     hôte exposant les attributs d'état requis — voir ``RiskGate.__init__``)."""
+
+    halted: bool
+    halt_reason: str
+    _kill_switch_tripped: bool
+    peak_equity: float
+    daily_start: float
+    day_key: str
+    slot_states: Dict[str, SlotRiskState]
+    _notifier: Any
+    _session_factory: Any
+    _consec_loss_limit: int
+    _consec_pause_secs: int
+    equity: float
+    _slot_daily_dd_limit: float
+    _win_rate_floor: float
+    daily_pnl_pct: float
+    global_dd_pct: float
+    open_positions: dict
+    compute_risk: Any
+    daily_dd_limit: float
+    global_dd_limit: float
+    volatility_brake_active: bool
+    volatility_brake_factor: float
+    _veto_mode: str
+    _veto_shadow_active: Any
+    veto_shadow_blocks: Any
+    _volatility_threshold: float
 
     # ── Branchement Notifier + persistance ─────────────────────────────────
     def attach_notifier(self, notifier) -> None:

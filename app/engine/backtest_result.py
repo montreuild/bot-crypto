@@ -76,6 +76,16 @@ class BacktestPayload:
 
 
 class BacktestResult:
+    diagnostics: Any
+    ml_info: Any
+    exit_mode: str
+    cost_model: Any
+    realistic_risk: bool
+    buy_and_hold_pnl: float
+    buy_and_hold_pct: float
+    alpha: float
+    _close_prices: Any
+
     def __init__(self, trades: List[dict], equity_curve: List[float],
                  initial_capital: float, timestamps: Optional[List[str]] = None,
                  timeframe: str = "1d", rejections: Optional[dict] = None,

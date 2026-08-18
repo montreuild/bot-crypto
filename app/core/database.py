@@ -4,7 +4,7 @@ Base de données SQLite étendue — trades, métriques journalières, signaux, 
 import logging
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import (
     JSON,
@@ -24,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 logger = logging.getLogger(__name__)
-Base   = declarative_base()
+Base: Any = declarative_base()
 
 
 class Trade(Base):
@@ -603,7 +603,7 @@ def get_current_lifecycle_states(session: Session) -> Dict[str, str]:
     ).all()
     states: Dict[str, str] = {}
     for r in rows:
-        states[r.slot_key] = r.to_state
+        states[str(r.slot_key)] = str(r.to_state)
     return states
 
 
@@ -616,7 +616,7 @@ def save_risk_state(session: Session, key: str, data: dict) -> None:
             row = RiskStateRow(id=key, data=data)
             session.add(row)
         else:
-            row.data = data
+            row.data = data  # type: ignore[assignment]
         session.commit()
     except Exception as e:
         logger.warning(f"[DB] save_risk_state KO ({key}) : {e}")
@@ -643,11 +643,11 @@ def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,
                          fees=0.0, equity_open=equity, equity_close=equity)
         session.add(row)
     # Protection NoneType si colonnes NULL en DB (migration depuis version antérieure)
-    row.trades      = (row.trades  or 0) + 1
-    row.wins        = (row.wins    or 0) + (1 if win else 0)
-    row.pnl         = round((row.pnl   or 0.0) + pnl,  6)
-    row.fees        = round((row.fees  or 0.0) + fees, 6)
-    row.equity_close = equity
+    row.trades       = (row.trades or 0) + 1  # type: ignore[assignment,operator]
+    row.wins         = (row.wins or 0) + (1 if win else 0)  # type: ignore[assignment,operator]
+    row.pnl          = round((row.pnl or 0.0) + pnl, 6)  # type: ignore[assignment,arg-type,operator]
+    row.fees         = round((row.fees or 0.0) + fees, 6)  # type: ignore[assignment,arg-type,operator]
+    row.equity_close = equity  # type: ignore[assignment]
     if not commit:
         return
     try:

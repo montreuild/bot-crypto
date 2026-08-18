@@ -111,7 +111,7 @@ class RobustExchange:
             return
         self._last_reconnect_at = now
         try:
-            opts = {"enableRateLimit": True, "timeout": 30000}
+            opts: dict[str, Any] = {"enableRateLimit": True, "timeout": 30000}
             if hasattr(self._ex, "apiKey") and self._ex.apiKey:
                 opts["apiKey"] = self._ex.apiKey
                 opts["secret"] = self._ex.secret
@@ -289,7 +289,7 @@ class RobustExchange:
                 ml = adj_eq / mmr                       # ratio décimal, liquidation ≈ 1.0
             else:
                 # Pas de mmr (aucune position margin) → sûr ; sinon mgnRatio brut.
-                ml = _safe_float(acct.get("mgnRatio"), default=999.0)
+                ml = _safe_float(acct.get("mgnRatio"), default=999.0) or 999.0
             return {"marginLevel": round(ml, 4), "info": bal.get("info", {})}
         return {"marginLevel": 999.0}
 
@@ -375,7 +375,7 @@ def create_exchange(cfg: dict):
     if klass is None:
         raise ValueError(f"Exchange non supporté par ccxt : {name}")
     paper = cfg["trading"].get("paper_mode", True)
-    opts = {
+    opts: dict[str, Any] = {
         "enableRateLimit": True,
         "timeout":         30000,   # 30 s — évite les connexions pendantes indéfinies
     }

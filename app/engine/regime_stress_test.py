@@ -23,7 +23,7 @@ Référence :
 import logging
 import math
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 import polars as pl
 
@@ -279,7 +279,7 @@ def regime_summary(segments: List[RegimeSegment]) -> dict:
         {regime_name: {n_segments, total_bars, avg_return_pct, avg_sharpe,
                        worst_max_dd, best_return_pct}}
     """
-    by_regime = {}
+    by_regime: dict[str, dict[str, Any]] = {}
     for seg in segments:
         if seg.regime not in by_regime:
             by_regime[seg.regime] = {

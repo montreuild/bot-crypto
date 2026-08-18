@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any, Tuple
 
-import yaml  # type: ignore[import-untyped]
+import yaml  # type: ignore[import-untyped,unused-ignore]
 from dotenv import load_dotenv
 
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL

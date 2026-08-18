@@ -31,7 +31,7 @@ import logging
 import threading
 import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import polars as pl
 
@@ -90,7 +90,7 @@ def _ccxt_swap_symbol(symbol: str, exchange=None) -> str:
     return f"{base}/USDT"
 
 
-def _http_get_json(url: str, timeout: float = 8.0) -> Optional[list]:
+def _http_get_json(url: str, timeout: float = 8.0) -> Any:
     """GET JSON gracieux : renvoie None en cas d'échec (réseau, géo-block, etc.)."""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "crypto-bot/1.0"})
@@ -267,8 +267,8 @@ class DerivativesStore:
         taker   = _series("taker", lambda: self.fetch_taker_ratio(symbol, period))
 
         def _zcol(name: str) -> pl.Expr:
-            mean = pl.col(name).rolling_mean(z_window, **_MIN_SAMPLES_KW)
-            std = pl.col(name).rolling_std(z_window, **_MIN_SAMPLES_KW)
+            mean = pl.col(name).rolling_mean(z_window, **_MIN_SAMPLES_KW)  # type: ignore[arg-type]
+            std = pl.col(name).rolling_std(z_window, **_MIN_SAMPLES_KW)  # type: ignore[arg-type]
             return ((pl.col(name) - mean) / (std + 1e-12))
 
         if funding is not None:

@@ -5,7 +5,7 @@ import math
 import threading
 import time
 from copy import deepcopy
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import polars as pl
 
@@ -86,7 +86,7 @@ def _save_ml_model_post_opt(strategy_name: str, best_params: dict,
         # « 'Strategy' object has no attribute '_fit' » pour v10_retrained/v11).
         strat.fit(df_full, params={strategy_name: best_params})
 
-        trained = getattr(strat, "_trained_tfs", set())
+        trained: set[str] = set(getattr(strat, "_trained_tfs", set()) or ())
         if timeframe not in trained and not trained:
             logger.warning(f"[AutoOpt] ML post-opt : entraînement KO pour {strategy_name}/{timeframe}")
             return
@@ -397,7 +397,7 @@ class AutoOptimizer:
     def start_async(self, df_map: Dict[str, pl.DataFrame], symbol: str,
                     strategies: List[str] | None = None,
                     timeframes: List[str] | None = None,
-                    auto_apply: bool = False) -> List[str]:
+                    auto_apply: bool = False) -> tuple[list[str], list[dict[str, Any]]]:
         """
         Lance l'optimisation en arrière-plan pour chaque (strategy, tf).
 
@@ -410,8 +410,8 @@ class AutoOptimizer:
         tfs    = timeframes or self.cfg["trading"].get(
             "timeframes", [self.cfg["trading"].get("timeframe", "1h")]
         )
-        job_ids  = []
-        skipped  = []   # [(strategy, tf, reason)]
+        job_ids: list[str] = []
+        skipped: list[dict[str, Any]] = []
 
         # Mesure la RAM dispo pour ce lot → budget d'admission mémoire des jobs.
         _snapshot_mem_budget()
@@ -491,8 +491,8 @@ class AutoOptimizer:
     def _run_one_job(self, job_id: str, strategy_name: str, timeframe: str,
                      df_is: pl.DataFrame, df_oos: pl.DataFrame,
                      symbol: str, auto_apply: bool,
-                     df_recherche: pl.DataFrame = None, split: int | None = None,
-                     df_holdout: pl.DataFrame = None):
+                     df_recherche: pl.DataFrame | None = None, split: int | None = None,
+                     df_holdout: pl.DataFrame | None = None):
         trials_log = []
 
         cancel_event = _cancel_flags.get(job_id)
@@ -623,7 +623,7 @@ class AutoOptimizer:
 
             # Récupérer le baseline pour comparer avant d'appliquer. Il a été
             # mesuré sur la MÊME tranche que le candidat (cf. start_async).
-            _baseline      = get_job(job_id).get("baseline", {})
+            _baseline      = (get_job(job_id) or {}).get("baseline") or {}
             baseline_pnl   = _baseline.get("pnl", float("-inf"))
             baseline_wr    = _baseline.get("wr", 0)
             baseline_sharpe = _baseline.get("sharpe", 0)
@@ -792,7 +792,7 @@ class AutoOptimizer:
                 error=result.get("error") if job_failed else None,
                 finished_at=time.time(),
             )
-            elapsed = time.time() - get_job(job_id).get("started_at", time.time())
+            elapsed = time.time() - (get_job(job_id) or {}).get("started_at", time.time())
             logger.info(
                 f"[AutoOpt] {job_id} terminé en {elapsed:.0f}s "
                 f"| OOS score={result.get('best_oos_score', 0):.4f} "
