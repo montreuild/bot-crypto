@@ -32,6 +32,8 @@ import polars as pl
 
 from app.core.is_oos import (  # BT-08 : constantes partagées
     HOLDOUT_FRACTION_DEFAULT as _HOLDOUT,
+)
+from app.core.is_oos import (
     OOS_FRACTION_DEFAULT as _OOS_FRACTION,
 )
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL

@@ -171,6 +171,7 @@ class TestBacktestResult:
     def test_end_of_data_is_taker_with_spread(self):
         """B-10 : la clôture de fin de série n'est plus un maker gratuit."""
         import inspect
+
         from app.engine.backtest import Backtester
         src = inspect.getsource(Backtester.run)
         assert 'maker=False' in src

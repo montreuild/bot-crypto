@@ -44,6 +44,7 @@ def test_unmeasurable_sharpe_does_not_beat_baseline():
 def test_live_open_applique_le_mode_de_sortie():
     """N-04 : le live appelle apply_exit_mode, comme le backtest."""
     import inspect
+
     from app.live.position_open_mixin import PositionOpenMixin
     src = inspect.getsource(PositionOpenMixin._try_open_from_signal)
     assert "apply_exit_mode" in src

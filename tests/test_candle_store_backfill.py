@@ -620,8 +620,9 @@ def test_fetch_range_approfondit_le_store_et_ne_rend_que_la_plage(tmp_path):
 
 def test_load_range_ne_materialise_que_la_plage(tmp_path):
     """A-03 : scan Parquet filtré — pas les 50k bougies du fichier."""
-    import polars as pl
     from datetime import timedelta
+
+    import polars as pl
 
     n = 500
     start0 = datetime(2024, 1, 1)
