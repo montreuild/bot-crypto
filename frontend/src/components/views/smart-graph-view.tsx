@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatUSD, formatDateTime } from '@/lib/utils';
+import { cn, formatDateTime } from '@/lib/utils';
 import { useSMC, useSMCReplay } from '@/hooks/use-api';
 import {
   TradePlansTable, RealizedTradesTable, type TradePlan, type RealizedTrade,
@@ -36,49 +36,9 @@ import {
 } from '@/lib/smc-zones';
 // F2 — cleanOhlcv factorisé dans lib/ohlcv.ts (avant : copie locale)
 import { cleanOhlcv, type CandleRow } from '@/lib/ohlcv';
-
-interface OverlayToggles {
-  orderBlocks: boolean;
-  liquidityPools: boolean;
-  fvg: boolean;
-  liquidityVoids: boolean;
-  breakers: boolean;
-  rejectionBlocks: boolean;
-  trendlines: boolean;
-  channel: boolean;
-  structure: boolean;
-  swingLabels: boolean;
-  structureLine: boolean;
-  premiumDiscount: boolean;
-  volumeProfile: boolean;
-  cycle: boolean;
-}
-
-// CandleRow et cleanOhlcv sont importés depuis @/lib/ohlcv (F2).
-
-/** Prix UI : « — » si absent / non fini (évite les $0.00 trompeurs). */
-function formatPrice(v: unknown, decimals = 2): string {
-  const n = typeof v === 'number' ? v : Number(v);
-  if (!Number.isFinite(n) || n === 0) return '—';
-  return formatUSD(n, { decimals });
-}
-
-/** Normalise premium/discount (API : range_high/range_low/zone). */
-function normalizePd(raw: any) {
-  if (!raw || typeof raw !== 'object') return null;
-  const high = Number(raw.premium_top ?? raw.range_high ?? raw.high);
-  const low = Number(raw.discount_bottom ?? raw.range_low ?? raw.low);
-  const eq = Number(raw.equilibrium);
-  const zone = String(raw.current_zone ?? raw.zone ?? '').toLowerCase();
-  return {
-    high: Number.isFinite(high) && high !== 0 ? high : null,
-    low: Number.isFinite(low) && low !== 0 ? low : null,
-    equilibrium: Number.isFinite(eq) && eq !== 0 ? eq : null,
-    zone,
-    ote_low: Number.isFinite(Number(raw.ote_low)) ? Number(raw.ote_low) : null,
-    ote_high: Number.isFinite(Number(raw.ote_high)) ? Number(raw.ote_high) : null,
-  };
-}
+import {
+  formatPrice, normalizePd, type OverlayToggles,
+} from '@/components/views/smart-graph-helpers';
 
 export function SmartGraphView({
   initialSymbol,

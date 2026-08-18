@@ -23,7 +23,7 @@ L'UI tient en **5 pages méta** à onglets, plus quelques pages dédiées.
 |---|---|
 | `/portfolio-v2` | Vue temps réel : KPIs, equity curve, positions, trades live, signals feed, allocations, risk panel, journal de notifications, bots à edge significatif |
 | `/bots-v2` | Portefeuille de stratégies avec cycle de vie (candidat → essai → actif → retiré) |
-| `/lab` | Laboratoire — onglets `backtest`, `optimizer`, `ml`, `replay`, `compare` |
+| `/lab` | Laboratoire — shell + `next/dynamic` : `backtest`, `optimizer`, `ml`, `replay`, `batch`, `compare` |
 | `/market` | Marché — onglets `scanner`, `smartgraph`, `smartreplay`, `derivatives` |
 | `/settings-v2` | Réglages — onglets `capital`, `notifications`, `data`, `audit`, `ui` |
 | `/trades` | Historique des trades avec filtres + export CSV |
@@ -33,6 +33,10 @@ L'UI tient en **5 pages méta** à onglets, plus quelques pages dédiées.
 
 L'onglet actif se pilote par `?tab=` : `/market?tab=smartgraph` est un lien
 profond partageable, et c'est la cible des redirections ci-dessous.
+
+Les contrats API vivent dans `src/types/index.ts`. Zod (`lib/schemas.ts`)
+valide sans bloquer. Schéma FastAPI : `python scripts/export_openapi.py`
+depuis la racine (écrit `src/types/openapi.json`).
 
 ### Routes héritées
 
@@ -55,7 +59,7 @@ cible n'est pas validée.
 
 ### Prérequis
 
-- Node.js 20+ (recommandé : via [nvm](https://github.com/nvm-sh/nvm))
+- Node.js 22+ (CI : 22 ; 20 reste acceptable en local)
 - Backend FastAPI qui tourne sur `http://localhost:8000` (cf. `scripts/setup.sh` à la racine du repo)
 
 ### Installation
@@ -100,39 +104,28 @@ src/
 ├── app/                          # Next.js App Router
 │   ├── layout.tsx                # Layout racine (sidebar + topbar)
 │   ├── globals.css               # Styles globaux + Tailwind
-│   ├── dashboard/page.tsx        # Dashboard principal
+│   ├── page.tsx                  # Portfolio
 │   ├── bots/page.tsx             # Portefeuille de bots
+│   ├── lab/page.tsx              # Shell Laboratoire (dynamic par onglet)
 │   ├── trades/page.tsx           # Historique trades
-│   ├── backtest/page.tsx         # Backtest interactif
-│   ├── config/page.tsx           # Configuration
-│   └── scanner/page.tsx          # Scanner SMC
+│   ├── data/page.tsx             # Cache OHLCV
+│   └── settings/page.tsx         # Réglages
 ├── components/
-│   ├── providers.tsx             # QueryClient + WebSocket + Tooltip providers
+│   ├── views/                    # Onglets lab / market (backtest-view, optimizer-view…)
+│   ├── optimizer/                # JobCard, LiveProgress, status (U-08)
+│   ├── providers.tsx
 │   ├── layout/
-│   │   ├── sidebar.tsx           # Navigation latérale
-│   │   └── topbar.tsx            # Topbar avec boutons Start/Stop, PnL, WS status
 │   ├── ui/
-│   │   ├── card.tsx              # Card, CardHeader, CardTitle, CardContent
-│   │   ├── button.tsx            # Button (variants: primary, success, danger, ghost, outline)
-│   │   ├── badge.tsx             # Badge (variants: success, danger, warning, info, purple)
-│   │   └── toaster.tsx           # Toaster (sonner)
 │   ├── cards/
-│   │   ├── kpi-cards.tsx         # CapitalCard, PnLCard, WinRateCard, etc.
-│   │   ├── positions-table.tsx   # Positions ouvertes avec PnL unrealized
-│   │   ├── live-trades-feed.tsx  # Feed temps réel des ouvertures/fermetures (WS)
-│   │   ├── signals-feed.tsx      # Feed temps réel des signaux (WS + historique)
-│   │   ├── allocations-grid.tsx  # Grille d'allocation par slot
-│   │   └── risk-panel.tsx        # Drawdown gauges + circuit breakers
 │   └── charts/
-│       └── equity-curve.tsx      # Equity curve Recharts
 ├── hooks/
-│   └── use-api.ts                # Hooks TanStack Query (useBotStatus, useBots, useTrades, etc.)
+│   └── use-api.ts
 ├── lib/
-│   ├── api.ts                    # Client API fetch (api.getStatus(), api.startBot(), etc.)
-│   ├── ws-provider.tsx           # WebSocketProvider + hooks (useTradeEvents, useSignalEvents, etc.)
-│   └── utils.ts                  # cn(), formatUSD, formatPct, lifecycleStyle, etc.
+│   ├── api.ts                    # fetch + Zod non bloquant
+│   ├── schemas.ts
+│   └── ws-provider.tsx
 └── types/
-    └── index.ts                  # Types TypeScript pour toutes les réponses API
+    └── index.ts                  # Contrats API (U-05). Schéma : scripts/export_openapi.py
 ```
 
 ## WebSocket temps réel

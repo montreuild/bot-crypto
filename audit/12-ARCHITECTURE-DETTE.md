@@ -24,7 +24,7 @@ Découpage de `app/` :
 | `app/core/` | 59 | primitives partagées (risque, exécution, indicateurs, SMC, données) |
 | `app/strategies/` | 45 | stratégies |
 | `app/api/` | 27 | FastAPI (20 routers + middleware/helpers/state/schemas) |
-| `app/engine/` | 18 | backtest, optimiseur, scanner, walk-forward |
+| `app/engine/` | 20 | backtest + result + lifecycle, optimiseur, scanner, walk-forward |
 | `app/live/` | 15 | trader live et ses mixins |
 | `app/ml/` | 22 | apprentissage, registre, politique de promotion |
 
@@ -42,7 +42,7 @@ raison écrite.
 |---|----------|-------|
 | X-01 | 🟠 Majeur | Six modules écrits, testés… et jamais appelés en production | ✅ résolu — câblés ou `core/deflated_sharpe.py` supprimé |
 | X-02 | 🟠 Majeur | 80 % de duplication entre `scoring_statistique_opus_v4` et `_v5` |
-| X-03 | 🟡 Moyen | Trois fichiers de plus de 1 200 lignes portent le cœur du système |
+| X-03 | 🟡 Moyen | Trois fichiers de plus de 1 200 lignes portent le cœur du système | ✅ backtest découpé ; restent `optimizer_search.py` et `smart_money_signals.py` |
 | X-04 | 🟡 Moyen | Deux implémentations du Deflated Sharpe, deux du Monte-Carlo | ✅ `_sf` unifié ; DSR = Bailey ; MC double usage légitime |
 | X-05 | 🟡 Moyen | Constantes dupliquées malgré des modules de source unique |
 | X-06 | 🟡 Moyen | 45 stratégies dont 12 sont des variantes de 4 familles |
@@ -103,13 +103,15 @@ exactement ce que font `smart_money_aux` / `smart_money_params` /
 
 ## X-03 🟡 Trois fichiers concentrent le cœur
 
-| Lignes | Fichier | Ce qu'il porte |
+| Lignes (audit) | Fichier | État #244 |
 |---|---|---|
-| 1 809 | `app/engine/backtest.py` | `BacktestResult` + `Backtester` (cycle de vie complet d'une position) |
-| 1 312 | `app/engine/optimizer_search.py` | 3 méthodes de recherche + gel de paramètres + pool de process |
-| 1 212 | `app/strategies/smart_money_signals.py` | génération de signaux SMC |
-| 1 559 | `frontend/src/components/views/optimizer-view.tsx` | vue optimiseur |
-| 1 488 | `frontend/src/app/lab/page.tsx` | 5 onglets du Laboratoire |
+| 1 809 → ~686 | `app/engine/backtest.py` | `run()` + diagnostics ; import `Backtester, BacktestResult` inchangé |
+| — → ~410 | `app/engine/backtest_result.py` | métriques + sérialisation |
+| — → ~646 | `app/engine/position_lifecycle.py` | mixin : `_close_at` / `_try_enter` / scale-in (`RiskLedger`) |
+| 1 312 | `app/engine/optimizer_search.py` | **non découpé** |
+| 1 212 | `app/strategies/smart_money_signals.py` | **non découpé** |
+| 1 559 → ~1 015 | `optimizer-view.tsx` | `JobCard` / `LiveProgress` extraits |
+| 1 488 → ~175 | `app/lab/page.tsx` | shell + `dynamic` ; onglet Backtest dans `backtest-view.tsx` |
 
 Ce ne sont pas des fourre-tout : chacun a une cohérence interne réelle et une
 documentation d'intention dense. Mais leur taille a un coût mesurable dans cet
@@ -117,15 +119,15 @@ audit : les constats **B-05** (`min_notional` vérifié avant `partial_fill`) et
 **B-06** (le pyramidage échappe à quatre garde-fous) sont des divergences entre
 deux endroits **du même fichier**, séparés par 200 lignes.
 
-Découpages naturels de `backtest.py` :
+Découpages naturels de `backtest.py` — **faits** (#244) :
 
-- `BacktestResult` + `_group_metrics` → `backtest_result.py` (~330 lignes) ;
+- `BacktestResult` + `_group_metrics` → `backtest_result.py` ;
 - `_close_at` / `_close_partial_at` / `_manage_open_position` / `_try_enter` →
-  `position_lifecycle.py` (~600 lignes) — le pendant exact des mixins du live ;
-- `run()` + diagnostics → `backtest.py` (~500 lignes).
+  `position_lifecycle.py` — le pendant des mixins du live ;
+- `run()` + diagnostics → `backtest.py`.
 
-Le bénéfice n'est pas esthétique : il rend visible que `_try_enter` et la
-branche `scale_in` doivent partager leur calcul de risque.
+`_try_enter` et le scale-in passent tous deux par `RiskLedger.reserve`
+(R-02). Restent à découper : `optimizer_search.py`, `smart_money_signals.py`.
 
 ---
 
@@ -246,7 +248,7 @@ mécanisme qui les fasse échouer quand ils deviennent faux.
   l'architecture qui rend la question « pourquoi le live diverge-t-il ? »
   répondable.
 - **Compatibilité ascendante gérée explicitement** : ré-exports en fin de
-  module avec la raison écrite (`backtest.py:1800-1808`), alias
+  module (WF / MC après la classe `Backtester`, pour casser le cycle), alias
   `RiskManager = RiskGate`, `StrategyOptimizer = OptimizerSearchEngine`. Les
   refactorings n'ont pas cassé les appelants.
 - **Configuration découpée par responsabilité** (`config.yaml` → 5 fichiers

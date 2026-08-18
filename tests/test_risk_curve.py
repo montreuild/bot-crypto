@@ -16,8 +16,8 @@ def test_backtester_tracks_peak_and_applies_curve():
     _risk_multiplier au sizing (parité avec RiskManager.compute_risk)."""
     import inspect
 
-    from app.engine import backtest
-    src = inspect.getsource(backtest)
+    from app.engine import backtest, position_lifecycle
+    src = inspect.getsource(backtest) + inspect.getsource(position_lifecycle)
     assert "peak_capital" in src
     assert "_risk_multiplier(dd)" in src
 

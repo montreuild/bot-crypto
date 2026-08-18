@@ -18,8 +18,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import type { BacktestResult } from '@/types';
 
+type CmpRow = Partial<BacktestResult> & { strategy: string };
+
 interface Props {
-  strategies: BacktestResult[];
+  strategies: CmpRow[];
 }
 
 function fmt(v: number | null | undefined, decimals = 2, prefix = '', suffix = ''): string {
@@ -70,7 +72,7 @@ export function StrategyComparisonTable({ strategies }: Props) {
     );
   };
 
-  const columns: DataTableColumn<BacktestResult>[] = [
+  const columns: DataTableColumn<CmpRow>[] = [
     {
       key: 'strategy',
       header: 'Stratégie',

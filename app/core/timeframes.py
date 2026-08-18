@@ -34,6 +34,11 @@ TF_MINUTES: Dict[str, int] = {tf: s // 60 for tf, s in TF_SECONDS.items()}
 TF_MS: Dict[str, int] = {tf: s * 1000 for tf, s in TF_SECONDS.items()}
 
 
+def bar_to_days(tf: str) -> float:
+    """Durée d'une barre en jours. Défaut 15m si ``tf`` est inconnu."""
+    return TF_MINUTES.get(tf, 15) / 1440.0
+
+
 def bars_per_year(tf: str) -> float:
     """Nombre de bougies par an pour ``tf`` — facteur d'annualisation du
     Sharpe (S4-01/S4-02). Marchés crypto : 365j × 24h (pas de fermeture).

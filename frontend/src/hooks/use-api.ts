@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { BotStatus } from '@/types';
+import type { BotStatus, OptimizeJob } from '@/types';
 
 /** U-03 : un onglet caché ne sonde pas. */
 function usePageVisible() {
@@ -423,15 +423,16 @@ export function useOptimizeStatus(jobId?: string) {
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return 1500;
-      // Si on suit un job spécifique, poll rapide tant qu'il est running
       if (jobId) {
-        const job = (data as any)?.[jobId] ?? data;
+        const map = data as Record<string, OptimizeJob> | OptimizeJob;
+        const job = (map && typeof map === 'object' && jobId in map)
+          ? (map as Record<string, OptimizeJob>)[jobId]
+          : map as OptimizeJob;
         return job?.status === 'running' ? 1500 : false;
       }
-      // Sinon, vérifier si au moins un job est running
-      const allJobs = data as Record<string, any>;
+      const allJobs = data as Record<string, OptimizeJob>;
       const hasRunning = Object.values(allJobs).some(
-        (j: any) => j?.status === 'running' || j?.status === 'pending' || j?.status === 'queued'
+        (j) => j?.status === 'running' || j?.status === 'pending' || j?.status === 'queued'
       );
       return hasRunning ? 1500 : 30000;
     },
@@ -457,7 +458,7 @@ export function useOptimizeResults() {
 export function useStartOptimize() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (params: any) => api.startOptimize(params),
+    mutationFn: (params: Parameters<typeof api.startOptimize>[0]) => api.startOptimize(params),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['optimizeStatus'] });
     },
