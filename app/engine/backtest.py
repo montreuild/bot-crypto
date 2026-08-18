@@ -267,6 +267,9 @@ class Backtester(PositionLifecycleMixin):
         ml_info: Dict[str, Dict] = {"mode": ml_mode, "symbol": symbol_key,
                                     "timeframe": timeframe, "models": {}}
         sim_live_entries: List[Dict] = []
+        # ML-03 : compter les fit() inline et la longueur de fenêtre reçue.
+        from app.ml.fit_trace import start as _fit_start
+        _fit_start()
 
         for strat in self.engine.strategies:
             strat._bt_params = strat_params
@@ -630,6 +633,8 @@ class Backtester(PositionLifecycleMixin):
                                 n_bars=max(0, len(df) - warmup),
                                 equity_mtm=equity_mtm)
         result.diagnostics = diag
+        from app.ml.fit_trace import stop as _fit_stop
+        ml_info["fit_trace"] = _fit_stop(series_len=len(df))
         result.ml_info = ml_info
         # §5 — le mode de sortie appliqué fait partie du contexte qui produit le
         # PnL, au même titre que la venue et le levier : deux runs qui ne

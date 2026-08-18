@@ -15,7 +15,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
-import { cn, formatUSD, formatPct, formatDateTime } from '@/lib/utils';
+import { cn, formatMoney, formatPct, formatDateTime, quoteCurrency } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { Download, ArrowUp, ArrowDown } from 'lucide-react';
 import { useState, useMemo } from 'react';
@@ -133,7 +133,7 @@ export default function TradesPage() {
         const isWin = t.pnl >= 0;
         return (
           <span className={cn('font-mono font-semibold', isWin ? 'text-emerald-400' : 'text-red-400')}>
-            {isWin ? '+' : ''}{formatUSD(t.pnl)}
+            {isWin ? '+' : ''}{formatMoney(t.pnl, quoteCurrency(t))}
           </span>
         );
       },
@@ -157,7 +157,7 @@ export default function TradesPage() {
       header: 'Fees',
       align: 'right',
       sortValue: (t) => t.fees,
-      render: (t) => <span className="font-mono text-xs text-dim">-{formatUSD(t.fees)}</span>,
+      render: (t) => <span className="font-mono text-xs text-dim">-{formatMoney(t.fees, quoteCurrency(t))}</span>,
     },
     {
       key: 'reason',

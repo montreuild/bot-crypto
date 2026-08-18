@@ -7,8 +7,15 @@
 
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/utils';
 import type { BotStatus, OptimizeJob } from '@/types';
+
+/** UX-03 : un POST config qui échoue ne doit jamais rester silencieux. */
+function toastConfigError(err: unknown) {
+  toast.error(`Enregistrement refusé : ${errorMessage(err)}`);
+}
 
 /** U-03 : un onglet caché ne sonde pas. */
 function usePageVisible() {
@@ -331,6 +338,7 @@ export function useToggleStrategyTimeframe() {
       qc.invalidateQueries({ queryKey: ['config'] });
       qc.invalidateQueries({ queryKey: ['status'] });
     },
+    onError: toastConfigError,
   });
 }
 

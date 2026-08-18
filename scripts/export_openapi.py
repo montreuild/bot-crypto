@@ -22,6 +22,11 @@ def main() -> None:
         encoding="utf-8",
     )
     print(f"écrit {dest} ({dest.stat().st_size} octets)")
+    try:
+        from scripts.gen_frontend_types import main as gen_ts
+        gen_ts()
+    except Exception as e:
+        print(f"types TS non régénérés : {e}")
 
 
 if __name__ == "__main__":

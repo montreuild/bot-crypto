@@ -47,7 +47,7 @@ def returns_per_year(n_returns: int, years: Optional[float],
 
 
 def sortino_ratio(returns: list, risk_free_rate: float = 0.0,
-                  periods_per_year: int = 252) -> float:
+                  periods_per_year: float = 252) -> float:
     """Sortino ratio (rendement - sans risque) / volatilité downside.
 
     Parameters

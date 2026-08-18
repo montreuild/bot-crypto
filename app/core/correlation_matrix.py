@@ -62,7 +62,7 @@ def build_correlation_matrix(
         matrix[bot_a][bot_b] = corrélation ∈ [-1, 1]
     """
     keys = list(bots_returns.keys())
-    matrix = {k: {} for k in keys}
+    matrix: Dict[str, Dict[str, float]] = {k: {} for k in keys}
     for i, k1 in enumerate(keys):
         for k2 in keys[i:]:
             if k1 == k2:

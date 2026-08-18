@@ -18,7 +18,8 @@ import {
   AlertCircle, CheckCircle2, TrendingUp, Rocket,
   Maximize2, FileDown, X, Shield,
 } from 'lucide-react';
-import { cn, formatUSD } from '@/lib/utils';
+import { cn, formatMoney, quoteCurrency } from '@/lib/utils';
+import { LoadingState, ErrorState } from '@/components/ui/query-state';
 import { PriceSignalsChart } from '@/components/charts/price-signals-chart';
 import { TradesTable } from '@/components/tables/trades-table';
 import { DiagnosticsPanel } from '@/components/cards/diagnostics-panel';
@@ -54,6 +55,7 @@ function strategyMap(r: BacktestResult): Record<string, StrategyPanel> {
 
 export function Verdict({ result }: { result: BacktestResult | BacktestResult[] }) {
   const r = unwrapBacktest(result);
+  const ccy = quoteCurrency(r);
   const byStrategy = strategyMap(r);
   const strategyNames = Object.keys(byStrategy);
 
@@ -98,7 +100,7 @@ export function Verdict({ result }: { result: BacktestResult | BacktestResult[] 
   } else if (isPositive && !isRisky) {
     tone = 'neutral';
     icon = <TrendingUp className="w-5 h-5 text-cyan-400" />;
-    message = `Résultats positifs sur ${bestName} (${formatUSD(pnl, { sign: true })}, WR ${wr.toFixed(0)}%) mais edge limité. À valider par forward-test.`;
+    message = `Résultats positifs sur ${bestName} (${formatMoney(pnl, ccy, { sign: true })}, WR ${wr.toFixed(0)}%) mais edge limité. À valider par forward-test.`;
   } else if (isRisky) {
     tone = 'negative';
     icon = <AlertCircle className="w-5 h-5 text-amber-400" />;
@@ -106,7 +108,7 @@ export function Verdict({ result }: { result: BacktestResult | BacktestResult[] 
   } else {
     tone = 'negative';
     icon = <AlertCircle className="w-5 h-5 text-red-400" />;
-    message = `${bestName} sous-performe (${formatUSD(pnl, { sign: true })}, WR ${wr.toFixed(0)}%). Stratégie à revoir.`;
+    message = `${bestName} sous-performe (${formatMoney(pnl, ccy, { sign: true })}, WR ${wr.toFixed(0)}%). Stratégie à revoir.`;
   }
 
   const toneClasses = {
@@ -143,8 +145,28 @@ export function Verdict({ result }: { result: BacktestResult | BacktestResult[] 
 
 // ── Backtest Results ─────────────────────────────────────────────────────
 
-export function BacktestResults({ result, scoreThreshold }: { result: BacktestResult | BacktestResult[]; scoreThreshold?: number | null }) {
+export function BacktestResults({
+  result,
+  scoreThreshold,
+  loading = false,
+  error,
+}: {
+  result?: BacktestResult | BacktestResult[] | null;
+  scoreThreshold?: number | null;
+  loading?: boolean;
+  error?: string | null;
+}) {
+  if (loading) {
+    return <LoadingState label="Backtest en cours…" className="min-h-[300px]" />;
+  }
+  if (error) {
+    return <ErrorState error={error} />;
+  }
+  if (!result) {
+    return null;
+  }
   const r = unwrapBacktest(result);
+  const ccy = quoteCurrency(r);
   const byStrategy = strategyMap(r);
   const strategies = Object.entries(byStrategy);
   const [fsStrategy, setFsStrategy] = useState<string | null>(null);
@@ -438,7 +460,7 @@ export function BacktestResults({ result, scoreThreshold }: { result: BacktestRe
                 <div className="flex items-center justify-between mb-3">
                   <span className="font-mono text-sm font-semibold">{name}</span>
                   <Badge variant={stats.total_pnl >= 0 ? 'success' : 'danger'}>
-                    {stats.total_pnl >= 0 ? '+' : ''}{formatUSD(stats.total_pnl)}
+                    {stats.total_pnl >= 0 ? '+' : ''}{formatMoney(stats.total_pnl, ccy)}
                     {pnlPct != null && (
                       <span className="ml-1 opacity-70">
                         ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
@@ -484,7 +506,7 @@ export function BacktestResults({ result, scoreThreshold }: { result: BacktestRe
                     <div className="text-dim">Expectancy</div>
                     <div className={cn('font-mono font-semibold', (stats.expectancy ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
                       {stats.expectancy != null
-                        ? `${stats.expectancy >= 0 ? '+' : ''}${formatUSD(stats.expectancy)}`
+                        ? `${stats.expectancy >= 0 ? '+' : ''}${formatMoney(stats.expectancy, ccy)}`
                         : '—'}
                     </div>
                   </div>
@@ -497,14 +519,14 @@ export function BacktestResults({ result, scoreThreshold }: { result: BacktestRe
                   <div>
                     <div className="text-dim">Equity Finale</div>
                     <div className="font-mono font-semibold">
-                      {eqFinal != null ? formatUSD(eqFinal) : '—'}
+                      {eqFinal != null ? formatMoney(eqFinal, ccy) : '—'}
                     </div>
                   </div>
                   <div>
                     <div className="text-dim">Buy &amp; Hold</div>
                     <div className={cn('font-mono font-semibold', (bh.pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
                       {bh.pnl != null
-                        ? `${bh.pnl >= 0 ? '+' : ''}${formatUSD(bh.pnl)}`
+                        ? `${bh.pnl >= 0 ? '+' : ''}${formatMoney(bh.pnl, ccy)}`
                         : '—'}
                       {bhPct != null && (
                         <span className="text-dim ml-1">

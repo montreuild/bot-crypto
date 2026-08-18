@@ -2,7 +2,7 @@
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatUSD, formatPct, timeAgo } from '@/lib/utils';
+import { cn, formatMoney, formatPct, timeAgo, quoteCurrency } from '@/lib/utils';
 import { useBotStatus } from '@/hooks/use-api';
 import { ArrowUpCircle, ArrowDownCircle, Clock } from 'lucide-react';
 import { useState, useEffect } from 'react';
@@ -38,6 +38,7 @@ export function PositionsTable() {
         ) : (
           <div className="space-y-2">
             {positions.map((pos) => {
+              const ccy = quoteCurrency(pos);
               const pnlPositive = pos.upnl >= 0;
               const SideIcon = pos.side === 'long' ? ArrowUpCircle : ArrowDownCircle;
               return (
@@ -74,7 +75,7 @@ export function PositionsTable() {
                   </div>
                   <div className="text-right">
                     <div className={cn('font-mono font-semibold text-sm', pnlPositive ? 'text-emerald-400' : 'text-red-400')}>
-                      {pnlPositive ? '+' : ''}{formatUSD(pos.upnl)}
+                      {pnlPositive ? '+' : ''}{formatMoney(pos.upnl, ccy)}
                     </div>
                     <div className="text-xs text-dim font-mono">
                       {pnlPositive ? '+' : ''}{((pos.upnl / pos.notional) * 100).toFixed(2)}%

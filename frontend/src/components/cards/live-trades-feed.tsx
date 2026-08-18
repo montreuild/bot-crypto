@@ -3,7 +3,7 @@
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useTradeEvents } from '@/lib/ws-provider';
-import { cn, formatUSD, formatPct, formatTime } from '@/lib/utils';
+import { cn, formatMoney, formatPct, formatTime, quoteCurrency } from '@/lib/utils';
 import { ArrowUp, ArrowDown, TrendingUp, TrendingDown } from 'lucide-react';
 
 export function LiveTradesFeed() {
@@ -91,7 +91,7 @@ export function LiveTradesFeed() {
                     {!isOpened && (
                       <>
                         <div className={cn('font-mono font-semibold text-sm', pnlPositive ? 'text-emerald-400' : 'text-red-400')}>
-                          {pnlPositive ? '+' : ''}{formatUSD(data.pnl)}
+                          {pnlPositive ? '+' : ''}{formatMoney(data.pnl, quoteCurrency(data))}
                         </div>
                         <div className={cn('text-xs font-mono', pnlPositive ? 'text-emerald-400' : 'text-red-400')}>
                           {pnlPositive ? '+' : ''}{formatPct(data.pnl_pct)}
