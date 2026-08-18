@@ -156,6 +156,7 @@ export function BacktestResults({
   loading?: boolean;
   error?: string | null;
 }) {
+  const [fsStrategy, setFsStrategy] = useState<string | null>(null);
   if (loading) {
     return <LoadingState label="Backtest en cours…" className="min-h-[300px]" />;
   }
@@ -169,7 +170,6 @@ export function BacktestResults({
   const ccy = quoteCurrency(r);
   const byStrategy = strategyMap(r);
   const strategies = Object.entries(byStrategy);
-  const [fsStrategy, setFsStrategy] = useState<string | null>(null);
 
   const csvRows = strategies.map(([name, stats]) => ({ strategy: name, ...stats }));
 
