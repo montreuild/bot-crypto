@@ -76,7 +76,9 @@ def backtest_range(request: Request, symbol: str, timeframe: str = "1h"):
         }
     except Exception as e:
         logger.warning(f"[API] backtest/range KO ({symbol}/{timeframe}) : {e}")
-        raise HTTPException(500, f"Erreur interne : {e}")
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} backtest/range : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
 @router.post("/api/backtest/cancel", dependencies=[Depends(verify_api_key)])

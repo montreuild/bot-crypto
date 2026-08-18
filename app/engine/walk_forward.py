@@ -64,13 +64,22 @@ class WalkForwardAnalyzer:
 
         in_sample_results  = []
         out_sample_results = []
+        n_failed = 0
+        fold_errors: list[str] = []
+        _rr = bool((self.cfg.get("backtest") or {}).get("realistic_risk", False))
 
         for k in range(self.n_folds):
             is_end  = fold_n * (k + 1)
             oos_end = min(fold_n * (k + 2), n)
             df_is   = df[:is_end]
-            df_oos  = df[is_end:oos_end]
-            if len(df_oos) < 30:
+            # BT-01 : le warmup du Backtester est pris DANS le fold si on
+            # passe df[is_end:oos_end]. On préfixe l'amont pour ne trader
+            # qu'à partir de is_end.
+            oos_start = max(0, is_end - WARMUP)
+            df_oos  = df[oos_start:oos_end]
+            if (oos_end - is_end) < 30:
+                n_failed += 1
+                fold_errors.append(f"fold {k}: OOS trop court ({oos_end - is_end})")
                 continue
             try:
                 fresh_strats = []
@@ -87,18 +96,25 @@ class WalkForwardAnalyzer:
                 [eng_oos.register(s, silent=True) for s in fresh_strats_oos]
 
                 bt_is  = Backtester(eng_is,  self.cfg, ml_mode=self.ml_mode,
-                                    realistic_risk=True)
+                                    realistic_risk=_rr)
                 bt_oos = Backtester(eng_oos, self.cfg, ml_mode=self.ml_mode,
-                                    realistic_risk=True)
+                                    realistic_risk=_rr)
                 r_is   = bt_is.run(df_is,  symbol, timeframe=timeframe).to_dict()
                 r_oos  = bt_oos.run(df_oos, symbol, timeframe=timeframe).to_dict()
                 in_sample_results.append(r_is)
                 out_sample_results.append(r_oos)
             except Exception as e:
+                n_failed += 1
+                fold_errors.append(f"fold {k}: {e}")
                 logger.error(f"[WF] Fold {k} : {e}", exc_info=True)
 
         if not out_sample_results:
-            return {"error": "Aucun fold OOS valide"}
+            return {
+                "error": "Aucun fold OOS valide",
+                "n_folds_requested": self.n_folds,
+                "n_folds_failed": n_failed,
+                "erreurs": fold_errors,
+            }
 
         oos_pnl    = [r["total_pnl"]  for r in out_sample_results]
         oos_sharpe = [r["sharpe"] for r in out_sample_results if r.get("sharpe") is not None]
@@ -107,7 +123,6 @@ class WalkForwardAnalyzer:
         avg_pnl = round(_sf(float(np.mean(oos_pnl)), 0.0), 4)
 
         def _fold_summary(r: dict) -> dict:
-            # B-14 / A-05 : pas les trades / equity_curve de chaque fold.
             return {
                 "total_pnl":     r.get("total_pnl"),
                 "win_rate":      r.get("win_rate"),
@@ -115,12 +130,18 @@ class WalkForwardAnalyzer:
                 "total_trades":  r.get("total_trades"),
                 "max_drawdown":  r.get("max_drawdown"),
                 "profit_factor": r.get("profit_factor"),
+                "realistic_risk": r.get("realistic_risk"),
             }
 
         return {
             "n_folds":        len(out_sample_results),
+            "n_folds_requested": self.n_folds,
+            "n_folds_failed": n_failed,
+            "erreurs":        fold_errors,
             "kind":           "stability",
             "reoptimizes":    False,
+            "is_nested":      True,
+            "realistic_risk": _rr,
             "avg_oos_pnl":    avg_pnl,
             "avg_fold_pnl":   avg_pnl,
             "avg_oos_sharpe": (round(_sf(float(np.mean(oos_sharpe)), 0.0), 3)

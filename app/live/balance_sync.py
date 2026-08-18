@@ -28,7 +28,7 @@ class BalanceSyncMixin:
         Restaure le capital settled paper depuis la dernière equity_close en BDD.
         Retourne initial si le mode live est actif ou si la BDD est vide.
         """
-        if not self.cfg["trading"].get("paper_mode"):
+        if not self.cfg["trading"].get("paper_mode", True):
             return initial
         try:
             from app.core.database import DailyStats, session_scope
@@ -147,7 +147,7 @@ class BalanceSyncMixin:
                     self.notif.send(
                         f"⚠ MARGIN LEVEL BAS : {ml_:.3f}", async_=True
                     )
-            if not self.cfg["trading"].get("paper_mode"):
+            if not self.cfg["trading"].get("paper_mode", True):
                 detail = self.exchange.fetch_balance_detail()
                 if detail["free"] > 0:
                     # Équité margin = cash libre + valeur de marché signée des
@@ -179,7 +179,7 @@ class BalanceSyncMixin:
 
         Retourne True si l'exécution peut continuer, False sinon.
         """
-        if self.cfg["trading"].get("paper_mode"):
+        if self.cfg["trading"].get("paper_mode", True):
             locked    = sum(p.get("notional", 0) for p in self.open_positions.values())
             available = self._paper_base - locked
             if notional > available:

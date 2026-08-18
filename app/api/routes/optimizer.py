@@ -355,7 +355,7 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
         n_trials=int(job.get("n_trials", 1)) or 1,
         min_deflated_sharpe=(
             float(_opt_cfg.get("deflated_sharpe_min", 0.5))
-            if _opt_cfg.get("deflated_sharpe_gate", True)
+            if _opt_cfg.get("deflated_sharpe_gate", False)
             else None
         ),
     )
@@ -624,4 +624,6 @@ def optimizer_purge(request: Request, max_age_hours: int = 24, keep_last: int = 
         return {"status": "ok", "purged": purged, "remaining": len(all_jobs) - purged}
     except Exception as e:
         logger.error(f"[API] optimize/purge KO : {e}", exc_info=True)
-        raise HTTPException(500, f"Erreur interne : {e}")
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} optimize/purge : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")

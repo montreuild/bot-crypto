@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * RPL-001 — Moteur de replay interactif bougie-par-bougie.
  *

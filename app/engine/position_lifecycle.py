@@ -51,7 +51,7 @@ class PositionLifecycleMixin:
         slip_exit = (abs(exec_price - ref_price) * fill_size
                      if ref_price is not None else 0.0) + impact
         # close_pnl = frais de sortie seulement ; additionner les frais d'entrée déjà prélevés.
-        entry_fees = float(position.get("fees", 0.0) or 0.0)
+        entry_fees = float(position.get("entry_fees", position.get("fees", 0.0)) or 0.0)
         fees = entry_fees + fees
         ctx.capital += pnl
         realized = position.pop("_realized_pnl", 0.0)
@@ -64,7 +64,7 @@ class PositionLifecycleMixin:
             "pnl":           round(pnl + realized - entry_fees, 6),
             "entry_fees":    round(entry_fees, 6),
             "fees":          round(fees, 6),
-            "borrow_cost":   round(borrow, 6),
+            "borrow_cost":   round(position.get("borrow_cost", 0.0) + borrow, 6),
             "exit":          round(exec_price, 6),
             "status":        status,
             "exit_bar":      i,
@@ -165,6 +165,15 @@ class PositionLifecycleMixin:
             "reason": str(reason), "pnl": round(pnl, 6),
         })
         ctx.diag["partial_exits"] = ctx.diag.get("partial_exits", 0) + 1
+        _ledger = getattr(ctx, "ledger", None)
+        _pk = position.get("_pos_key")
+        if _ledger is not None and _pk:
+            _ledger.resize(
+                _pk,
+                risk=abs(float(position["entry"]) - float(position.get("stop") or position["entry"]))
+                     * float(position["size"]),
+                notional=float(position["notional"]),
+            )
         return pnl
 
     def _fill_at_level(self, side: str, level: float, open_px: float,
@@ -259,11 +268,13 @@ class PositionLifecycleMixin:
                 diag["tp_sl_ambiguous_bars"] += 1
 
         if early_exit_reason and not stop_hit and not tp_hit:
-            self._close_at(ctx, position, i, c_close, early_exit_reason, maker=True)
+            _px = c_close * (1 - self.spread_pct) if side == "long" else c_close * (1 + self.spread_pct)
+            self._close_at(ctx, position, i, _px, early_exit_reason, maker=False, ref_price=c_close)
             return None
 
         if time_exit and not stop_hit and not tp_hit:
-            self._close_at(ctx, position, i, c_close, "exit_after_bars", maker=True)
+            _px = c_close * (1 - self.spread_pct) if side == "long" else c_close * (1 + self.spread_pct)
+            self._close_at(ctx, position, i, _px, "exit_after_bars", maker=False, ref_price=c_close)
             return None
 
         if tp_hit:
@@ -308,7 +319,13 @@ class PositionLifecycleMixin:
                 # §30 — après la première jambe, le stop passe au point mort
                 # frais compris : le trade ne peut plus coûter d'argent.
                 if position.get("be_after_partial") and not position.get("_be_done"):
-                    cout = 2 * self.taker_fee + self.spread_pct
+                    from app.core.execution import venue_trade_cost
+                    _sz = float(position.get("size") or 0.0) or 1.0
+                    _fin = venue_trade_cost(entry, _sz, self.taker_fee, side=side,
+                                            venue=getattr(self, "_venue", None), is_entry=True)
+                    _fout = venue_trade_cost(entry, _sz, self.taker_fee, side=side,
+                                             venue=getattr(self, "_venue", None), is_entry=False)
+                    cout = (_fin + _fout) / max(entry * _sz, 1e-12) + self.spread_pct
                     be = entry * (1 + cout) if side == "long" else entry * (1 - cout)
                     if (side == "long" and be > position["stop"]) or \
                             (side == "short" and be < position["stop"]):
@@ -352,6 +369,9 @@ class PositionLifecycleMixin:
                 recent_highs  = hi20,
             )
             position["stop"] = new_stop
+            _ledger = getattr(ctx, "ledger", None)
+            if _ledger is not None and (_pk := position.get("_pos_key")):
+                _ledger.update_risk(_pk, abs(entry - new_stop) * position["size"])
             if hasattr(_tr, "_dts") and _tr._dts:
                 position["trail_phase"] = _tr._dts.phase_name
             if i % 3 == 0:
@@ -376,7 +396,6 @@ class PositionLifecycleMixin:
                 # B-06 : le pyramidage passe par le même gate que l'entrée.
                 gate = getattr(ctx, "risk_gate", None)
                 if gate is not None:
-                    from app.core.bot_identity import build_slot_key
                     _sk = build_slot_key(position.get("strategy", ""),
                                          ctx.timeframe, ctx.symbol)
                     try:
@@ -398,7 +417,13 @@ class PositionLifecycleMixin:
                 if stop_dist > 0:
                     sf = max(0.0, min(float(scale.get("size_factor", 1.0)), 2.0))
                     _base = self._sizing_base(ctx)
-                    add_size = _base * ctx.risk / stop_dist * sf * self.partial_fill
+                    peak = getattr(ctx, "peak_capital", ctx.capital) or ctx.capital
+                    dd = max(0.0, (peak - ctx.capital) / peak) if peak > 0 else 0.0
+                    add_size = (_base * ctx.risk / stop_dist * sf * self.partial_fill
+                                * _risk_multiplier(dd))
+                    _gate = getattr(ctx, "risk_gate", None)
+                    if _gate is not None:
+                        add_size *= _gate.volatility_brake_factor
                     add_notional = add_size * add_price
                     # Cap : le notional total reste sous l'enveloppe × levier
                     room = _base * max(self._leverage(), 1.0) - position["notional"]
@@ -412,6 +437,14 @@ class PositionLifecycleMixin:
                     _pk = position.get("_pos_key")
                     if (_ledger is not None and _env is not None and _pk
                             and add_notional >= 1.0 and add_size > 0):
+                        from dataclasses import replace
+                        _env = replace(
+                            _env,
+                            slot_key=build_slot_key(
+                                position.get("strategy", ""),
+                                ctx.timeframe, ctx.symbol,
+                            ),
+                        )
                         _inc_key = f"{_pk}:scale:{position.get('scale_ins', 0)}"
                         _inc_risk = abs(add_price - float(position["stop"])) * add_size
                         _dec = _ledger.reserve(
@@ -580,6 +613,14 @@ class PositionLifecycleMixin:
         ledger = getattr(ctx, "ledger", None)
         env = getattr(ctx, "ledger_env", None)
         if ledger is not None and env is not None:
+            from dataclasses import replace
+            env = replace(
+                env,
+                slot_key=build_slot_key(
+                    signal.get("name") or signal.get("strategy") or "",
+                    ctx.timeframe, ctx.symbol,
+                ),
+            )
             risk_amt = abs(float(exec_price) - float(stop)) * float(size)
             dec = ledger.reserve(env, risk=risk_amt, notional=notional, pos_key=pos_key)
             if not dec.allowed:

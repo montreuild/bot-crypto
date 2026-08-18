@@ -18,14 +18,33 @@ export function errorMessage(err: unknown, fallback = 'Erreur inconnue'): string
 
 // ── Formatage ───────────────────────────────────────────────────────────────
 
+export function formatMoney(
+  value: number,
+  currency = 'USD',
+  opts: { decimals?: number; sign?: boolean; locale?: string } = {},
+): string {
+  const { decimals = 2, sign = false, locale = 'en-US' } = opts;
+  const code = (currency || 'USD').replace('USDC', 'USD').replace('USDT', 'USD');
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: code.length === 3 ? code : 'USD',
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+      signDisplay: sign ? 'always' : 'auto',
+    }).format(value);
+  } catch {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency', currency: 'USD',
+      minimumFractionDigits: decimals, maximumFractionDigits: decimals,
+      signDisplay: sign ? 'always' : 'auto',
+    }).format(value);
+  }
+}
+
+/** @deprecated Préférer ``formatMoney(value, quote_currency)``. */
 export function formatUSD(value: number, opts: { decimals?: number; sign?: boolean } = {}): string {
-  const { decimals = 2, sign = false } = opts;
-  const formatter = new Intl.NumberFormat('en-US', {
-    style: 'currency', currency: 'USD',
-    minimumFractionDigits: decimals, maximumFractionDigits: decimals,
-    signDisplay: sign ? 'always' : 'auto',
-  });
-  return formatter.format(value);
+  return formatMoney(value, 'USD', opts);
 }
 
 export function formatPct(value: number, decimals = 2, sign = true): string {

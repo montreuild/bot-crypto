@@ -84,6 +84,17 @@ class TestReserveOrderOfChecks:
         assert d.allowed is False
         assert d.reason_code == "enveloppe_venue"
 
+    def test_slot_cumulative_notional_is_capped(self):
+        """FIN-05 : le plafond slot s'applique au cumul, pas à la seule jambe."""
+        ledger = RiskLedger()
+        env = _env(slot_envelope=100.0, symbol_envelope=1000.0,
+                   venue_envelope=1000.0, symbol_risk_budget=100.0,
+                   venue_risk_budget=100.0, max_leverage=1.0)
+        assert ledger.reserve(env, risk=1.0, notional=60.0, pos_key="p1").allowed
+        d = ledger.reserve(env, risk=1.0, notional=50.0, pos_key="p2")
+        assert d.allowed is False
+        assert d.reason_code == "enveloppe_slot"
+
     def test_valid_reservation_is_allowed(self):
         ledger = RiskLedger()
         env = _env()

@@ -77,7 +77,8 @@ def chrono_split(n: int, label_horizons: Optional[Iterable[Any]] = None,
         return None
     split = max(int(n * fraction), min_train)
     split = min(split, n - min_valid)
-    embargo = label_embargo(label_horizons)
+    from app.core.is_oos import default_purge_embargo
+    _, embargo = default_purge_embargo(n, label_embargo(label_horizons))
     train = split - embargo
     if train < min_train or n - split < min_valid:
         return None

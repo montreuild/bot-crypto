@@ -81,9 +81,22 @@ class RiskLedger:
             cur_symbol_risk     = self._symbol_risk.get(sym_key, 0.0)
             cur_venue_risk      = self._venue_risk.get(env.venue, 0.0)
 
+            cur_slot_notional = self._slot_notional.get(env.slot_key, 0.0)
+            cur_slot_risk = self._slot_risk.get(env.slot_key, 0.0)
             if _exceeds(notional, env.max_notional):
                 return Decision(False, "enveloppe_slot",
                                 f"notionnel {notional:.2f} > plafond slot {env.max_notional:.2f}")
+            if _exceeds(cur_slot_notional + notional, env.max_notional):
+                return Decision(False, "enveloppe_slot",
+                                f"notionnel slot cumulé {cur_slot_notional + notional:.2f} "
+                                f"> plafond slot {env.max_notional:.2f}")
+            slot_risk_budget = getattr(env, "slot_risk_budget", None)
+            if slot_risk_budget is None:
+                slot_risk_budget = env.max_notional
+            if slot_risk_budget and _exceeds(cur_slot_risk + risk, float(slot_risk_budget)):
+                return Decision(False, "budget_slot",
+                                f"risque slot {cur_slot_risk + risk:.2f} "
+                                f"> budget {float(slot_risk_budget):.2f}")
             if _exceeds(cur_symbol_notional + notional, env.symbol_max_notional):
                 return Decision(False, "enveloppe_slot",
                                 f"notionnel symbole {cur_symbol_notional + notional:.2f} "

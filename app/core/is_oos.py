@@ -112,6 +112,8 @@ def split_is_oos(df, warmup: int = WARMUP_BARS_DEFAULT,
     if n == 0:
         return None, None, 0
     split = max(warmup + 100, int(n * (1.0 - oos_fraction)))
+    if n <= split:
+        return df, df.head(0), split
     is_end = max(0, split - max(int(purge_bars), 0))
     oos_start = min(n, split + max(int(embargo_bars), 0))
     return df[:is_end], df[oos_start:], split

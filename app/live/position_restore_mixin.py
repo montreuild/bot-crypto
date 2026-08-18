@@ -24,11 +24,12 @@ from app.core.trailing import TrailingStopManager
 
 # Helpers partagés (ARCH-003 : centralisés dans position_open_mixin.py)
 from app.live.position_open_mixin import _apply_trail_override
+from app.live.protocols import LiveHost
 
 logger = logging.getLogger(__name__)
 
 
-class PositionRestoreMixin:
+class PositionRestoreMixin(LiveHost):
     """Restauration après redémarrage (voir docstring module)."""
 
     # ── Restauration au démarrage ──────────────────────────────────────────
@@ -52,7 +53,7 @@ class PositionRestoreMixin:
         # une liste vide n'est pas « aucune position » — c'est « on ne sait
         # pas ». On ne l'utilise donc que pour les perps.
         exchange_symbols_with_pos = None
-        if not self.cfg["trading"].get("paper_mode"):
+        if not self.cfg["trading"].get("paper_mode", True):
             try:
                 from app.core.bot_identity import resolve_venue
                 _v = resolve_venue(self.cfg)
@@ -86,7 +87,7 @@ class PositionRestoreMixin:
             # L-03 / L-04 : un désaccord n'est pas une preuve. On marque
             # orphelin et on restaure — une suppression est irréversible.
             if (exchange_symbols_with_pos is not None
-                    and not self.cfg["trading"].get("paper_mode")
+                    and not self.cfg["trading"].get("paper_mode", True)
                     and symbol not in exchange_symbols_with_pos):
                 logger.warning(
                     f"[Reprise] Position {pos_id} ({symbol}) absente de l'exchange "
@@ -101,8 +102,10 @@ class PositionRestoreMixin:
                             f"— position {pos_id} conservée (orpheline).",
                             async_=False,
                         )
-                    except Exception:
-                        pass
+                    except Exception as _nerr:
+                        logger.error(
+                            f"[Reprise] notification orpheline {symbol} KO : {_nerr}"
+                        )
 
             # Validate entry price is sane
             if pos.get("entry", 0) <= 0:
@@ -118,7 +121,7 @@ class PositionRestoreMixin:
             # crashé entre l'exécution de l'ordre et la persistance, la BDD
             # peut contenir un prix d'entrée pré-exécution ou une taille non
             # ajustée du remplissage partiel → stops/PnL faux à la reprise.
-            if not self.cfg["trading"].get("paper_mode") and pos.get("order_id"):
+            if not self.cfg["trading"].get("paper_mode", True) and pos.get("order_id"):
                 self._verify_restored_position(pos)
 
             # Validate stop is not already breached (if we can get a ticker)
@@ -158,7 +161,7 @@ class PositionRestoreMixin:
                 f"| strat={pos['strategy']}"
             )
 
-        if not self.cfg["trading"].get("paper_mode"):
+        if not self.cfg["trading"].get("paper_mode", True):
             self._sync_spot_balance()
 
         self.notif.send(

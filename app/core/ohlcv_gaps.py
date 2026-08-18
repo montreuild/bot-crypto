@@ -43,20 +43,18 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
         cal = calendar_for_symbol(symbol)
 
     times = df["time"]
+    n = len(times)
+    delta_secs_arr = _delta_seconds(df)
     gaps = []
-    for i in range(1, len(times)):
-        delta = times[i] - times[i - 1]
-        try:
-            delta_secs = delta.total_seconds()
-        except AttributeError:
-            delta_secs = float(delta)
-        allowed = expected_secs * 1.5
+    simple_allowed = expected_secs * 1.5
+    for i in range(1, n):
+        delta_secs = float(delta_secs_arr[i]) if delta_secs_arr is not None else _one_delta_secs(times[i - 1], times[i])
+        if delta_secs <= simple_allowed and cal is None:
+            continue
+        allowed = simple_allowed
         if cal is not None:
             try:
                 ts = _as_dt(times[i - 1])
-                # max_gap_seconds mesure le stale live, pas un trou historique :
-                # en séance il ne vaut que 3×tf. Ici on autorise jusqu'à la
-                # prochaine ouverture (nuit / week-end / férié).
                 end = cal.session_end(ts)
                 nxt = cal.next_open(end or ts)
                 if nxt is not None:
@@ -73,9 +71,31 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
                 "time_before":  str(times[i - 1])[:16],
                 "time_after":   str(times[i])[:16],
                 "gap_bars":     int(gap_bars),
-                "gap_duration": str(delta),
+                "gap_duration": str(times[i] - times[i - 1]),
             })
     return gaps
+
+
+def _one_delta_secs(a, b) -> float:
+    delta = b - a
+    try:
+        return float(delta.total_seconds())
+    except AttributeError:
+        return float(delta)
+
+
+def _delta_seconds(df):
+    """Écarts successifs en secondes (colonne vectorisée si possible)."""
+    try:
+        import polars as pl
+        if not isinstance(df, pl.DataFrame):
+            return None
+        dtype = df.schema.get("time")
+        if dtype in (pl.Datetime, pl.Date):
+            return df.select(pl.col("time").diff().dt.total_seconds())["time"].to_list()
+    except Exception:
+        return None
+    return None
 
 
 def completeness_from_gaps(n_bars: int, gaps: list) -> float:

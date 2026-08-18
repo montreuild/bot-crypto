@@ -548,7 +548,8 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
         # coûts fixes (commission plancher, taxe) ne le sont pas — c'est une
         # approximation, assumée ici et exacte en crypto.
         couts = round_trip_cost(entry, 1.0, fee_rate=float(p.get("taker_fee", 0.001)),
-                                spread_pct=float(p.get("spread_pct", 0.0005)))
+                                spread_pct=float(p.get("spread_pct", 0.0005)),
+                                cible=tp)
         rr_net = net_rr(entry, sl, tp, 1.0, couts, side=side)
         if min_net > 0 and rr_net < min_net:
             return None

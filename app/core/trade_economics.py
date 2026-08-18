@@ -64,7 +64,8 @@ def round_trip_cost(entree: float, taille: float, *, venue=None,
                     funding_rate: Optional[float] = None,
                     slippage_k: float = 1.0,
                     volume_quote: float = 0.0,
-                    side: str = "long") -> Couts:
+                    side: str = "long",
+                    cible: Optional[float] = None) -> Couts:
     """Coût complet d'un aller-retour, estimé à l'entrée.
 
     ``funding_rate`` non nul bascule le portage sur le modèle perpétuel et
@@ -75,7 +76,7 @@ def round_trip_cost(entree: float, taille: float, *, venue=None,
         return Couts(0.0, 0.0, 0.0, 0.0)
     f_in = venue_trade_cost(entree, taille, fee_rate, side=side, venue=venue,
                             is_entry=True)
-    f_out = venue_trade_cost(entree, taille, fee_rate, side=side, venue=venue,
+    f_out = venue_trade_cost(cible if cible is not None else entree, taille, fee_rate, side=side, venue=venue,
                              is_entry=False)
     # Le spread est payé des DEUX côtés : à l'entrée on achète au-dessus du
     # milieu, à la sortie on vend en dessous.

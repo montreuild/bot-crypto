@@ -42,7 +42,8 @@ def test_close_pnl_combines_all():
                                   fee_rate=0.001, daily_rate=0.00072,
                                   hours_held=24, periods_per_day=3)
     assert fees == pytest.approx(110 * 2 * 0.001)
-    assert borrow == pytest.approx(200 * ((1 + 0.00072 / 3) ** 3 - 1))
+    # FIN-10 : sans venue, un long à levier 1 n'emprunte rien.
+    assert borrow == pytest.approx(0.0)
     assert pnl == pytest.approx(20 - fees - borrow)
 
 

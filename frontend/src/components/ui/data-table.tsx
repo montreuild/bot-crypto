@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * F1 — DataTable générique réutilisable.
  *

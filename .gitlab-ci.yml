@@ -33,7 +33,7 @@ test:
   script:
     - pip install -r requirements.txt -r requirements-dev.txt
     - python -m pytest tests/ -q --tb=short -m "not slow"
-        --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=25
+        --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=64
 
 security:
   stage: security
@@ -57,5 +57,5 @@ frontend:
     - npm ci
     - npm run lint
     - npm run type-check
-    - npm test
+    - npm run test:coverage
     - npm run build

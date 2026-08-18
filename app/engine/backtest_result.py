@@ -441,6 +441,10 @@ class BacktestResult:
             "trades":             self.trades,
             "diagnostics":        getattr(self, "diagnostics", None),
             "ml_info":            getattr(self, "ml_info", None),
+            "fallback_to_inline": any(
+                isinstance(m, dict) and m.get("fallback_to_inline")
+                for m in ((getattr(self, "ml_info", None) or {}).get("models") or {}).values()
+            ) if isinstance(getattr(self, "ml_info", None), dict) else False,
             # Contexte d'exécution facturé (S11) : venue, spot/margin, levier,
             # détail des frais, emprunt. Cf. app/core/execution.py::cost_model.
             "cost_model":         getattr(self, "cost_model", None),
