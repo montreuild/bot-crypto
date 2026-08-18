@@ -112,7 +112,7 @@ class GateResult:
 
 def decide_gate(candidate_metrics: Optional[Dict[str, Any]],
                 incumbent_metrics: Optional[Dict[str, Any]], *,
-                auc_floor: float = None, epsilon: float = 0.01,
+                auc_floor: float | None = None, epsilon: float = 0.01,
                 metric: str = "auc_amp") -> GateResult:
     """Décide promote/keep. ``incumbent_metrics is None`` = aucun sortant
     (cold start) ; ``incumbent_metrics == {}`` = sortant présent mais

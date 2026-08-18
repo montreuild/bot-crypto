@@ -97,7 +97,7 @@ def _is_legacy_tf_entry(tf_entry: dict) -> bool:
     return any(k in tf_entry for k in ("params", "oos_score", "run_date"))
 
 
-def _select_symbol_entry(tf_entry: dict, symbol: str = None) -> Optional[dict]:
+def _select_symbol_entry(tf_entry: dict, symbol: str | None = None) -> Optional[dict]:
     """Sélectionne l'entrée d'optimisation applicable à ``symbol`` dans
     ``optimizer_results[strat][tf]`` (schéma hérité OU ``{symbole: entrée}``).
 
@@ -115,8 +115,8 @@ def _select_symbol_entry(tf_entry: dict, symbol: str = None) -> Optional[dict]:
     return tf_entry.get(DEFAULT_CONFIG_SYMBOL)
 
 
-def resolve_strategy_params(cfg: dict, timeframe: str = None,
-                            symbol: str = None) -> dict:
+def resolve_strategy_params(cfg: dict, timeframe: str | None = None,
+                            symbol: str | None = None) -> dict:
     """
     Construit le dict de paramètres de stratégie en superposant les résultats
     de l'optimiseur (optimizer_results) sur les params de base (strategy_params).

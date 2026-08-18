@@ -60,7 +60,7 @@ class Strategy(BaseStrategy):
         (causales) au lieu de les recalculer à chaque barre — O(n²) → O(n)."""
         self._bt_full_df = df
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get("supertrend_macd", {})
         ema_trend  = int(p.get("ema_trend",   200))
         macd_slow  = int(p.get("macd_slow",    26))
@@ -68,7 +68,7 @@ class Strategy(BaseStrategy):
         st_period  = int(p.get("st_period",    10))
         return max(ema_trend + 5, macd_slow + macd_sig_s + st_period + 15, 220)
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("supertrend_macd", {})
 

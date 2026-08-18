@@ -39,12 +39,12 @@ class Strategy(BaseStrategy):
         """Mémorise le df complet pour réutiliser la tendance HTF causale."""
         self._bt_full_df = df
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get("gemini_trend_follow", {})
         ema_trend = int(p.get("ema_trend", 200))
         return max(ema_trend + 10, 220)
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("gemini_trend_follow", {})
 

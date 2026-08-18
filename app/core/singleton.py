@@ -6,7 +6,7 @@ dans ``candle_store.get_store`` et ``feature_store.get_feature_store``.
 import threading
 
 
-def lazy_singleton(factory, doc: str = None):
+def lazy_singleton(factory, doc: str | None = None):
     """Retourne un accesseur ``get(*args, **kwargs)`` qui crée l'instance via
     ``factory`` au premier appel (double-checked locking). Les arguments des
     appels suivants sont ignorés — l'instance existe déjà.

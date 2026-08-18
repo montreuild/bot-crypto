@@ -32,7 +32,7 @@ def _validate_slot_key(slot_key: str) -> None:
 @router.get("/api/trades", dependencies=[Depends(verify_api_key)],
             response_model=TradesListResponse)
 def list_trades(limit: int = 100, offset: int = 0,
-                symbol: str = None, strategy: str = None):
+                symbol: str | None = None, strategy: str | None = None):
     """Retourne les trades paginés avec filtres optionnels symbol/strategy."""
     if not state.SessionLocal:
         raise HTTPException(503, "DB non initialisée")
@@ -102,7 +102,7 @@ def daily_stats(days: int = 30):
 
 
 @router.get("/api/stats/fees", dependencies=[Depends(verify_api_key)])
-def fee_breakdown(days: int = None):
+def fee_breakdown(days: int | None = None):
     """FIN-06 : compteur de frais par catégorie — taker/maker/borrow/stop.
 
     ``days`` optionnel (défaut : toute l'historique) limite aux trades clos

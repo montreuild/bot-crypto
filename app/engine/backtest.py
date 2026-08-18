@@ -223,7 +223,7 @@ class Backtester(PositionLifecycleMixin):
             self._strat_by_name = cache
         return cache.get(name)
 
-    def _make_trailing(self, override: dict = None):
+    def _make_trailing(self, override: dict | None = None):
         ov = override or {}
         return TrailingStopManager(
             mult             = float(ov.get("trail_wide",   self.trail_wide)),
@@ -240,7 +240,7 @@ class Backtester(PositionLifecycleMixin):
         )
 
     def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL,
-            timeframe: str = None) -> "BacktestResult":
+            timeframe: str | None = None) -> "BacktestResult":
         import app.ml.policy as _ml_policy
         from app.engine.engine import BaseStrategyML
         # ``_bt_params`` avant prepare_for_backtest : les hooks lisent le paramétrage résolu.

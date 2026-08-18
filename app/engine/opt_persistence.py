@@ -121,9 +121,9 @@ def record_optimizer_audit(strategy_name: str, timeframe: str,
 
 def apply_best_params(strategy_name: str, params: dict,
                       config_path: str = "config.yaml",
-                      timeframe: str = None,
+                      timeframe: str | None = None,
                       oos_score: float = 0.0,
-                      symbol: str = None) -> bool:
+                      symbol: str | None = None) -> bool:
     """
     Applique le paramétrage optimisé **uniquement** dans ``optimizer_results``
     de strategies/{strategy_name}.yaml, sans jamais toucher au bloc ``params``

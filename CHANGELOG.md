@@ -10,6 +10,13 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 ARCH-04 suite + ML-05 + FE-03
+
+- **ARCH-04** : RUF013 sur `app/` ; mypy CI = `app/core` + `app/engine`
+  (38 modules encore exclus).
+- **FE-03** : les 5 contrats sont réexportés depuis `types/generated.ts`.
+- **ML-05** : un `fit()` qui échoue n'est pas relancé à chaque barre.
+
 ### 🐛 ARCH / SEC / API (revue-complete)
 
 - **SEC-02** : `?api_key=` retiré ; `POST /api/ws/ticket` + `?ticket=`.

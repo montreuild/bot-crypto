@@ -435,7 +435,7 @@ class Strategy(BaseStrategyML):
             self._bt_features_cache[key] = X
         return X[: len(df)]
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         return int(p.get("warmup_bars", 2000)) + max(_LAGS) + 20
 
@@ -497,7 +497,7 @@ class Strategy(BaseStrategyML):
             f"max={dist_up.max():.3f} | rejets={dict(self._diag_rejects)}"
         )
 
-    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
+    def fit(self, df: pl.DataFrame, params: dict | None = None) -> None:
         p             = (params or {}).get(self.name, {})
         adx_threshold = float(p.get("adx_threshold", 20.0))
         amp_top_pct   = float(p.get("amp_top_pct",   0.30))
@@ -603,7 +603,7 @@ class Strategy(BaseStrategyML):
         )
         return True
 
-    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
+    def predict(self, df: pl.DataFrame, params: dict | None = None) -> Dict[str, Any]:
         return self.score(df, params)
 
     def _save_key(self, tf_key: str) -> Optional[str]:
@@ -697,7 +697,7 @@ class Strategy(BaseStrategyML):
 
     # ── score() — règle de décision §6.4 du rapport ───────────────────────────
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p              = (params or {}).get(self.name, {})
         adx_threshold  = float(p.get("adx_threshold",    20.0))

@@ -44,7 +44,7 @@ class MarketHoursMixin:
 
     # ── Résolution du calendrier ───────────────────────────────────────────
 
-    def _market_calendar(self, symbol: str, strategy: str = None, tf: str = None):
+    def _market_calendar(self, symbol: str, strategy: str | None = None, tf: str | None = None):
         """Calendrier applicable au symbole, mémoïsé **par venue**.
 
         La résolution elle-même vit dans ``provider_router.market_calendar_for``
@@ -59,7 +59,7 @@ class MarketHoursMixin:
             cache[venue_name] = cached
         return cached
 
-    def _market_open(self, symbol: str, strategy: str = None, tf: str = None,
+    def _market_open(self, symbol: str, strategy: str | None = None, tf: str | None = None,
                      now: Optional[datetime] = None) -> bool:
         """Le marché du symbole accepte-t-il des ordres maintenant ?
 

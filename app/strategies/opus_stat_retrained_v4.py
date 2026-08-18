@@ -191,7 +191,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         MLBackendMixin.__init__(self)
         self._cancel_event = None
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         warmup = int(p.get("warmup_bars", self._DEFAULTS["warmup_bars"]))
         return max(230, warmup + 30)
@@ -203,7 +203,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
     _TRAIN_PARAM_KEYS  = ('amp_top_pct', 'n_estimators', 'num_leaves', 'learning_rate')
 
     # ── Score ──────────────────────────────────────────────────────────────
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         if df is None or len(df) < self.min_bars_required(params):
             return self._none(f"Données insuffisantes ({len(df) if df is not None else 0})")

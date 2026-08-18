@@ -56,7 +56,7 @@ def read_heartbeat() -> dict:
         return {}
 
 
-def heartbeat_age(now: float = None) -> float:
+def heartbeat_age(now: float | None = None) -> float:
     """Âge du battement en secondes (``inf`` si absent)."""
     hb = read_heartbeat()
     ts = hb.get("ts")
@@ -99,7 +99,7 @@ def clear_kill_switch() -> None:
 
 
 # ── Watchdog autonome ────────────────────────────────────────────────────────
-def check_once(timeout_s: float, notifier=None, now: float = None) -> dict:
+def check_once(timeout_s: float, notifier=None, now: float | None = None) -> dict:
     """Une passe de surveillance. Retourne ``{stale, age, running, armed}``.
 
     Arme le kill-switch + alerte si le battement est périmé alors que le bot se

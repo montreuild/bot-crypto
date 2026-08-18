@@ -45,7 +45,7 @@ def data_status():
 
 @router.post("/api/data/refetch", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("5/minute")
-def data_refetch(request: Request, symbol: str = None, tf: str = None, bars: int = 6000):
+def data_refetch(request: Request, symbol: str | None = None, tf: str | None = None, bars: int = 6000):
     """(Re)télécharge les bougies. ``symbol``/``tf`` optionnels : si absents, on
     reprend les symboles/timeframes du scanner configuré. Réutilise
     ``CandleStore.fetch`` (pagination robuste + schéma canonique)."""

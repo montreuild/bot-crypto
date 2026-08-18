@@ -41,7 +41,7 @@ def fast_analysis(symbol: str, tf: str, taker: float = DEFAULT_TAKER_FEE,
 
 
 @router.get("/api/scanner", dependencies=[Depends(verify_api_key)])
-def run_scanner(timeframe: str = None, limit: int = 200):
+def run_scanner(timeframe: str | None = None, limit: int = 200):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     try:
@@ -86,7 +86,7 @@ def scanner_config():
 
 
 @router.get("/api/scanner/opportunities", dependencies=[Depends(verify_api_key)])
-def scanner_opportunities(timeframe: str = None, limit: int = 200):
+def scanner_opportunities(timeframe: str | None = None, limit: int = 200):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     try:

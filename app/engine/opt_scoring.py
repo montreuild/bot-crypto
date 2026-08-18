@@ -300,7 +300,7 @@ def _expected_max_sharpe(n_trials: int, sharpe_std: float) -> float:
 
 
 def deflated_sharpe_ratio(sharpe: float, n_observations: int, n_trials: int = 1,
-                          trial_sharpes_std: float = None,
+                          trial_sharpes_std: float | None = None,
                           skew: float = 0.0, kurtosis: float = 3.0) -> float:
     """Deflated Sharpe Ratio ∈ [0, 1] : probabilité que ``sharpe`` soit
     réellement positif, corrigée du biais de sélection multiple (``n_trials``

@@ -448,7 +448,7 @@ def register_identity(strategy: str, timeframe: str, params: dict,
 
 
 def peek_identity(strategy: str, timeframe: str, params: dict,
-                  cfg: dict, gens: dict = None, symbol: str = "") -> BotIdentity:
+                  cfg: dict, gens: dict | None = None, symbol: str = "") -> BotIdentity:
     """Identité **sans** effet de bord (lecture seule, ne touche pas la génération).
 
     Utile pour l'affichage : la génération courante est celle persistée (ou 1 par

@@ -23,7 +23,7 @@ class BaseStrategy:
     # uniquement) surchargent avec frozenset({"crypto"}).
     asset_classes: frozenset = frozenset({"crypto", "equity"})
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         """Nombre minimum de bougies requis pour calculer les indicateurs."""
         return 50
 
@@ -36,13 +36,13 @@ class BaseStrategy:
         """
         self._bt_full_df = df
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         """Retourne {"score": float [0-1], "side": "long"|"short"|"none", "name": str}."""
         raise NotImplementedError
 
     def check_early_exit(self, df: pl.DataFrame, position: dict,
-                         params: dict = None) -> Optional[str]:
+                         params: dict | None = None) -> Optional[str]:
         """Hook optionnel : la stratégie peut demander la sortie anticipée d'une
         position déjà ouverte (ex. changement de régime, inversion du signal
         directionnel). Appelé par l'engine de backtest et le live à chaque cycle
@@ -57,7 +57,7 @@ class BaseStrategy:
         return None
 
     def check_scale_in(self, df: pl.DataFrame, position: dict,
-                       params: dict = None) -> Optional[Dict[str, Any]]:
+                       params: dict | None = None) -> Optional[Dict[str, Any]]:
         """Hook optionnel : pyramidage (ajout d'une unité sur position gagnante).
 
         Appelé par le backtest et le live à chaque cycle quand une position de
@@ -99,7 +99,7 @@ class BaseStrategyML(BaseStrategy):
 
     @classmethod
     def score_holdout(cls, path_prefix: str, holdout_df, *,
-                      gate_cfg: Any = None, params: dict = None) -> Dict[str, Any]:
+                      gate_cfg: Any = None, params: dict | None = None) -> Dict[str, Any]:
         """Charge l'artefact à ``path_prefix`` et retourne ses métriques sur
         ``holdout_df`` — utilisé par le gate de promotion pour comparer un
         candidat au sortant sur un holdout commun (``app.ml.policy``).
@@ -125,11 +125,11 @@ class BaseStrategyML(BaseStrategy):
             amp_top_pct=getattr(gate_cfg, "amp_top_pct", 0.30),
         )
 
-    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
+    def fit(self, df: pl.DataFrame, params: dict | None = None) -> None:
         """Entraîne le modèle sur df avec les paramètres fournis."""
         raise NotImplementedError
 
-    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
+    def predict(self, df: pl.DataFrame, params: dict | None = None) -> Dict[str, Any]:
         """Retourne un signal en utilisant le modèle déjà entraîné."""
         raise NotImplementedError
 
@@ -167,7 +167,7 @@ class Engine:
             logger.info(f"[Engine] Stratégie enregistrée : {strategy.name}")
         self.strategies.append(strategy)
 
-    def best_signal(self, df: pl.DataFrame, params: dict = None,
+    def best_signal(self, df: pl.DataFrame, params: dict | None = None,
                     df_htf=None, symbol: str = "",
                     threshold: float = 0.0,
                     stats: Optional[Dict[str, Dict[str, int]]] = None) -> Dict[str, Any]:
@@ -231,7 +231,7 @@ class Engine:
                 logger.error(f"[Engine] Erreur dans stratégie {strat.name} : {e}")
         return best
 
-    def passing_signals(self, df: pl.DataFrame, params: dict = None,
+    def passing_signals(self, df: pl.DataFrame, params: dict | None = None,
                         df_htf=None, symbol: str = "",
                         threshold: float = 0.0,
                         stats: Optional[Dict[str, Dict[str, int]]] = None) -> List[Dict[str, Any]]:

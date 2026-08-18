@@ -125,10 +125,10 @@ class Strategy(BaseStrategy):
         "proba_long": 0.60, "proba_short": 0.40, "p_up_gain": 2.2, "min_bars": 60,
     }
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         return 230  # marge pour les EMA/SMA longues de precompute_df
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         if df is None or len(df) < self.min_bars_required():
             return self._none()

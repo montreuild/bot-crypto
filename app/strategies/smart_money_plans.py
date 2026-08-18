@@ -9,7 +9,7 @@ from app.core import smc
 
 
 class _PlansMixin:
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = self._p(params)
         # Le symbole sert au repli SMT (résolution de l'actif corrélé quand
@@ -36,7 +36,7 @@ class _PlansMixin:
             f"aucun setup SMC (bias {res['bias']['label']})"
         )
 
-    def trade_plans(self, df: pl.DataFrame, params: dict = None,
+    def trade_plans(self, df: pl.DataFrame, params: dict | None = None,
                     max_plans: int = 8) -> List[dict]:
         p = self._p(params)
         if len(df) < self.min_bars_required(params):
@@ -201,7 +201,7 @@ class _PlansMixin:
         return plans[:max_plans]
 
     def check_early_exit(self, df: pl.DataFrame, position: dict,
-                         params: dict = None) -> Optional[str]:
+                         params: dict | None = None) -> Optional[str]:
         p = self._p(params)
         ts_bars = int(p.get("time_stop_bars", 0) or 0)
         if bool(p.get("use_trailing", False)) and ts_bars > 0:

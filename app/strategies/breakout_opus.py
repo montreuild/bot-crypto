@@ -55,14 +55,14 @@ class Strategy(BaseStrategy):
         au lieu de le recalculer à chaque barre — O(n²) → O(n) en optimisation."""
         self._bt_full_df = df
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         period    = int(p.get("period",     20))
         macd_slow = int(p.get("macd_slow",  26))
         macd_sig  = int(p.get("macd_signal", 9))
         return max(period + 5, macd_slow + macd_sig + 10, 50)
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get(self.name, {})
 

@@ -181,10 +181,10 @@ class Strategy(BaseStrategy):
         self._call_count:  Dict[str, int] = {}
         self._last_signal: Dict[str, int] = {}
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         return 215
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get(self.name, {})
 
