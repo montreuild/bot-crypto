@@ -3,12 +3,27 @@
 Historique des versions du Crypto Bot.
 
 > X-07 : l'état **actuel** des constats d'audit est dans
-> [`audit/15-REVISION-2026-08-18.md`](audit/15-REVISION-2026-08-18.md),
+> [`audit/16-REVISION-2026-08-18.md`](audit/16-REVISION-2026-08-18.md),
 > pas dans ce fichier (narratif historique, parfois en retard).
 
 ---
 
 ## [Non publié]
+
+### 🐛 U-05 / U-08 / X-03 (#244)
+
+- **X-03** : `BacktestResult` → `app/engine/backtest_result.py` ;
+  cycle de vie (`_close_at` / `_try_enter` / scale-in) →
+  `PositionLifecycleMixin`. `from app.engine.backtest import Backtester,
+  BacktestResult` inchangé. `bar_to_days` dans `core/timeframes.py`.
+- **U-08** : `/lab` = shell + `next/dynamic` par onglet. Backtest dans
+  `views/backtest-view.tsx`. Optimizer : `JobCard` / `LiveProgress` /
+  `optimizer/status.ts`. Smart Graph : `smart-graph-helpers.ts`.
+- **U-05** : `Bot.tf`, `edge.mean_pct` / `avg_return_pct`, types
+  `walk_forward` / `monte_carlo` / `runs` / `by_strategy`. Plus de `as any`
+  métier sur bots, lab, data, optimize. Zod non bloquant.
+- Commentaires des fichiers touchés réduits aux contraintes non lisibles
+  dans le code.
 
 ### 🐛 R-01 / R-02 / X-01 / U-05 / P-01
 
@@ -1189,10 +1204,14 @@ pas eu lieu :
 Un module sans appelant ne factorise rien : il ajoute un chemin d'import qui
 dérive dès que quelqu'un modifie l'original, et il fait croire le travail fait.
 
-**L'état réel reste donc :** `types/index.ts` 911 lignes, `use-api.ts` 727,
+**L'état réel à l'époque :** `types/index.ts` 911 lignes, `use-api.ts` 727,
 `optimizer_search.py` 1 292, `scanner_service.py` 778, `lab/page.tsx` 1 481,
-`optimizer-view.tsx` ~1 565. 26 fichiers Python et 16 fichiers TS/TSX dépassent
-500 lignes. Le découpage est à faire, pas à déclarer.
+`optimizer-view.tsx` ~1 565.
+
+> **Caduc depuis #244** : `lab/page.tsx` ~175 L (shell) ; `backtest.py` ~686 L
+> + `backtest_result.py` + `position_lifecycle.py` ; optimizer découpé
+> (`job-card`, `live-progress`). Restent gros : `optimizer_search.py`,
+> `smart_money_signals.py`, `smart-graph-view.tsx`. Voir `audit/16`.
 
 ### 🩹 Corrections du lot backtest — sept fonctionnalités qui ne calculaient rien
 

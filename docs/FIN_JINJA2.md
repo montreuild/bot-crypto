@@ -118,7 +118,7 @@ indépendantes du frontend. Seules les routes **HTML** sont supprimées :
 | Route HTML Jinja2 (à supprimer) | Équivalent Next.js (nouveau) |
 |---|---|
 | `GET /` | `frontend/src/app/portfolio/page.tsx` |
-| `GET /backtest` | `frontend/src/app/lab/page.tsx` (onglet `?tab=backtest`) |
+| `GET /backtest` | `frontend/src/app/lab/page.tsx` → `views/backtest-view.tsx` (`?tab=backtest`) |
 | `GET /optimizer` | `frontend/src/app/lab/page.tsx` (onglet `?tab=optimizer`) |
 | `GET /ml` | `frontend/src/app/lab/page.tsx` (onglet `?tab=ml`) |
 | `GET /replay` | `frontend/src/app/lab/page.tsx` (onglet `?tab=replay`) |

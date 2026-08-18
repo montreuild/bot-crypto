@@ -54,8 +54,8 @@ app/api         (routes FastAPI + app/api/services — peut tout importer)
    │
 app/live        (LiveTrader + mixins — importe core/engine/strategies,
    │             JAMAIS app.api : l'écriture config passe par core/yaml_io)
-app/engine      (Engine, Backtester, optimiseur, forward-test, scanner —
-   │             importe core + strategies dynamiquement)
+app/engine      (Engine, Backtester + backtest_result + position_lifecycle,
+   │             optimiseur, forward-test, scanner — importe core + strategies)
 app/strategies  (importe core ; exception documentée : engine.BaseStrategy)
    │
 app/core        (fondation pure : config, timeframes, param_resolution,
@@ -265,7 +265,12 @@ Backtester(engine, cfg, realistic_risk=True)  # opt / WF / FT ; lab opt-in
   └─> Results (by_strategy stats + recommendations + realistic_risk_diagnostics)
 ```
 
-**Nouveaux modules backtest** :
+**Modules backtest** :
+- `app/engine/backtest.py` — `Backtester.run()`, dual pass, résolution ML
+  frozen. Ré-exporte `BacktestResult`, `WalkForwardAnalyzer`, `MonteCarlo`.
+- `app/engine/backtest_result.py` — métriques et sérialisation (X-03).
+- `app/engine/position_lifecycle.py` — mixin : clôture, trailing, scale-in,
+  entrée (`RiskLedger.reserve`, R-02).
 - `app/engine/backtest_risk_gate.py` — circuit breakers pour backtest
   (réplique les 5 breakers du `RiskGate` live sans dépendance temps réel).
 - `app/engine/recommendations.py` — moteur de recommandations post-backtest

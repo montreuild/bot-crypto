@@ -1,6 +1,7 @@
 # Audit — Moteur de backtest
 
-> Périmètre : `app/engine/backtest.py` (1 809 lignes), `backtest_risk_gate.py`,
+> Périmètre : `app/engine/backtest.py` (~686 L, `run()`),
+> `backtest_result.py`, `position_lifecycle.py` (X-03 / #244), `backtest_risk_gate.py`,
 > `walk_forward.py`, `monte_carlo.py`, `forward_test.py`, `regime_stress_test.py`,
 > `app/core/is_oos.py`, `app/api/routes/backtest.py`.
 >

@@ -7,7 +7,7 @@ Bot de trading algorithmique multi-stratégies avec interface web, backtest avan
 > - **Frontend Next.js officiel unique** — Jinja2 décommissionné (voir `docs/FIN_JINJA2.md`)
 > - **Plan d'amélioration** — `docs/PLAN_DIRECTEUR_AMELIORATIONS.md` (8 sprints, 173 SP)
 > - **Audit interne** — `audit/` (synthèse + révision du 18/08 :
->   [`audit/14-REVISION-2026-08-18.md`](audit/14-REVISION-2026-08-18.md))
+>   [`audit/16-REVISION-2026-08-18.md`](audit/16-REVISION-2026-08-18.md))
 > - **Audit externe** — `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` (54 p.)
 
 ---

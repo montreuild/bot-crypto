@@ -195,10 +195,9 @@ l'exchange le supporte.
 Détaillé en [`06-FRONTEND-UI-UX.md`](06-FRONTEND-UI-UX.md) U-04 et U-08.
 Résumé chiffré :
 
-- 98 composants `'use client'` sur 122 ;
-- **aucun** `next/dynamic` dans tout `frontend/src` ;
-- quatre vues de plus de 700 lignes, dont `optimizer-view.tsx` (1 558) chargée
-  sur toutes les routes ;
+- 98 composants `'use client'` sur 122 (à l'audit) ;
+- `next/dynamic` : lab (tous les onglets) + portfolio (U-04 / U-08, #244) ;
+- lab/page ~175 L ; optimizer-view ~1 015 + JobCard ; smart-graph encore > 1 200 L ;
 - Recharts **et** lightweight-charts **et** framer-motion dans le même bundle.
 
 ---

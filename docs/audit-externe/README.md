@@ -3,7 +3,8 @@
 > Audit technique indépendant réalisé le 29 juillet 2026 par Z.ai
 > (analyse multi-expert : ingénierie, crypto, marchés financiers, product).
 >
-> Ce dossier contient l'audit et le plan directeur qui en découle.
+> **Instantané.** L'état des constats internes après #244 est dans
+> [`audit/16-REVISION-2026-08-18.md`](../../audit/16-REVISION-2026-08-18.md).
 
 ## Contenu
 
