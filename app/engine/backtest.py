@@ -21,7 +21,6 @@ from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, resolve_strategy_pa
 from app.core.rejections import RejectionCounter
 from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
 from app.core.risk_envelope import with_reference_envelope
-from app.core.timeframes import bar_to_days as _bar_to_days
 from app.core.trade_economics import funding_cost as _funding_cost
 from app.core.trailing import TrailingStopManager
 from app.engine.backtest_result import BacktestResult

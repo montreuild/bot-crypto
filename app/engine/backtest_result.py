@@ -1,4 +1,5 @@
 """Métriques et sérialisation d'un run de backtest."""
+import logging
 import math
 from typing import Dict, List, Optional
 
@@ -6,6 +7,8 @@ import numpy as np
 
 from app.core.sanitize import safe_float as _sf
 from app.core.timeframes import bars_per_year as _bars_per_year
+
+logger = logging.getLogger(__name__)
 
 class BacktestResult:
     def __init__(self, trades: List[dict], equity_curve: List[float],

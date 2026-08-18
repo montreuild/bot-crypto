@@ -13,7 +13,7 @@ import {
   useDeleteOptimizeJob,
 } from '@/hooks/use-api';
 import {
-  CheckCircle2, Trash2, StopCircle, ChevronDown, ChevronRight, AlertTriangle,
+  CheckCircle2, Trash2, StopCircle, ChevronDown, ChevronRight, AlertTriangle, Cpu,
 } from 'lucide-react';
 import type { OptimizeJob } from '@/types';
 import { CostModelCard } from '@/components/cards/cost-model-card';
@@ -366,4 +366,3 @@ export function JobCard({
     </Card>
   );
 }
- */

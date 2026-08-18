@@ -45,7 +45,7 @@ security:
 
 frontend:
   stage: frontend
-  image: node:20-bookworm
+  image: node:22-bookworm
   cache:
     key:
       files:

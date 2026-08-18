@@ -132,7 +132,6 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
         realistic_risk: s.config.realistic_risk ?? c.realistic_risk,
       }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.restored]);
 
   // BT-004 — purge : vide le résultat affiché ET la session persistée.
