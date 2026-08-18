@@ -47,7 +47,7 @@ class Strategy(TVRStrategy):
     # ── Pyramidage ──────────────────────────────────────────────────────────
 
     def check_scale_in(self, df: pl.DataFrame, position: dict,
-                       params: dict = None) -> Optional[Dict[str, Any]]:
+                       params: dict | None = None) -> Optional[Dict[str, Any]]:
         p = self._params(params)
         max_units = int(p["max_units"])
         if max_units <= 1:

@@ -120,7 +120,7 @@ _OOS_TRADE_BARS_FLOOR = 1500
 _OOS_TRADE_BARS_CAP = 7000
 
 
-def _oos_trade_window_bars(timeframe: str = None) -> int:
+def _oos_trade_window_bars(timeframe: str | None = None) -> int:
     """Bougies de fenêtre de trading visées dans l'OOS pour un TF donné."""
     minutes = _TF_MINUTES.get(timeframe or "1h", 60)
     bars_per_day = 1440.0 / minutes
@@ -128,8 +128,8 @@ def _oos_trade_window_bars(timeframe: str = None) -> int:
                    max(_OOS_TRADE_BARS_FLOOR, round(bars_per_day * _OOS_TRADE_DAYS))))
 
 
-def required_total_bars(strategy_name: str, timeframe: str = None,
-                        params: dict = None) -> int:
+def required_total_bars(strategy_name: str, timeframe: str | None = None,
+                        params: dict | None = None) -> int:
     """Bougies TOTALES à charger pour qu'une stratégie soit évaluable en OOS.
 
     La tranche OOS (~35 %) doit contenir le warmup de la stratégie
@@ -205,12 +205,12 @@ class _PoolHandle:
 class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
     def __init__(self, strategy_name: str, cfg: dict,
                  df_is: pl.DataFrame, df_oos: pl.DataFrame,
-                 param_space: Dict = None,
+                 param_space: Dict | None = None,
                  progress_callback: Optional[Callable] = None,
                  symbol: str = DEFAULT_CONFIG_SYMBOL,
                  df_full: pl.DataFrame = None,
-                 split: int = None,
-                 timeframe: str = None,
+                 split: int | None = None,
+                 timeframe: str | None = None,
                  cancel_event: Optional[threading.Event] = None,
                  ml_mode: Optional[str] = None):
         self.strategy_name     = strategy_name

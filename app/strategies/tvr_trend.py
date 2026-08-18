@@ -97,12 +97,12 @@ class Strategy(BaseStrategy):
 
     # ── Paramètres ─────────────────────────────────────────────────────────
 
-    def _params(self, params: dict = None) -> dict:
+    def _params(self, params: dict | None = None) -> dict:
         p = dict(self._DEFAULTS)
         p.update((params or {}).get(self.name, {}) or {})
         return p
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = self._params(params)
         return max(int(p["donchian_n"]) + 5, 110, int(p["er_period"]) + 5)
 
@@ -234,7 +234,7 @@ class Strategy(BaseStrategy):
 
     # ── Scoring ────────────────────────────────────────────────────────────
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = self._params(params)
         if len(df) < self.min_bars_required(params):
@@ -305,7 +305,7 @@ class Strategy(BaseStrategy):
     # ── Sortie sur perte de régime ─────────────────────────────────────────
 
     def check_early_exit(self, df: pl.DataFrame, position: dict,
-                         params: dict = None) -> Optional[str]:
+                         params: dict | None = None) -> Optional[str]:
         p = self._params(params)
         side = 1 if position.get("side") == "long" else -1
         f = self._bt_lookup(df, p)

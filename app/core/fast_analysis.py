@@ -187,8 +187,8 @@ def _stats(tr):
 
 def analyze(df: pl.DataFrame, taker: float = DEFAULT_TAKER_FEE,
             maker: float = DEFAULT_MAKER_FEE,
-            oos_frac: float = 0.33, fee_grid: list = None,
-            period_scales: tuple = None) -> dict:
+            oos_frac: float = 0.33, fee_grid: list | None = None,
+            period_scales: tuple | None = None) -> dict:
     """Retourne {rows:[…], best:…} classés par PnL OOS maker décroissant.
 
     SMC-10 (opt-in, API par défaut inchangée) :

@@ -321,7 +321,7 @@ def _cfg_avec_params(cfg: dict, strategy_name: str, params: dict) -> dict:
 
 def _run_baseline(strategy_name: str, cfg: dict,
                   df_oos: pl.DataFrame, symbol: str,
-                  timeframe: str = None) -> dict:
+                  timeframe: str | None = None) -> dict:
     try:
         mod = importlib.import_module(f"app.strategies.{strategy_name}")
         eng = Engine()
@@ -395,8 +395,8 @@ class AutoOptimizer:
 
     # ── Lancement asynchrone ──────────────────────────────────────────────
     def start_async(self, df_map: Dict[str, pl.DataFrame], symbol: str,
-                    strategies: List[str] = None,
-                    timeframes: List[str] = None,
+                    strategies: List[str] | None = None,
+                    timeframes: List[str] | None = None,
                     auto_apply: bool = False) -> List[str]:
         """
         Lance l'optimisation en arrière-plan pour chaque (strategy, tf).
@@ -491,7 +491,7 @@ class AutoOptimizer:
     def _run_one_job(self, job_id: str, strategy_name: str, timeframe: str,
                      df_is: pl.DataFrame, df_oos: pl.DataFrame,
                      symbol: str, auto_apply: bool,
-                     df_recherche: pl.DataFrame = None, split: int = None,
+                     df_recherche: pl.DataFrame = None, split: int | None = None,
                      df_holdout: pl.DataFrame = None):
         trials_log = []
 
@@ -823,8 +823,8 @@ class AutoOptimizer:
 
     # ── Exécution séquentielle (une stratégie à la fois) ──────────────────
     def optimize_sequential(self, df_map: Dict[str, pl.DataFrame], symbol: str,
-                            strategies: List[str] = None,
-                            timeframes: List[str] = None,
+                            strategies: List[str] | None = None,
+                            timeframes: List[str] | None = None,
                             auto_apply: bool = False,
                             on_job_done=None) -> List[str]:
         """Optimise (strategy × tf) **une à une**, dans le thread courant.
@@ -921,8 +921,8 @@ class AutoOptimizer:
 
     # ── Exécution synchrone ───────────────────────────────────────────────
     def optimize_all(self, df_map: Dict[str, pl.DataFrame], symbol: str,
-                     strategies: List[str] = None,
-                     timeframes: List[str] = None) -> Dict[str, dict]:
+                     strategies: List[str] | None = None,
+                     timeframes: List[str] | None = None) -> Dict[str, dict]:
         """Exécution synchrone bloquante. Préférer start_async() pour l'API."""
         strats = strategies or list(PARAM_SPACES.keys())
         tfs    = timeframes or self.cfg["trading"].get(

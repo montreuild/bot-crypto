@@ -110,7 +110,7 @@ class Notifier:
     # ── Interface publique ────────────────────────────────────────────────────
 
     def send(self, message: str, async_: bool = True, level: str = "info",
-             key: str = None, throttle: bool = True):
+             key: str | None = None, throttle: bool = True):
         """Émet une notification.
 
         ``level``    : "info" | "warning" | "critical".

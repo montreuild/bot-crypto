@@ -181,7 +181,7 @@ class Strategy(BaseStrategy):
         self._bt_params: dict = None
         self._bt_spectra: Dict[str, Any] = {}
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get("fft_spectral", {})
         return max(int(p.get("min_bars", 180)), 60)
 
@@ -230,7 +230,7 @@ class Strategy(BaseStrategy):
     def score(
         self,
         df: pl.DataFrame,
-        params: dict = None,
+        params: dict | None = None,
         df_htf=None,
         symbol: str = "",
     ) -> Dict[str, Any]:

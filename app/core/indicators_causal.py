@@ -187,7 +187,7 @@ def htf_trend_ema_series(full_df: pl.DataFrame, ema_period: int = 50,
 
 
 def supertrend_last(window: pl.DataFrame, period: int, mult: float,
-                    full_df: pl.DataFrame = None, cache: dict = None):
+                    full_df: pl.DataFrame = None, cache: dict | None = None):
     """``(last_dir, prev_dir, last_line)`` pour la dernière barre de ``window``.
 
     Réutilise la série SuperTrend pré-calculée de ``full_df`` (O(1)/barre) quand
@@ -209,7 +209,7 @@ def supertrend_last(window: pl.DataFrame, period: int, mult: float,
 
 
 def macd_hist_last3(window: pl.DataFrame, fast: int, slow: int, signal: int,
-                    full_df: pl.DataFrame = None, cache: dict = None):
+                    full_df: pl.DataFrame = None, cache: dict | None = None):
     """``(h[-1], h[-2], h[-3])`` de l'histogramme MACD à la dernière barre.
 
     Même réutilisation causale que :func:`supertrend_last`. Pour les paramètres
@@ -231,7 +231,7 @@ def macd_hist_last3(window: pl.DataFrame, fast: int, slow: int, signal: int,
 
 
 def ema_window(window: pl.DataFrame, span: int,
-               full_df: pl.DataFrame = None, cache: dict = None) -> pl.Series:
+               full_df: pl.DataFrame = None, cache: dict | None = None) -> pl.Series:
     """Série EMA(span) du ``close`` alignée sur ``window``.
 
     L'EMA est causale (récurrence depuis la barre 0). Quand ``window`` est un

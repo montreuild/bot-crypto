@@ -47,7 +47,7 @@ def _venue_def(cfg: dict, venue_name: str) -> dict:
 
 
 def diagnose(cfg: dict, slots_by_symbol: Dict[Tuple[str, str], Dict[str, Optional[float]]],
-            *, prices: Dict[str, float] = None) -> List[Diagnostic]:
+            *, prices: Dict[str, float] | None = None) -> List[Diagnostic]:
     """Diagnostics de faisabilité.
 
     ``slots_by_symbol`` : ``{(venue, symbole): {slot_key: edge_ci_low|None}}``

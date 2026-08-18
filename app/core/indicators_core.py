@@ -99,7 +99,7 @@ def bollinger(close: pl.Series, n: int = 20,
 
 def bb_squeeze(close: pl.Series, lookback: int = 15,
                bb_period: int = 20, quantile: float = 0.30,
-               full_df=None, cache: dict = None) -> bool:
+               full_df=None, cache: dict | None = None) -> bool:
     """True si les bandes de Bollinger sont en squeeze (compression de volatilité).
 
     ``full_df``/``cache`` (PERF) : quand ``close`` est le préfixe causal du
@@ -525,7 +525,7 @@ def choppiness(df: pl.DataFrame, n: int = 14) -> pl.Series:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def keltner(df: pl.DataFrame, n: int = 20, mult: float = 2.0,
-            atr_n: int = None) -> Tuple[pl.Series, pl.Series, pl.Series]:
+            atr_n: int | None = None) -> Tuple[pl.Series, pl.Series, pl.Series]:
     """(médiane EMA, bande haute, bande basse) = EMA(close, n) ± mult×ATR."""
     mid = ema(df["close"], n)
     a = atr_wilder(df, atr_n or n)

@@ -179,7 +179,7 @@ class Strategy(BaseStrategyML):
             self._bt_frame = None
             self._bt_len = 0
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         return int(p.get("warmup_bars", self._DEFAULTS["warmup_bars"]))
 
@@ -392,7 +392,7 @@ class Strategy(BaseStrategyML):
         return (float(np.percentile(ech[:, 0], q_amp)),
                 float(np.percentile(ech[:, 1], q_dir)))
 
-    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
+    def fit(self, df: pl.DataFrame, params: dict | None = None) -> None:
         p = (params or {}).get(self.name, {})
         self._train(df, "default", {**self._DEFAULTS, **p})
 
@@ -450,7 +450,7 @@ class Strategy(BaseStrategyML):
         return {"name": self.name, "side": "none", "score": 0.0,
                 "reason": raison, **extra}
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = {**self._DEFAULTS, **((params or {}).get(self.name, {}))}
         warmup = int(p["warmup_bars"])
@@ -584,7 +584,7 @@ class Strategy(BaseStrategyML):
                 return "Structure : tendance haussière confirmée, vente refusée"
         return None
 
-    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
+    def predict(self, df: pl.DataFrame, params: dict | None = None) -> Dict[str, Any]:
         return self.score(df, params)
 
     # ── Persistance ─────────────────────────────────────────────────────────
@@ -636,7 +636,7 @@ class Strategy(BaseStrategyML):
     # ── Gate ────────────────────────────────────────────────────────────────
     @classmethod
     def score_holdout(cls, path_prefix: str, holdout_df, *,
-                      gate_cfg: Any = None, params: dict = None) -> Dict[str, Any]:
+                      gate_cfg: Any = None, params: dict | None = None) -> Dict[str, Any]:
         """Score un artefact sur un holdout, avec les features de CETTE recette.
 
         La surcharge est obligatoire, pas cosmétique. L'implémentation par

@@ -114,11 +114,11 @@ class Strategy(BaseStrategy):
         self._call: Dict[str, int] = {}
         self._last: Dict[str, int] = {}
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         return int(p.get("squeeze_lookback", self._D["squeeze_lookback"])) + 60
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = {**self._D, **((params or {}).get(self.name, {}))}
         sym = symbol or "default"
@@ -255,7 +255,7 @@ class Strategy(BaseStrategy):
             ],
         }
 
-    def _none(self, reason: str = "", ctx: dict = None) -> dict:
+    def _none(self, reason: str = "", ctx: dict | None = None) -> dict:
         d = {"score": 0, "side": "none", "name": self.name, "reason": reason}
         if ctx is not None:
             d["indicators"] = ctx

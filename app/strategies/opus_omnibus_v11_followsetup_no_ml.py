@@ -76,7 +76,7 @@ class Strategy(_FollowSetupStrategy):
         "log_training":   False,
     }
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         """Sans entraînement, il ne faut que de quoi calculer les indicateurs —
         pas les milliers de barres d'un warmup de modèle."""
         return 260

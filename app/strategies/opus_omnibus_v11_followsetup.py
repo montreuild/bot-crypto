@@ -395,7 +395,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         # flip par TF, pour gel temporaire de l'ouverture côté score().
         self._last_flip_cnt: Dict[str, int] = {}
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = {**self._DEFAULTS, **((params or {}).get(self.name, {}))}
         warmup = int(p.get("warmup_bars", self._DEFAULTS["warmup_bars"]))
         return max(230, warmup + 30)
@@ -463,7 +463,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
                 self.predict_direction(features, tf))
 
     # ── Score : entrée selon le setup actif ──────────────────────────────────
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         if df is None or len(df) < self.min_bars_required(params):
             return self._none(f"Données insuffisantes ({len(df) if df is not None else 0})")
@@ -621,7 +621,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
 
     # ── Sortie pilotée par le flip de direction du setup ─────────────────────
     def check_early_exit(self, df: pl.DataFrame, position: dict,
-                         params: dict = None) -> Optional[str]:
+                         params: dict | None = None) -> Optional[str]:
         """Ferme la position si un setup opposé est confirmé sur K bougies
         consécutives, avec score suffisant et marge d'hystérésis sur les seuils
         directionnels. État d'attente stocké directement sur la position via

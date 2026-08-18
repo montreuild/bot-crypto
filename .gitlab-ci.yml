@@ -13,16 +13,7 @@ mypy:
   allow_failure: false
   script:
     - pip install -r requirements.txt -r requirements-dev.txt
-    - python -m mypy
-        app/core/sanitize.py
-        app/core/ohlcv_gaps.py
-        app/core/risk/curve.py
-        app/core/risk/envelope.py
-        app/core/risk/ledger.py
-        app/api/ws_tickets.py
-        app/live/protocols.py
-        app/engine/backtest_result.py
-        app/ml/overfitting_gate.py
+    - python -m mypy app/core app/engine app/api/ws_tickets.py app/live/protocols.py app/ml/overfitting_gate.py
 
 default:
   interruptible: true

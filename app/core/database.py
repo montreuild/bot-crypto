@@ -521,7 +521,7 @@ def get_fee_breakdown(session: Session, since: Optional[datetime] = None) -> dic
 
 
 def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
-                               days: int = 45, symbol: str = None) -> List[Trade]:
+                               days: int = 45, symbol: str | None = None) -> List[Trade]:
     """Trades réels **fermés** d'un slot ``strategy::timeframe[::symbol]`` sur les
     ``days`` derniers jours, du plus récent au plus ancien.
 
@@ -544,7 +544,7 @@ def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
 
 
 def get_slot_live_stats(session: Session, strategy: str, timeframe: str,
-                        days: int = 30, symbol: str = None) -> dict:
+                        days: int = 30, symbol: str | None = None) -> dict:
     """Stats live agrégées d'un bot ``strategy::timeframe[::symbol]`` sur
     ``days`` jours. ``symbol`` optionnel : restreint au symbole du slot.
 
@@ -581,8 +581,8 @@ def get_slot_live_stats(session: Session, strategy: str, timeframe: str,
 
 
 def record_lifecycle_event(session: Session, slot_key: str, from_state: Optional[str],
-                           to_state: str, reason: str = "", score: float = None,
-                           budget_pct: float = None) -> None:
+                           to_state: str, reason: str = "", score: float | None = None,
+                           budget_pct: float | None = None) -> None:
     """Persiste une transition d'état du cycle de vie d'un bot."""
     rec = SlotLifecycleEvent(
         slot_key=slot_key, from_state=from_state, to_state=to_state,
@@ -623,7 +623,7 @@ def save_risk_state(session: Session, key: str, data: dict) -> None:
         session.rollback()
 
 
-def load_risk_state(session: Session, key: str = None) -> dict:
+def load_risk_state(session: Session, key: str | None = None) -> dict:
     """Charge l'état de risque : un blob si ``key`` fourni, sinon tout le dict."""
     try:
         if key is not None:

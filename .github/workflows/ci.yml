@@ -30,17 +30,8 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
-      - name: Mypy (core + engine, modules tenus)
-        run: python -m mypy
-          app/core/sanitize.py
-          app/core/ohlcv_gaps.py
-          app/core/risk/curve.py
-          app/core/risk/envelope.py
-          app/core/risk/ledger.py
-          app/api/ws_tickets.py
-          app/live/protocols.py
-          app/engine/backtest_result.py
-          app/ml/overfitting_gate.py
+      - name: Mypy (app/core + app/engine)
+        run: python -m mypy app/core app/engine app/api/ws_tickets.py app/live/protocols.py app/ml/overfitting_gate.py
 
   test:
     runs-on: ubuntu-latest

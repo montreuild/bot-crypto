@@ -1461,3 +1461,12 @@ export interface SmcChartData {
 export interface BotThresholds {
   [key: string]: unknown;
 }
+
+export type {
+  BacktestResultModel,
+  BacktestRunResponse,
+  OptimizeResultsResponse,
+  PortfolioResponse,
+  RiskOverviewResponse,
+  TradesListResponse,
+} from './generated';

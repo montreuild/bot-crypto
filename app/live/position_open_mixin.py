@@ -186,7 +186,7 @@ class PositionOpenMixin(LiveHost):
 
     # ── Venue (G2) ─────────────────────────────────────────────────────────
 
-    def _venue_for(self, symbol: str, strategy: str = None, tf: str = None):
+    def _venue_for(self, symbol: str, strategy: str | None = None, tf: str | None = None):
         """Venue applicable au trade — crypto par défaut (aucun changement)."""
         return resolve_venue(self.cfg, strategy, tf, symbol)
 
@@ -236,8 +236,8 @@ class PositionOpenMixin(LiveHost):
                                 peers=peers, edges={k: None for k in peers})
 
     def _execute_order(self, venue, symbol: str, order_type: str, side: str,
-                       amount: float, price: float = None,
-                       params: dict = None) -> dict:
+                       amount: float, price: float | None = None,
+                       params: dict | None = None) -> dict:
         """Transmet l'ordre, ou le simule si la venue n'a pas d'exécution.
 
         Décision prise **ici**, au plus près du trade, et pas seulement dans

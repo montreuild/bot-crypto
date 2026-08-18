@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # ── Walk-Forward ──
 class WalkForwardAnalyzer:
     def __init__(self, engine: Engine, cfg: dict, n_folds: int = 5,
-                 ml_mode: str = None):
+                 ml_mode: str | None = None):
         """``ml_mode`` (ML-02, cf. ``Backtester``) : transmis tel quel à
         chaque ``Backtester`` de fold (IS et OOS). ``None`` (défaut) laisse
         ``Backtester`` dériver de sa config (``"frozen"`` par défaut) —
@@ -38,7 +38,7 @@ class WalkForwardAnalyzer:
         self.ml_mode = ml_mode
 
     def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL,
-            timeframe: str = None) -> dict:
+            timeframe: str | None = None) -> dict:
         # Import lazy : ``Backtester`` vit dans ``app.engine.backtest`` qui
         # ré-exporte ``WalkForwardAnalyzer`` (cycle sinon).
         from app.engine.backtest import Backtester

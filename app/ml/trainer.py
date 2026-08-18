@@ -28,7 +28,7 @@ _STALE_FACTOR = 2.0
 class MLStrategyTrainer:
     """Gère le cycle de vie des modèles BaseStrategyML (chargement, scheduling, réentraînement)."""
 
-    def __init__(self, cfg: dict, ml_lock: threading.Lock = None):
+    def __init__(self, cfg: dict, ml_lock: threading.Lock | None = None):
         self.cfg = cfg
         self._ml_lock = ml_lock or threading.Lock()
         self._retrain_timeout = float(

@@ -49,7 +49,7 @@ def market_structure(high: pl.Series, low: pl.Series,
 
 
 def htf_trend(df_htf, ema_period: int = 50, *, df_ltf=None,
-              mult: int = 4, full_df=None, cache: dict = None) -> int:
+              mult: int = 4, full_df=None, cache: dict | None = None) -> int:
     """Tendance du timeframe supérieur : +1 haussier, −1 baissier, 0 neutre.
 
     ⚠ **Parité backtest ↔ live (L5).** ``df_htf`` n'est fourni QUE par le live

@@ -153,7 +153,7 @@ class MLBackendMixin:
     def reset_model(self) -> None:
         self.ml.reset_model()
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         warmup = int(p.get("warmup_bars", self._DEFAULTS["warmup_bars"]))
         return max(230, warmup + 30)
@@ -166,7 +166,7 @@ class MLBackendMixin:
         return self.ml.load_model(path)
 
     # ── Entraînement ────────────────────────────────────────────────────────
-    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
+    def fit(self, df: pl.DataFrame, params: dict | None = None) -> None:
         self.ml.fit(df, params, defaults=self._DEFAULTS, strategy=self)
 
     def _train(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
@@ -195,5 +195,5 @@ class MLBackendMixin:
     def predict_direction(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
         return self.ml.predict_direction(features_df, tf)
 
-    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
+    def predict(self, df: pl.DataFrame, params: dict | None = None) -> Dict[str, Any]:
         return {"amp": None, "dir": None}

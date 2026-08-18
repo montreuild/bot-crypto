@@ -128,13 +128,13 @@ class Strategy(BaseStrategy):
         # Cache cycle strié : symbol → (len_vu, dir, pos)
         self._cyc: Dict[str, tuple] = {}
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         return max(int(self._D["vol_med_window"]),
                    int(p.get("cycle_win", self._D["cycle_win"]))) + 30
 
     # ── Cycle dominant (FFT) — confirmation douce, mémoïsée par pas ────────────
-    def _cycle(self, close: np.ndarray, p: dict, sym: str, n_abs: int = None):
+    def _cycle(self, close: np.ndarray, p: dict, sym: str, n_abs: int | None = None):
         # ``close`` peut être une queue bornée (perf) ; ``n_abs`` = index de barre
         # absolu pour le cache anti-recalcul (stride), sinon len(close).
         if not p["use_cycle"]:
@@ -169,7 +169,7 @@ class Strategy(BaseStrategy):
         return cyc_dir, cyc_pos
 
     # ── Scoring ───────────────────────────────────────────────────────────────
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = {**self._D, **((params or {}).get(self.name, {}))}
         sym = symbol or "default"
@@ -380,7 +380,7 @@ class Strategy(BaseStrategy):
             ],
         }
 
-    def _none(self, reason: str = "", ctx: dict = None) -> dict:
+    def _none(self, reason: str = "", ctx: dict | None = None) -> dict:
         d = {"score": 0, "side": "none", "name": self.name, "reason": reason}
         if ctx is not None:
             d["indicators"] = ctx
