@@ -17,7 +17,7 @@
 | U-05 | 🟡 Moyen | 212 usages de `any` / `as any` : les types du backend ne protègent rien | ✅ contrats métier — `tf`/`mean_pct`, WF/MC/`runs` ; `as any` graphiques hors scope |
 | U-06 | 🟡 Moyen | ~39 champs de saisie sans étiquette associée | ✅ atténué — lab/settings ont Label/aria-label |
 | U-07 | 🟡 Moyen | `dangerouslySetInnerHTML` sur du texte venant du backend | `cards/optimizer-warnings.tsx:50` |
-| U-08 | 🟡 Moyen | Quatre composants de plus de 700 lignes, jusqu'à 1 558 | ✅ lab shell + `backtest-view` ; optimizer découpé ; smart-graph encore gros |
+| U-08 | 🟡 Moyen | Quatre composants de plus de 700 lignes, jusqu'à 1 558 | ✅ lab + optimizer + tables Smart Graph ; vue chart encore ~1 164 L |
 | U-09 | 🟡 Moyen | `key={i}` sur des listes qui changent d'ordre | ✅ atténué — clés stables sur listes métier |
 | U-10 | 🟡 Moyen | Le mode expert a deux sources de vérité qui peuvent diverger | `app/lab/page.tsx:139-145` |
 | U-11 | 🔵 Mineur | `lang="fr"` figé sur `<html>` | `app/layout.tsx` |

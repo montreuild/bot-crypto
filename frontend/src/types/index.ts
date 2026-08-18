@@ -44,6 +44,7 @@ export interface BotStatus {
   shadow_allocation?: Record<string, any>;
   last_scan_time?: string | null;
   last_symbols_scanned?: string[];
+  git_commit?: string | null;
 }
 
 export interface Position {

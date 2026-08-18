@@ -13,7 +13,7 @@ autre contexte (fichiers:lignes, directive pas-à-pas, critère d'acceptation).
 > (suppression des stratégies mortes — décision utilisateur en attente).
 >
 > 📌 **Source de vérité unique** (« ce qui est fait / ce qui reste ») :
-> **[`../../audit/16-REVISION-2026-08-18.md`](../../audit/16-REVISION-2026-08-18.md)**
+> **[`../../audit/17-REVISION-2026-08-18.md`](../../audit/17-REVISION-2026-08-18.md)**
 > (constats 14/08 + livraisons). Plan multi-actifs :
 > **[`../PLAN_DIRECTEUR_MULTI_ACTIFS.md`](../PLAN_DIRECTEUR_MULTI_ACTIFS.md)**.
 > Ce fichier-ci reste **l'archive des directives détaillées** par item (Problème

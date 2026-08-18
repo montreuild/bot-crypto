@@ -9,12 +9,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatDateTime } from '@/lib/utils';
+import { cn, errorMessage } from '@/lib/utils';
 import { useSMC, useSMCReplay } from '@/hooks/use-api';
 import {
   TradePlansTable, RealizedTradesTable, type TradePlan, type RealizedTrade,
 } from '@/components/cards/trade-plans-table';
-import { FastAnalysisPanel } from '@/components/cards/fast-analysis-panel';
+import { FastAnalysisPanel, type FastAnalysisResult } from '@/components/cards/fast-analysis-panel';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { api } from '@/lib/api';
@@ -37,8 +37,9 @@ import {
 // F2 — cleanOhlcv factorisé dans lib/ohlcv.ts (avant : copie locale)
 import { cleanOhlcv, type CandleRow } from '@/lib/ohlcv';
 import {
-  formatPrice, normalizePd, type OverlayToggles,
+  formatPrice, normalizePd, type OverlayToggles, type ChartIndicators, type SeriesPoint,
 } from '@/components/views/smart-graph-helpers';
+import { SmartGraphTables } from '@/components/views/smart-graph-tables';
 
 export function SmartGraphView({
   initialSymbol,
@@ -51,15 +52,13 @@ export function SmartGraphView({
   const [symbol, setSymbol] = useState(initialSymbol || 'BTC/USDC');
   const [timeframe, setTimeframe] = useState<string>(initialTf || defaultTf);
   const [selectedPlan, setSelectedPlan] = useState<TradePlan | null>(null);
-  const [faResult, setFaResult] = useState<any>(null);
+  const [faResult, setFaResult] = useState<FastAnalysisResult | null>(null);
   const [faLoading, setFaLoading] = useState(false);
-
-  // EMA / BB / RSI / MACD — repris du chart Scanner (mêmes séries, même endpoint)
   const [showEma, setShowEma] = useState(true);
   const [showBb, setShowBb] = useState(true);
   const [showRsi, setShowRsi] = useState(true);
   const [showMacd, setShowMacd] = useState(true);
-  const [indicators, setIndicators] = useState<any>(null);
+  const [indicators, setIndicators] = useState<ChartIndicators | null>(null);
 
   // URL / props : bascule symbole + TF (clic Top opportunités)
   useEffect(() => {
@@ -197,13 +196,13 @@ export function SmartGraphView({
     }
     indSeriesRef.current = [];
     if (!indicators) return;
-    const addLine = (arr: any[], color: string, width: 1 | 2 = 1) => {
+    const addLine = (arr: SeriesPoint[], color: string, width: 1 | 2 = 1) => {
       if (!arr?.length) return;
       const s = chart.addLineSeries({
         color, lineWidth: width,
         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
       });
-      s.setData(arr.map((p: any) => ({ time: p.time as UTCTimestamp, value: p.value })));
+      s.setData(arr.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
       indSeriesRef.current.push(s);
     };
     if (showEma) {
@@ -743,8 +742,8 @@ export function SmartGraphView({
     try {
       await refetch();
       toast.success('Données SMC rafraîchies');
-    } catch (e: any) {
-      toast.error(`Erreur: ${e?.message || 'inconnue'}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -754,9 +753,9 @@ export function SmartGraphView({
       const r = await api.fastAnalysis(symbol, timeframe);
       setFaResult(r);
       toast.success(`Fast Analyse ${symbol} ${timeframe}`);
-    } catch (e: any) {
-      toast.error(e?.message || 'Fast Analyse impossible');
-      setFaResult({ error: e?.message || 'erreur' });
+    } catch (e) {
+      toast.error(errorMessage(e, 'Fast Analyse impossible'));
+      setFaResult({ error: errorMessage(e, 'erreur') });
     } finally {
       setFaLoading(false);
     }
@@ -1217,170 +1216,7 @@ export function SmartGraphView({
         </div>
       )}
 
-      {/* Tables d'entités SMC */}
-      {!isLoading && !isError && data && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Order Blocks</CardTitle>
-              <Badge variant="info">{data.order_blocks?.length ?? 0}</Badge>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto max-h-80">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card">
-                    <tr className="text-left text-dim border-b border-border">
-                      <th className="p-2 font-medium">Type</th>
-                      <th className="p-2 font-medium text-right">Top</th>
-                      <th className="p-2 font-medium text-right">Bottom</th>
-                      <th className="p-2 font-medium">Status</th>
-                      <th className="p-2 font-medium">Start</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(data.order_blocks || []).slice(0, 30).map((ob: any, i: number) => (
-                      <tr key={i} className="border-b border-border/30 hover:bg-card-hover">
-                        <td className="p-2">
-                          <span className={cn('font-semibold', ob.kind === 'bullish' ? 'text-emerald-400' : 'text-red-400')}>
-                            {ob.kind === 'bullish' ? 'BULL' : 'BEAR'}
-                          </span>
-                        </td>
-                        <td className="p-2 text-right font-mono">{formatPrice(ob.top)}</td>
-                        <td className="p-2 text-right font-mono">{formatPrice(ob.bottom)}</td>
-                        <td className="p-2">
-                          <Badge variant={ob.status === 'fresh' ? 'success' : ob.status === 'touched' ? 'warning' : 'danger'}>
-                            {ob.status}
-                          </Badge>
-                        </td>
-                        <td className="p-2 text-xs text-muted font-mono">{formatDateTime(ob.time_start)}</td>
-                      </tr>
-                    ))}
-                    {(data.order_blocks || []).length === 0 && (
-                      <tr><td colSpan={5} className="p-4 text-center text-muted">Aucun Order Block</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>FVG</CardTitle>
-              <Badge variant="info">{data.fvgs?.length ?? 0}</Badge>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto max-h-80">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card">
-                    <tr className="text-left text-dim border-b border-border">
-                      <th className="p-2 font-medium">Type</th>
-                      <th className="p-2 font-medium text-right">Top</th>
-                      <th className="p-2 font-medium text-right">Bottom</th>
-                      <th className="p-2 font-medium">Status</th>
-                      <th className="p-2 font-medium">Start</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(data.fvgs || []).slice(0, 30).map((f: any, i: number) => (
-                      <tr key={i} className="border-b border-border/30 hover:bg-card-hover">
-                        <td className="p-2">
-                          <span className={cn('font-semibold', f.kind === 'bullish' ? 'text-cyan-400' : 'text-amber-400')}>
-                            {f.kind === 'bullish' ? 'BULL' : 'BEAR'}
-                          </span>
-                        </td>
-                        <td className="p-2 text-right font-mono">{formatPrice(f.top)}</td>
-                        <td className="p-2 text-right font-mono">{formatPrice(f.bottom)}</td>
-                        <td className="p-2"><Badge variant="muted">{f.status}</Badge></td>
-                        <td className="p-2 text-xs text-muted font-mono">{formatDateTime(f.time_start)}</td>
-                      </tr>
-                    ))}
-                    {(data.fvgs || []).length === 0 && (
-                      <tr><td colSpan={5} className="p-4 text-center text-muted">Aucun FVG</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Liquidity Voids</CardTitle>
-              <Badge variant="info">{data.liquidity_voids?.length ?? 0}</Badge>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto max-h-80">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card">
-                    <tr className="text-left text-dim border-b border-border">
-                      <th className="p-2 font-medium">Type</th>
-                      <th className="p-2 font-medium text-right">Top</th>
-                      <th className="p-2 font-medium text-right">Bottom</th>
-                      <th className="p-2 font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(data.liquidity_voids || []).slice(0, 30).map((v: any, i: number) => (
-                      <tr key={i} className="border-b border-border/30 hover:bg-card-hover">
-                        <td className="p-2">
-                          <span className="font-semibold text-purple-400">
-                            {v.kind === 'bullish' ? 'BULL' : 'BEAR'}
-                          </span>
-                        </td>
-                        <td className="p-2 text-right font-mono">{formatPrice(v.top)}</td>
-                        <td className="p-2 text-right font-mono">{formatPrice(v.bottom)}</td>
-                        <td className="p-2"><Badge variant="muted">{v.status}</Badge></td>
-                      </tr>
-                    ))}
-                    {(data.liquidity_voids || []).length === 0 && (
-                      <tr><td colSpan={4} className="p-4 text-center text-muted">Aucun void</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Rejections</CardTitle>
-              <Badge variant="info">{data.rejection_blocks?.length ?? 0}</Badge>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto max-h-80">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card">
-                    <tr className="text-left text-dim border-b border-border">
-                      <th className="p-2 font-medium">Type</th>
-                      <th className="p-2 font-medium text-right">Top</th>
-                      <th className="p-2 font-medium text-right">Bottom</th>
-                      <th className="p-2 font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(data.rejection_blocks || []).slice(0, 30).map((r: any, i: number) => (
-                      <tr key={i} className="border-b border-border/30 hover:bg-card-hover">
-                        <td className="p-2">
-                          <span className={cn('font-semibold', r.kind === 'bullish' ? 'text-emerald-400' : 'text-rose-400')}>
-                            {r.kind === 'bullish' ? 'BULL' : 'BEAR'}
-                          </span>
-                        </td>
-                        <td className="p-2 text-right font-mono">{formatPrice(r.top)}</td>
-                        <td className="p-2 text-right font-mono">{formatPrice(r.bottom)}</td>
-                        <td className="p-2"><Badge variant="muted">{r.status}</Badge></td>
-                      </tr>
-                    ))}
-                    {(data.rejection_blocks || []).length === 0 && (
-                      <tr><td colSpan={4} className="p-4 text-center text-muted">Aucune rejection</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      {!isLoading && !isError && data && <SmartGraphTables data={data} />}
     </div>
   );
 }

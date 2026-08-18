@@ -17,6 +17,31 @@ export interface OverlayToggles {
   cycle: boolean;
 }
 
+export interface SeriesPoint {
+  time: number;
+  value: number;
+}
+
+export interface SmcZoneRow {
+  kind?: string;
+  top?: number;
+  bottom?: number;
+  status?: string;
+  time_start?: string | number;
+}
+
+export interface ChartIndicators {
+  ema20?: SeriesPoint[];
+  ema50?: SeriesPoint[];
+  bb_upper?: SeriesPoint[];
+  bb_mid?: SeriesPoint[];
+  bb_lower?: SeriesPoint[];
+  rsi?: SeriesPoint[];
+  macd?: SeriesPoint[];
+  macd_signal?: SeriesPoint[];
+  macd_hist?: SeriesPoint[];
+}
+
 export interface PremiumDiscount {
   high: number | null;
   low: number | null;

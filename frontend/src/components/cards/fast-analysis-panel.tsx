@@ -11,12 +11,25 @@ import { Badge } from '@/components/ui/badge';
 import { Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+export interface FastAnalysisResult {
+  best?: string;
+  bars?: number;
+  oos_bars?: number;
+  error?: string;
+  rows?: Array<{
+    signal?: string;
+    maker?: { oos?: { pnl?: number; pf?: number; wr?: number }; full?: { pnl?: number } };
+    family?: string;
+    edge?: string;
+  }>;
+}
+
 export function FastAnalysisPanel({
   result,
   symbol,
   timeframe,
 }: {
-  result: any;
+  result: FastAnalysisResult;
   symbol: string;
   timeframe: string;
 }) {
@@ -81,7 +94,7 @@ export function FastAnalysisPanel({
                 </tr>
               </thead>
               <tbody>
-                {result.rows.slice(0, 24).map((row: any, i: number) => {
+                {result.rows.slice(0, 24).map((row, i) => {
                   const oos = row.maker?.oos || {};
                   const full = row.maker?.full || {};
                   const pnl = Number(oos.pnl ?? 0);

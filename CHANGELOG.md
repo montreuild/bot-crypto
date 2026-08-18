@@ -3,12 +3,24 @@
 Historique des versions du Crypto Bot.
 
 > X-07 : l'état **actuel** des constats d'audit est dans
-> [`audit/16-REVISION-2026-08-18.md`](audit/16-REVISION-2026-08-18.md),
+> [`audit/17-REVISION-2026-08-18.md`](audit/17-REVISION-2026-08-18.md),
 > pas dans ce fichier (narratif historique, parfois en retard).
 
 ---
 
 ## [Non publié]
+
+### 🐛 X-03 optimizer/SMC, U-08 Smart Graph, U-05
+
+- **X-03** : `OptimizerFreezeMixin` (`opt_freeze.py`) + `OptimizerBayesianMixin`
+  (`opt_bayesian.py`). `from app.engine.optimizer_search import
+  OptimizerSearchEngine` inchangé. Checkers SMC → `smart_money_setups.py` ;
+  `_signal_at` reste dans `smart_money_signals.py`.
+- **U-08** : tables SMC → `smart-graph-tables.tsx` ; types `ChartIndicators` /
+  `SmcZoneRow`.
+- **U-05** : TF depuis `BotStatus` typé, `runBacktest`/`runReplay` typés,
+  `git_commit`, Fast Analyse typé, `errorMessage` sur Smart Graph.
+- Commentaires réduits aux contraintes non lisibles dans le code.
 
 ### 🐛 U-05 / U-08 / X-03 (#244)
 
