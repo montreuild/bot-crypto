@@ -64,9 +64,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem(STORAGE_KEY) as Locale | null;
     if (stored === 'fr' || stored === 'en') {
       setLocaleState(stored);
-    } else if (navigator.language.toLowerCase().startsWith('en')) {
-      setLocaleState('en');
     }
+    // Pas de détection auto via navigator.language : l'UI est rédigée en
+    // français ; un runner CI en en-US basculerait sinon nav/a11y/visuel.
   }, []);
 
   useEffect(() => {

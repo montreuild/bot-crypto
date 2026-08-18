@@ -61,7 +61,7 @@ def test_eval_constructs_backtester_with_configured_ml_mode(monkeypatch):
         alpha = 0.0
 
     class _FakeBacktester:
-        def __init__(self, eng, cfg, cancel_event=None, ml_mode="frozen"):
+        def __init__(self, eng, cfg, cancel_event=None, ml_mode="frozen", **_kw):
             captured["ml_mode"] = ml_mode
 
         def run(self, df, symbol, timeframe=None):
@@ -88,7 +88,7 @@ def test_eval_defaults_to_inline_backtester_when_unconfigured(monkeypatch):
         alpha = 0.0
 
     class _FakeBacktester:
-        def __init__(self, eng, cfg, cancel_event=None, ml_mode="frozen"):
+        def __init__(self, eng, cfg, cancel_event=None, ml_mode="frozen", **_kw):
             captured["ml_mode"] = ml_mode
 
         def run(self, df, symbol, timeframe=None):
@@ -122,7 +122,7 @@ def test_eval_worker_derives_ml_mode_from_cfg(monkeypatch):
         alpha = 0.0
 
     class _FakeBacktester:
-        def __init__(self, eng, cfg, cancel_event=None, ml_mode="frozen"):
+        def __init__(self, eng, cfg, cancel_event=None, ml_mode="frozen", **_kw):
             captured["ml_mode"] = ml_mode
 
         def run(self, df, symbol, timeframe=None):
