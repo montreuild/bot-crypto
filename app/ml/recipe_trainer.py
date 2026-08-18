@@ -332,6 +332,8 @@ def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
         "source": "recipe_trainer",
     }
     top_n = int(p.get("importance_top_n", 20))
+    from app.ml.scoring import rank_auc
+    from app.ml.splitting import val_eval_cut
 
     for head in heads:
         y = y_by_head[head][:n]
@@ -341,8 +343,11 @@ def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
                            f"pour la tête {head!r}, entraînement ignoré")
             return None
         spw = (y_tr == 0).sum() / max((y_tr == 1).sum(), 1)
+        cut = val_eval_cut(len(y_va))
+        y_stop = y_va[:cut] if cut else y_va
+        X_stop = X_valid[:cut] if cut else X_valid
         ds_tr = lgb.Dataset(X_train, label=y_tr, feature_name=names, free_raw_data=False)
-        ds_va = lgb.Dataset(X_valid, label=y_va, reference=ds_tr,
+        ds_va = lgb.Dataset(X_stop, label=y_stop, reference=ds_tr,
                             feature_name=names, free_raw_data=False)
         booster = lgb.train(
             {**common, "scale_pos_weight": spw}, ds_tr,
@@ -351,17 +356,26 @@ def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
                        lgb.log_evaluation(-1)],
         )
         boosters[head] = booster
-        meta[f"auc_{head}"] = round(
-            float(booster.best_score.get("valid_0", {}).get("auc", 0.0)), 4)
-
+        early = float(booster.best_score.get("valid_0", {}).get("auc", 0.0))
         raw_va = booster.predict(X_valid)
-        if calibrate and len(np.unique(y_va)) >= 2:
+        report = rank_auc(y_va[cut:], raw_va[cut:]) if cut else None
+        published = float(report) if report is not None else early
+        meta[f"auc_{head}"] = round(published, 4)
+        meta[f"auc_{head}_earlystop"] = round(early, 4)
+        meta[f"auc_{head}_report"] = round(published, 4)
+        meta["auc_source"] = "eval" if cut else "earlystop"
+
+        if calibrate and len(np.unique(y_stop)) >= 2:
             try:
                 from app.ml.backend.isotonic import IsotonicRegression
                 iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
-                iso.fit(raw_va, y_va)
+                iso.fit(raw_va[:cut] if cut else raw_va,
+                        y_va[:cut] if cut else y_va)
                 calibrators[head] = iso
-                cal_err[head] = round(float(np.mean(np.abs(iso.predict(raw_va) - y_va))), 4)
+                eval_raw = raw_va[cut:] if cut else raw_va
+                eval_y = y_va[cut:] if cut else y_va
+                cal_err[head] = round(
+                    float(np.mean(np.abs(iso.predict(eval_raw) - eval_y))), 4)
             except Exception as e:                        # pragma: no cover
                 logger.debug(f"[RecipeTrainer] calibration {head} KO : {e}")
 
