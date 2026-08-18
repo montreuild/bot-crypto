@@ -17,19 +17,19 @@ chargement des modèles, distinction « non mesurable » / « nul » propagée d
 l'interface. Plusieurs de ces points sont mieux traités ici que dans la plupart des dépôts
 comparables.
 
-Les 74 constats se répartissent presque tous en **quatre motifs récurrents**, et c'est là
-le résultat le plus utile de cette revue : il y a moins de 74 problèmes à corriger que
+Les 75 constats se répartissent presque tous en **quatre motifs récurrents**, et c'est là
+le résultat le plus utile de cette revue : il y a moins de 75 problèmes à corriger que
 quatre habitudes à changer.
 
 | Sévérité | Nombre |
 |---|---:|
 | **P0 potentiel — à instrumenter d'abord** | 1 |
 | **P1 — majeur** | 23 |
-| P2 — mineur | 38 |
+| P2 — mineur | 39 |
 | P3 — cosmétique ou latent | 11 |
-| **Total** | **74** |
+| **Total** | **75** |
 
-Dont **11 reproduits par exécution** (mesure ou profilage), le reste établi par lecture
+Dont **12 reproduits par exécution** (mesure ou profilage), le reste établi par lecture
 croisée ou recensement exhaustif.
 
 ---
@@ -83,8 +83,8 @@ Deux constats, et c'est le plus coûteux du rapport.
 irréguliers sur 15 768, dont un trou de 164 jours — et un tableau valide sur une grille
 parfaitement régulière, celle que construisent les tests. L'optimisation ×120 du commit
 `bfc330e` est donc **validée par les tests et inerte en production depuis son
-introduction**. Mesuré : 58 barres/s contre 2 637 sur les mêmes données, soit **×45**, et
-30 heures au lieu de 40 minutes pour une campagne de 400 essais.
+introduction**. Mesuré : 22 barres/s contre 3 118 sur les mêmes données en 1 h, et
+93 heures au lieu de 14 minutes pour une campagne de 400 essais.
 
 **FIN-01** : le test censé protéger l'invariant vérifie
 `net_profit == final_equity - initial_capital`, une identité **vraie par définition**.
@@ -114,11 +114,24 @@ côté serveur.
 
 ## Les cinq constats qui comptent le plus
 
-### 1. PERF-01 — ×45 de perte de débit, 30 heures par campagne d'optimisation
+### 1. PERF-01 — un O(n²) prouvé par l'échelle : 4 jours par campagne d'optimisation
 
-Profilé et diagnostiqué. `_htf_buckets` consomme 85 % du temps de backtest de 8 stratégies
-parce que le **repli** de `htf_trend` n'est pas mémoïsé — seule la vérification l'est.
-**Correction : ~30 lignes.** C'est le meilleur rapport effort/gain du rapport.
+Profilé, diagnostiqué, puis **confirmé par la mise à l'échelle**. `_htf_buckets` consomme
+85 % du temps de backtest de 8 stratégies parce que le **repli** de `htf_trend` n'est pas
+mémoïsé — seule la vérification l'est.
+
+La série 1 h est 3,29× plus longue que la série 4 h. Un algorithme linéaire garde un débit
+constant ; un quadratique le divise par 3,29 :
+
+| Stratégie | 4 h | 1 h | Rapport | Appelle `htf_trend` ? |
+|---|---:|---:|---:|---|
+| `trend` | 84 b/s | 22 b/s | **3,83** | oui |
+| `supertrend_macd` | 81 b/s | 27 b/s | **3,02** | oui |
+| `volatility_squeeze` | 3 255 b/s | 3 118 b/s | 1,04 | non |
+
+Un backtest de `trend` sur 1 h prend **39 minutes** ; une campagne de 400 essais,
+**93 heures** au lieu de 14 minutes. **Correction : ~30 lignes.** C'est le meilleur rapport
+effort/gain du rapport.
 
 ### 2. OPT-01/02 — Le gate Deflated Sharpe décide sur un nombre non interprétable
 
@@ -174,11 +187,11 @@ conclus pas.
 | `10-FRONTEND` | — | 2 | 1 | 1 | 4 |
 | `11-UI-UX` | — | 1 | 3 | — | 4 |
 | `12-DONNEES` | — | — | 2 | 2 | 4 |
-| `13-PERFORMANCE` | — | 2 | 1 | — | 3 |
+| `13-PERFORMANCE` | — | 2 | 2 | — | 4 |
 | `14-SECURITE` | — | **0** | 2 | 1 | 3 |
 | `15-TESTS-CI` | — | 3 | 2 | 1 | 6 |
 | `03-ARCHITECTURE` | — | 1 | 4 | — | 5 |
-| **Total** | **1** | **23** | **38** | **11** | **74** |
+| **Total** | **1** | **23** | **39** | **11** | **75** |
 
 \* dont un constat déjà corrigé, listé pour mémoire.
 

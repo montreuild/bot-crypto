@@ -25,14 +25,43 @@ precompute_df, 51 909 barres : 34-38 ms   (~1,4 M barres/s)   28 colonnes _pre_*
 
 Rien à redire : 28 indicateurs sur 52 000 barres en 35 ms, et un cache qui fonctionne.
 
-### Débit du backtest — un écart de 45× entre deux stratégies
+### Débit du backtest — quatre stratégies, deux longueurs de série
 
 ```
-trend                4h   15 769 barres : 272,70 s  (   58 barres/s)  13 trades
-volatility_squeeze   4h   15 769 barres :   5,98 s  ( 2 637 barres/s)  10 trades
+trend                4h   15 769 barres :  187,97 s  (    84 barres/s)   13 trades
+trend                1h   51 909 barres : 2367,98 s  (    22 barres/s)  360 trades
+supertrend_macd      4h   15 769 barres :  194,67 s  (    81 barres/s)    2 trades
+supertrend_macd      1h   51 909 barres : 1937,41 s  (    27 barres/s)   16 trades
+volatility_squeeze   4h   15 769 barres :    4,85 s  ( 3 255 barres/s)   10 trades
+volatility_squeeze   1h   51 909 barres :   16,65 s  ( 3 118 barres/s)   36 trades
+smart_money          4h   15 769 barres :    3,68 s  ( 4 291 barres/s)   42 trades
+smart_money          1h   51 909 barres :   61,67 s  (   842 barres/s)  557 trades
 ```
 
-**Mêmes données, même moteur, même machine. Facteur 45.**
+**Mêmes données, même moteur, même machine. Facteur 39 à 145 selon la série.**
+
+⚠ Les durées absolues varient de ±30 % entre exécutions selon la charge machine (`trend`
+4 h a été mesuré à 188 s et 273 s dans deux passes). **Les rapports, eux, sont stables** —
+et ce sont eux qui portent la démonstration ci-dessous.
+
+### La preuve du O(n²) : le débit s'effondre proportionnellement à la longueur de série
+
+Pour un algorithme **linéaire**, le débit en barres/s est **constant** quand la série
+s'allonge. Pour un algorithme **quadratique**, il chute proportionnellement à `n`.
+
+La série 1 h est 3,29× plus longue que la série 4 h (51 909 / 15 769). Prédiction pour un
+O(n²) : le débit doit être divisé par ≈ 3,29.
+
+| Stratégie | Débit 4 h | Débit 1 h | Rapport observé | Attendu si O(n²) | Verdict |
+|---|---:|---:|---:|---:|---|
+| `trend` | 84 b/s | 22 b/s | **3,83** | 3,29 | **quadratique** |
+| `supertrend_macd` | 81 b/s | 27 b/s | **3,02** | 3,29 | **quadratique** |
+| `volatility_squeeze` | 3 255 b/s | 3 118 b/s | **1,04** | — | **linéaire** |
+| `smart_money` | 4 291 b/s | 842 b/s | 5,10 | — | *voir PERF-05* |
+
+Les deux stratégies qui appellent `htf_trend` se comportent exactement comme le prédit un
+O(n², et celle qui ne l'appelle pas garde un débit plat. La cause est établie sans
+ambiguïté.
 
 ---
 
@@ -125,7 +154,9 @@ breakout · breakout_filtreHor · fear_momentum · gemini_trend_follow
 multi_tf_sr · pullback_trend · supertrend_macd · trend
 ```
 
-Mesure de confirmation sur trois d'entre elles, 4 000 barres :
+Mesure de confirmation sur trois d'entre elles, 4 000 barres — toutes au même palier, ce
+qui confirme que c'est bien `htf_trend` qui domine et non la logique propre de chaque
+stratégie :
 
 ```
 trend            :  20,33 s  (197 b/s)
@@ -133,22 +164,23 @@ pullback_trend   :  20,44 s  (196 b/s)
 fear_momentum    :  20,72 s  (193 b/s)
 ```
 
-Toutes les trois au même palier — c'est bien `htf_trend` qui domine, pas la logique propre
-de chaque stratégie.
-
 ### Coût réel, chiffré
 
+Un backtest de `trend` sur BTC_USDC **1 h** (51 909 barres) prend **39 minutes**.
+
 `config/lifecycle.yaml:45` fixe `max_trials: 400`. Chaque essai lance **deux** backtests
-(IS puis OOS, `optimizer_search.py:315-316`), soit environ une fenêtre complète par essai.
+(IS puis OOS, `optimizer_search.py:315-316`). Le coût étant quadratique, deux tranches à
+65 % et 35 % coûtent `0,65² + 0,35² = 0,55` fenêtre complète ; le holdout de 20 % réduit
+encore la fenêtre de recherche (`0,8² = 0,64`).
 
-| Scénario | Durée pour 400 essais, 1 stratégie × 1 symbole × 1 TF |
-|---|---|
-| **Aujourd'hui** (repli O(n²)) | 400 × 273 s ≈ **30 heures** |
-| Avec le chemin rapide | 400 × 6 s ≈ **40 minutes** |
+| Scénario, 1 stratégie × 1 symbole × 1 TF, 400 essais | 4 h (15 769 barres) | 1 h (51 909 barres) |
+|---|---|---|
+| **Aujourd'hui** (repli O(n²)) | ≈ **7 heures** | ≈ **93 heures (4 jours)** |
+| Avec le chemin rapide | ≈ 4 minutes | ≈ 14 minutes |
 
-Sur une campagne multi-symboles (4 paires) et multi-TF (3), l'écart passe de la demi-heure
-à plusieurs semaines. C'est le facteur limitant de tout le pipeline d'optimisation, et il
-tient à cinq horodatages.
+Sur une campagne multi-symboles (4 paires crypto) et multi-TF, on passe de l'heure à
+**plusieurs semaines**. C'est le facteur limitant de tout le pipeline d'optimisation, et
+il tient à cinq horodatages irréguliers.
 
 ### Corrections
 
@@ -189,6 +221,38 @@ mêmes conditions.
 Je ne l'ai pas mesuré : `breakout` combine `htf_trend` **et** `bb_squeeze`, donc isoler la
 contribution de chacun demande un profilage dédié. À faire dans le même passage que
 PERF-01, puisque la correction est la même.
+
+---
+
+## PERF-05 — `smart_money` dégrade 5,1× là où la linéarité en prédit 3,3, sans appeler `htf_trend`
+
+**Sévérité P2 · CONFIRMÉ (mesure) — cause non identifiée**
+
+`smart_money` ne figure **pas** parmi les 8 stratégies qui appellent `htf_trend`. Son débit
+devrait donc rester plat comme celui de `volatility_squeeze`. Il ne l'est pas :
+
+| Stratégie | 4 h | 1 h | Rapport |
+|---|---:|---:|---:|
+| `volatility_squeeze` | 3 255 b/s | 3 118 b/s | 1,04 |
+| **`smart_money`** | **4 291 b/s** | **842 b/s** | **5,10** |
+
+Un rapport de 5,10 dépasse même celui d'un O(n²) pur (3,29), ce qui interdit de conclure
+à la même cause.
+
+Deux pistes, non départagées :
+
+1. **Le volume de trades** — 42 trades à 4 h contre **557** à 1 h. `_manage_open_position`
+   est appelé une fois par barre **par position ouverte** ; plus de trades signifie plus de
+   barres passées en position, et donc plus d'appels à `check_early_exit` et
+   `check_scale_in` sur `ctx.window`. Si l'un de ces hooks est O(n), le coût total devient
+   superlinéaire — ce serait une **troisième** instance du même motif.
+2. **Un coût propre à la stratégie** dans son analyse SMC (`smart_money_signals`,
+   `smart_money_setups`, `smart_money_plans`).
+
+**À faire** : un `cProfile` sur `smart_money` 1 h, comme celui qui a tranché PERF-01. Je ne
+conclus pas sans cette mesure — c'est le même genre de piège que celui où ma première
+hypothèse sur PERF-01 (l'ordre `prepare_for_backtest` / `precompute_df`) s'est révélée
+fausse à l'épreuve du test.
 
 ---
 
@@ -247,6 +311,7 @@ Le garde-fou mémoire (`_PRECOMPUTE_MAXSIZE`, éviction LRU) est présent.
 
 | ID | Sévérité | Preuve | Constat | Effort |
 |---|---|---|---|---|
-| PERF-01 | **P1** | CONFIRMÉ | Repli `htf_trend` non mémoïsé : ×45 sur 8 stratégies, 30 h par campagne | 30 lignes |
+| PERF-01 | **P1** | CONFIRMÉ | Repli `htf_trend` non mémoïsé : O(n²) prouvé par l'échelle, ×145 en 1 h, 4 jours par campagne | 30 lignes |
 | PERF-02 | **P1** | PLAUSIBLE | Même motif pour `bb_squeeze_series` (×80 annoncé) | avec PERF-01 |
+| PERF-05 | P2 | CONFIRMÉ | `smart_money` dégrade 5,1× sans appeler `htf_trend` — cause à profiler | ½ j |
 | PERF-03 | P2 | CONFIRMÉ | Aucun garde de débit, alors que 5 gains ont été annoncés | 1 h |
