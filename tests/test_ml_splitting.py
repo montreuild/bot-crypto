@@ -15,6 +15,7 @@ from app.ml.splitting import (
     chrono_split,
     label_embargo,
     purged_time_series_splits,
+    val_eval_cut,
 )
 
 
@@ -115,3 +116,22 @@ class TestFoldsPurges:
         assert all(len(tr) > 0 for tr, _ in folds)
         assert purged_time_series_splits(10, 1) == []
         assert purged_time_series_splits(3, 5) == []
+
+
+class TestValEvalCut:
+    """ML-04 : calib et eval sont deux moitiés disjointes."""
+
+    def test_none_si_trop_court(self):
+        assert val_eval_cut(39) is None
+        assert val_eval_cut(0) is None
+
+    def test_moitie_quand_assez_grand(self):
+        assert val_eval_cut(40) == 20
+        assert val_eval_cut(101) == 50
+
+    def test_les_deux_tranches_sont_disjointes(self):
+        n = 80
+        cut = val_eval_cut(n)
+        calib, eval_ = set(range(cut)), set(range(cut, n))
+        assert not calib & eval_
+        assert len(calib) + len(eval_) == n

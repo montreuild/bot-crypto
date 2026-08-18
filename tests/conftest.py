@@ -4,6 +4,13 @@ import pytest
 from app.api import state
 
 
+@pytest.fixture
+def gapped_ohlcv_df():
+    """TEST-05 : série 1h avec trous (pas une grille synthétique régulière)."""
+    from tests.test_perf_real_series import gapped_ohlcv
+    return gapped_ohlcv(800)
+
+
 @pytest.fixture(autouse=True)
 def _disable_rate_limiting():
     """SEC-04 : plusieurs tests appellent les fonctions de route FastAPI

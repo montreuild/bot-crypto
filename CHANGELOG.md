@@ -10,6 +10,15 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 TEST-05 / PERF-03 / FE-01 / ML-04
+
+- **TEST-05 / PERF-03** : fixture `gapped_ohlcv` (trous) ; test `slow` de
+  débit `trend` sur parquet réel ou série trouée (seuil 150 barres/s).
+- **FE-01** : tests `apiFetch` (204, 503, schéma non bloquant, POST config)
+  et hooks `useBotStatus` / `useHealth` / `useUpdateTradingConfig`.
+- **ML-04** : early-stop + isotonie sur la tranche **calib** ; AUC publiée
+  (`auc_amp` / `auc_dir`) mesurée sur **eval**. `auc_source=eval`.
+
 ### 🐛 ML-03 / UX-01 / FE-02 / ARCH-04 / FE-03
 
 - **ML-03** : `fit_trace` sur les entraînements inline. Mesure : le repli
