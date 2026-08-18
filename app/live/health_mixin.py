@@ -332,18 +332,13 @@ class HealthMixin:
             d["total_fees"]    = round(d["fees"], 4)
             d["total_trades"]  = n
             d["profit_factor"] = round(gw / gl, 3) if gl > 0 else (999.0 if gw > 0 else 0.0)
-            # S4-01 : Sharpe aligné sur BacktestResult._compute_metrics()
-            # (engine/backtest.py) — courbe d'équité synthétique PAR TRADE
-            # (pas les PnL bruts en $), retours relatifs au capital avant
-            # chaque trade. Les deux Sharpe (live/backtest) doivent rester
-            # comparables : c'est pourquoi la correction d'annualisation qui
-            # touche le backtest DOIT toucher celui-ci en même temps.
-            #
-            # L'annualisation se fait à la cadence réelle des trades — leur
-            # nombre rapporté à la durée écoulée entre le premier et le dernier
-            # — et non par `bars_per_year` du TF dominant, qui supposait que la
-            # stratégie produisait un point d'équité à chaque bougie.
-            if len(pnls) >= 3 and initial_capital > 0:
+            # S4-01 / R-01 : même formule ET même plancher que
+            # BacktestResult._compute_metrics (F-02 / MIN_SIGNIFICANT_TRADES).
+            # None (non mesurable) ≠ 0.0 (ratio nul). Le live renvoyait 0.0
+            # dès 3 trades — l'UI comparait un Sharpe fabriqué au backtest
+            # qui, lui, refuse de publier sous 10 observations.
+            from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES
+            if len(pnls) >= MIN_SIGNIFICANT_TRADES and initial_capital > 0:
                 eq = [initial_capital]
                 cap = initial_capital
                 for p in pnls:
@@ -362,9 +357,9 @@ class HealthMixin:
                     raw = float(rets.mean() / std * ann)
                     d["sharpe"] = round(_safe_float(raw, 0.0), 3)
                 else:
-                    d["sharpe"] = 0.0
+                    d["sharpe"] = None
             else:
-                d["sharpe"] = 0.0
+                d["sharpe"] = None
             if len(pnls) >= 2:
                 eq   = _np.cumsum(pnls)
                 peak = _np.maximum.accumulate(eq)

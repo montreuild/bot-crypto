@@ -5,6 +5,17 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** U-05 : extraire un message d'erreur sans `catch (e: any)`. */
+export function errorMessage(err: unknown, fallback = 'Erreur inconnue'): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === 'string' && err) return err;
+  if (err && typeof err === 'object' && 'message' in err) {
+    const m = (err as { message?: unknown }).message;
+    if (typeof m === 'string' && m) return m;
+  }
+  return fallback;
+}
+
 // ── Formatage ───────────────────────────────────────────────────────────────
 
 export function formatUSD(value: number, opts: { decimals?: number; sign?: boolean } = {}): string {

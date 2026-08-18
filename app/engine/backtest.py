@@ -742,6 +742,41 @@ class Backtester:
             return self.envelope.min_notional
         return float(getattr(self._venue, "min_notional", 0.0) or 0.0)
 
+    def _ledger_envelope(self, ctx):
+        """R-02 : Envelope consommée par RiskLedger (même objet que le live).
+
+        Sans enveloppe de slot (études libres), on reconstruit une enveloppe
+        qui reproduit les anciens plafonds inline : notionnel max = capital
+        × levier, min_notional venue, budgets de risque = capital (ne lient
+        pas). Dès qu'une Envelope réelle est fournie, les plafonds symbole
+        / venue de L-05 / F-05 s'appliquent aussi au backtest.
+        """
+        if self.envelope is not None:
+            return self.envelope
+        from app.core.risk_envelope import Envelope
+        base = float(self._sizing_base(ctx) or 0.0) or float(ctx.capital or 0.0)
+        venue = self._venue
+        # Sans enveloppe réelle, les agrégats symbole/venue ne doivent pas
+        # lier : l'ancien code ne les vérifiait pas. Le plafond slot
+        # (base × levier) reste celui du sizing inline.
+        wide = max(base, 1.0) * 1e6
+        return Envelope(
+            venue=getattr(venue, "name", None) or "default",
+            symbol=getattr(ctx, "symbol", "") or "",
+            slot_key="backtest",
+            currency=getattr(venue, "quote_currency", None) or "USDC",
+            venue_envelope=wide,
+            venue_risk_budget=wide,
+            symbol_envelope=wide,
+            symbol_risk_budget=wide,
+            slot_envelope=base,
+            slot_risk_amount=base,
+            max_leverage=self._leverage(),
+            min_notional=self._min_notional(),
+            trade_risk_pct=1.0,
+            weight=1.0,
+        )
+
     def _find_strategy(self, name: str):
         """Récupère l'instance Strategy par son nom (P-03 : O(1), pas O(k))."""
         if not name:
@@ -869,6 +904,10 @@ class Backtester:
         position.pop("_be_done", None)
         ctx.trades.append(position)
         ctx.equity_curve.append(round(ctx.capital, 4))
+        _ledger = getattr(ctx, "ledger", None)
+        _pk = position.get("_pos_key")
+        if _ledger is not None and _pk:
+            _ledger.release(_pk)
         if append_ts:
             ctx.timestamps.append(ts)
 
@@ -1186,6 +1225,29 @@ class Backtester:
                         add_size = add_notional / add_price
                     add_size = _quantize_size(add_size, self._venue)   # G2
                     add_notional = add_size * add_price
+                    _ledger = getattr(ctx, "ledger", None)
+                    _env = getattr(ctx, "ledger_env", None)
+                    _pk = position.get("_pos_key")
+                    if (_ledger is not None and _env is not None and _pk
+                            and add_notional >= 1.0 and add_size > 0):
+                        _inc_key = f"{_pk}:scale:{position.get('scale_ins', 0)}"
+                        _inc_risk = abs(add_price - float(position["stop"])) * add_size
+                        _dec = _ledger.reserve(
+                            _env, risk=_inc_risk, notional=add_notional,
+                            pos_key=_inc_key)
+                        if not _dec.allowed:
+                            logger.debug(
+                                f"[Backtest] bar {i} : scale-in refusé par "
+                                f"RiskLedger ({_dec.reason_code})"
+                            )
+                            add_size = 0.0
+                            add_notional = 0.0
+                        else:
+                            _new_n = float(position["notional"]) + add_notional
+                            _new_r = float(position.get("_reserved_risk") or 0.0) + _inc_risk
+                            _ledger.resize(_pk, risk=_new_r, notional=_new_n)
+                            _ledger.release(_inc_key)
+                            position["_reserved_risk"] = _new_r
                     if add_notional >= 1.0 and add_size > 0:
                         add_fees = self._fees(add_price, add_size, maker=False,
                                               side=position["side"], is_entry=True)
@@ -1366,18 +1428,40 @@ class Backtester:
             return None
         size        = q_size
         notional    = size * exec_price
-        # B-05 : min_notional se juge sur la taille FINALE (après partial_fill
-        # et quantification), comme RiskLedger.reserve côté live.
-        min_notional = self._min_notional()
-        if notional < min_notional:
-            diag["rejected_min_notional"] = diag.get("rejected_min_notional", 0) + 1
-            diag["rejected_notional"] += 1
-            self.rejections.record("notionnel_min", symbol=ctx.symbol)
-            logger.debug(
-                f"[Backtest] bar {i} : trade rejeté (notional={notional:.4f} "
-                f"< min {min_notional:.2f}, size={size:.6f}, base={ctx.capital:.2f})"
-            )
-            return None
+        # R-02 / B-05 : tous les plafonds (min_notional, slot, symbole, venue)
+        # passent par RiskLedger.reserve — plus de copie inline qui peut
+        # dériver du live.
+        from app.core.bot_identity import build_pos_key as _bpk_enter
+        pos_key = _bpk_enter(
+            ctx.symbol,
+            signal.get("name") or signal.get("strategy") or "",
+            ctx.timeframe,
+        )
+        ledger = getattr(ctx, "ledger", None)
+        env = getattr(ctx, "ledger_env", None)
+        if ledger is not None and env is not None:
+            risk_amt = abs(float(exec_price) - float(stop)) * float(size)
+            dec = ledger.reserve(env, risk=risk_amt, notional=notional, pos_key=pos_key)
+            if not dec.allowed:
+                code = dec.reason_code or "notionnel_min"
+                if code == "notionnel_min":
+                    diag["rejected_min_notional"] = diag.get("rejected_min_notional", 0) + 1
+                elif code == "enveloppe_venue":
+                    diag["rejected_venue"] = diag.get("rejected_venue", 0) + 1
+                diag["rejected_notional"] = diag.get("rejected_notional", 0) + 1
+                self.rejections.record(code, symbol=ctx.symbol)
+                logger.debug(
+                    f"[Backtest] bar {i} : trade rejeté par RiskLedger "
+                    f"({code} — {dec.detail})"
+                )
+                return None
+        else:
+            min_notional = self._min_notional()
+            if notional < min_notional:
+                diag["rejected_min_notional"] = diag.get("rejected_min_notional", 0) + 1
+                diag["rejected_notional"] += 1
+                self.rejections.record("notionnel_min", symbol=ctx.symbol)
+                return None
         entry_fees  = self._fees(exec_price, size, maker=False,
                                  side=signal["side"], is_entry=True)
         _impact_in  = self._impact_cost(ctx, i, notional)   # BT-10
@@ -1449,6 +1533,8 @@ class Backtester:
             "planned_tp":      round(tp_init, 6) if tp_init is not None else None,
             # ── L1 (§29) — sorties partielles ────────────────────────────────
             "size_initial":    round(size, 6),
+            "_pos_key":        pos_key,
+            "_reserved_risk":  abs(float(exec_price) - float(stop)) * float(size),
             "_targets":        _plan_partial_targets(signal, exec_price, stop),
             "be_after_partial": bool(signal.get("be_after_partial", True)),
             # §5 — `trailing_after_profit` : le suiveur reste au repos tant que
@@ -1682,6 +1768,10 @@ class Backtester:
             # Initialisé plus bas (après know si realistic_risk=True).
             risk_gate=None,
         )
+        # R-02 : un seul RiskLedger pour le run — plus de plafonds recopiés.
+        from app.core.risk_ledger import RiskLedger
+        ctx.ledger = RiskLedger()
+        ctx.ledger_env = self._ledger_envelope(ctx)
         # L2 (§27) — série de funding pour les venues perp. Absente = pas de
         # facturation (et non une estimation inventée) : mieux vaut un coût
         # manquant et signalé qu'un coût faux et silencieux.

@@ -16,7 +16,7 @@
 | # | Sévérité | Titre | Fichier | État au 18/08 |
 |---|----------|-------|---------|---------------|
 | F-01 | 🔴 Critique | `total_pnl` exclut les frais d'entrée mais sert de PnL de référence partout | `engine/backtest.py:704-771` | ✅ résolu — `trade.pnl` porte les frais d'entrée |
-| F-02 | 🔴 Critique | Le Sharpe est calculé sur 1 à 3 observations et sort à ±1000 | `engine/backtest.py:211-227` | ✅ résolu — `None` sous 10 obs. |
+| F-02 | 🔴 Critique | Le Sharpe est calculé sur 1 à 3 observations et sort à ±1000 | `engine/backtest.py:211-227` | ✅ + R-01 live (`None` sous 10) |
 | F-03 | 🔴 Critique | `max_dd_p95` du Monte-Carlo renvoie le MEILLEUR drawdown, pas le pire | `engine/monte_carlo.py:96` | ✅ résolu — percentile 5 |
 | F-04 | 🟠 Majeur | Coût d'emprunt facturé sur le notionnel entier à levier 1 (≈30 %/an fictifs) | `core/execution.py:26-38` + `config/venues.yaml` | ✅ résolu — `borrowed_notional` (short toujours emprunté) |
 | F-05 | 🟠 Majeur | Aucun plafond de notionnel au niveau VENUE : le levier réel dépasse `max_leverage` | `core/risk_ledger.py:70-108` | ✅ résolu — `enveloppe_venue` |

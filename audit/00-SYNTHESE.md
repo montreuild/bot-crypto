@@ -117,12 +117,12 @@ livrables une par une.
 | 9 | Supprimer le plafond caché `notional > capital × 0,25` | `live/balance_sync.py:196` | ~1 h | Le live cesse de refuser silencieusement les trades dimensionnés à l'enveloppe |
 | 10 | Évaluer le stop sur le plus-bas/plus-haut de la bougie en formation | `live/position_manage_mixin.py:217` | ~1 j | Aligne les trois modèles d'exécution (backtest / paper / live) |
 
-**État au 18/08** : 1–10 sont dans `fix/audit-quick-wins` **sauf le n° du
-tableau qui correspond à B-02** (ligne 1 du backtest multi-position — pas
-dans le tableau ci-dessus ; B-02 reste reporté). Les items 3, 6 et 8
-(`net_profit`, fill au gap, emprunt) sont livrés **séparément** dans
-l'historique git. `schema_version` + `git_commit` sont posés (D-06).
-**Rebaseline de `data/` encore à faire après merge.**
+**État au 18/08 (après #242 + R-01/R-02)** : les 10 corrections du tableau
+sont dans `main`. B-02 est livré (multi-positions + `RiskLedger`). D-06
+(`schema_version` + `git_commit`) est posé. L'historique `data/` a été vidé
+(plus de comparaison avec les anciens Sharpe). Il reste à **faire tourner
+le paper** pour obtenir les premiers verdicts `oos_tracker` (D-07).
+Voir [`15-REVISION-2026-08-18.md`](15-REVISION-2026-08-18.md).
 
 **Avertissement sur l'ordre** : les corrections 3, 6 et 8 modifient les
 résultats de tous les backtests historiques. Elles doivent être livrées

@@ -191,7 +191,7 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
     2. PnL OOS strictement positif ;
     3. PnL OOS strictement meilleur que le baseline (params actuels) ;
     4. amélioration d'au moins un critère de qualité (win-rate OU Sharpe) ;
-    5. **Deflated Sharpe** (P0 — câblage du module ``app/core/deflated_sharpe.py``)
+    5. **Deflated Sharpe** (Bailey & López de Prado, ``deflated_sharpe_ratio``)
        si ``n_trials > 1`` et ``min_deflated_sharpe`` fourni > 0 : corrige le
        biais de multiple testing (López de Prado 2014). Un Sharpe OOS élevé
        obtenu après 50 essais est beaucoup moins significatif que le même
@@ -232,7 +232,7 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
             and oos_sharpe is not None):
         try:
             # F-07 : formule Bailey & López de Prado (probabilité ∈ [0,1]),
-            # plus l'heuristique maison de core/deflated_sharpe.py.
+            # Bailey & López de Prado (2014), plus l'ancienne heuristique.
             dsr = deflated_sharpe_ratio(
                 float(oos_sharpe),
                 n_observations=int(oos_trades),

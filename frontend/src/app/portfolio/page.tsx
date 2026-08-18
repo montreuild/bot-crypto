@@ -53,11 +53,14 @@ const RiskEnvelopesCard = dynamic(
 import { SignificantBotsTable } from '@/components/cards/significant-bots-table';
 import { Button } from '@/components/ui/button';
 import { QueryBoundary } from '@/components/ui/query-state';
+import { MetricValue } from '@/components/ui/metric-value';
+import type { StrategyStats } from '@/types';
 import { useBotStatus, usePortfolio } from '@/hooks/use-api';
 import { Play, Square, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -79,8 +82,8 @@ export default function PortfolioV2Page() {
       await api.startBot();
       toast.success('Trader démarré');
       qc.invalidateQueries({ queryKey: ['status'] });
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e: unknown) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     } finally {
       setStartLoading(false);
     }
@@ -92,8 +95,8 @@ export default function PortfolioV2Page() {
       await api.stopBot(closePositions);
       toast.success(closePositions ? 'Trader arrêté, positions clôturées' : 'Trader arrêté');
       qc.invalidateQueries({ queryKey: ['status'] });
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e: unknown) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     } finally {
       setStopLoading(false);
     }
@@ -241,7 +244,7 @@ export default function PortfolioV2Page() {
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(status.by_strategy).map(([name, stats]: [string, any]) => (
+                {Object.entries(status.by_strategy).map(([name, stats]: [string, StrategyStats]) => (
                   <tr key={name} className="border-b border-border/50 hover:bg-card-hover">
                     <td className="py-2.5 font-medium">{name}</td>
                     <td className="py-2.5 text-right font-mono text-muted">{stats.total_trades}</td>
@@ -254,7 +257,13 @@ export default function PortfolioV2Page() {
                     <td className="py-2.5 text-right font-mono text-muted">
                       {stats.profit_factor === 999 ? '∞' : stats.profit_factor.toFixed(2)}
                     </td>
-                    <td className="py-2.5 text-right font-mono text-muted">{stats.sharpe.toFixed(2)}</td>
+                    <td className="py-2.5 text-right font-mono text-muted">
+                      <MetricValue
+                        value={stats.sharpe}
+                        nObs={stats.total_trades}
+                        format={(v) => v.toFixed(2)}
+                      />
+                    </td>
                     <td className="py-2.5 text-right font-mono text-red-400">{stats.max_drawdown.toFixed(2)}%</td>
                   </tr>
                 ))}
