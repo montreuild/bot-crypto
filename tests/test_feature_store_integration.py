@@ -64,7 +64,8 @@ def test_backtest_cold_vs_warm_cache_identical(tmp_path):
     r_cold = run_once()   # build → store
     r_warm = run_once()   # pure lecture cache
 
-    # Le catalogue a bien été écrit.
-    assert (tmp_path / "BTC_USDC" / "1h.parquet").exists()
+    # D-04 : le fichier porte le hash du catalogue, plus ``1h.parquet``.
+    from app.core.feature_store import catalog_hash
+    assert (tmp_path / "BTC_USDC" / f"1h_{catalog_hash()}.parquet").exists()
     for k in ("total_trades", "total_pnl", "win_rate", "sharpe", "max_drawdown"):
         assert r_cold[k] == r_warm[k], f"divergence cache froid/chaud sur {k}"

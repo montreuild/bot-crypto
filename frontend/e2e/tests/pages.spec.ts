@@ -97,7 +97,8 @@ test.describe('Onglets fusionnés', () => {
     { page: 'market', tab: 'derivatives', heading: 'Données dérivées' },
     { page: 'lab', tab: 'optimizer', heading: 'Optimiseur' },
     { page: 'lab', tab: 'ml', heading: 'Modèles ML' },
-    { page: 'lab', tab: 'replay', heading: 'Replay Multi-Timeframe' },
+    { page: 'lab', tab: 'replay', heading: 'Replay interactif' },
+    { page: 'lab', tab: 'batch', heading: 'Replay Multi-Timeframe' },
     { page: 'lab', tab: 'compare', heading: 'Comparatif Stratégies' },
     // Capital : CardTitle h3 « Enveloppes par venue » (plus de h2 Stratégies)
     { page: 'settings', tab: 'capital', heading: 'Enveloppes par venue', level: 3 },

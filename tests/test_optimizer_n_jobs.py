@@ -168,7 +168,6 @@ def test_n_jobs_1_respects_early_stop_patience(monkeypatch):
     monkeypatch.setattr(opt, "_eval", _fake_eval)
     opt.random_search(n_trials=10, n_jobs=1, early_stop_patience=2)
 
-    # trial 1 : score=1.0 > -999 → improve (no_improve=0)
-    # trial 2 : score=1.0, pas d'amélioration → no_improve=1
-    # trial 3 : idem → no_improve=2 >= patience(2) → stop après ce trial
-    assert calls["eval"] == 3
+    # O-08 : jamais d'early-stop avant la moitié du budget (10/2 = 5).
+    # trial 1 : improve ; trials 2–5 : no_improve ; stop à done=5.
+    assert calls["eval"] == 5

@@ -112,12 +112,10 @@ def test_les_frais_agregent_l_entree_et_la_sortie(resultat):
 
 
 def test_brut_moins_couts_redonne_le_net(resultat):
-    """Conservation comptable par trade. `pnl` ne retranche pas les frais
-    d'entrée (prélevés sur le capital à l'ouverture) : c'est exactement l'écart
-    attendu, et le test l'exprime plutôt que de le masquer."""
+    """F-01 : ``pnl`` retranche aussi les frais d'entrée. ``fees`` les contient
+    déjà (entrée + sortie), donc brut − fees − borrow = net."""
     for t in resultat.trades:
-        attendu = (t["gross_pnl"] - t["fees"] - t["borrow_cost"]
-                   + t["entry_fees"])
+        attendu = t["gross_pnl"] - t["fees"] - t["borrow_cost"]
         assert t["pnl"] == pytest.approx(attendu, abs=1e-4), (
             f"trade {t['id']} : brut {t['gross_pnl']} − coûts ≠ net {t['pnl']}"
         )
@@ -129,10 +127,9 @@ def test_net_profit_est_la_vraie_variation_d_equite(resultat):
 
 
 def test_l_ecart_total_pnl_net_profit_vaut_les_frais_d_entree(resultat):
-    """Le seul écart légitime entre les deux agrégats. S'il change, c'est qu'un
-    coût est compté deux fois ou pas du tout."""
-    assert resultat.total_pnl - resultat.net_profit == pytest.approx(
-        resultat.total_entry_fees, abs=1e-3)
+    """F-01 : ``total_pnl`` et ``net_profit`` sont la même grandeur
+    (Σ pnl == variation d'équité). L'écart n'est plus les frais d'entrée."""
+    assert resultat.total_pnl == pytest.approx(resultat.net_profit, abs=1e-3)
 
 
 def test_le_slippage_est_isole_et_non_nul(resultat):

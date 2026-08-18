@@ -6,6 +6,15 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 CI après #235–#237
+
+- Tests : chemin FeatureStore hashé (D-04), F-01 dans le journal / parité
+  golden, ``realistic_risk`` sur les fakes d'optimiseur, early-stop O-08
+  (moitié du budget).
+- E2E : heading replay = « Replay interactif » ; onglet ``batch`` pour le
+  multi-TF.
+- i18n : plus de bascule auto ``navigator.language`` (CI en-US).
+
 ### 🐛 Audit A-02 / ML / UI / données
 
 - **A-02** : backtest / replay / WF / MC tournent dans un ProcessPool spawn
