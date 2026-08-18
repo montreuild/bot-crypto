@@ -643,10 +643,10 @@ def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,
                          fees=0.0, equity_open=equity, equity_close=equity)
         session.add(row)
     # Protection NoneType si colonnes NULL en DB (migration depuis version antérieure)
-    row.trades       = (row.trades or 0) + 1  # type: ignore[assignment,operator]
-    row.wins         = (row.wins or 0) + (1 if win else 0)  # type: ignore[assignment,operator]
-    row.pnl          = round((row.pnl or 0.0) + pnl, 6)  # type: ignore[assignment,arg-type,operator]
-    row.fees         = round((row.fees or 0.0) + fees, 6)  # type: ignore[assignment,arg-type,operator]
+    row.trades       = (row.trades or 0) + 1  # type: ignore[assignment]
+    row.wins         = (row.wins or 0) + (1 if win else 0)  # type: ignore[assignment]
+    row.pnl          = round((row.pnl or 0.0) + pnl, 6)  # type: ignore[arg-type]
+    row.fees         = round((row.fees or 0.0) + fees, 6)  # type: ignore[arg-type]
     row.equity_close = equity  # type: ignore[assignment]
     if not commit:
         return

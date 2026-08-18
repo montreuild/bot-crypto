@@ -2,7 +2,7 @@
 import logging
 import math
 import random
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.engine.opt_workers import _eval_worker, _worker_init
 from app.live.protocols import OptimizerHost
@@ -91,7 +91,7 @@ class OptimizerBayesianMixin(OptimizerHost):
         import optuna
         from optuna.importance import get_param_importances
 
-        evaluator_factories = []
+        evaluator_factories: list[tuple[str, Any]] = []
         try:
             from optuna.importance import FanovaImportanceEvaluator
             evaluator_factories.append(("fANOVA", lambda: FanovaImportanceEvaluator(seed=0)))
@@ -119,7 +119,7 @@ class OptimizerBayesianMixin(OptimizerHost):
         return None
 
     def _optuna_apply_freeze(self, study, screen_results: List[dict],
-                             param_keys: List[str]) -> Optional[dict]:
+                             param_keys: List[str] | None) -> Optional[dict]:
         """Gèle le SAMPLER Optuna (``PartialFixedSampler``) sur les paramètres
         à faible impact, calculé à partir des essais de démarrage du TPE déjà
         joués (en budget). Ne mute JAMAIS ``self.param_space`` : le sampler
@@ -129,17 +129,18 @@ class OptimizerBayesianMixin(OptimizerHost):
         l'écart marginal simple face à des paramètres corrélés), avec repli
         sur l'estimateur marginal partagé (``_impact_scores``) si fANOVA
         échoue ou ne rend aucun signal exploitable."""
-        max_mod = max((len(self.param_space.get(k) or [None]) for k in param_keys),
+        keys = param_keys or []
+        max_mod = max((len(self.param_space.get(k) or [None]) for k in keys),
                       default=1)
-        if len(screen_results) < self._MIN_SCREEN_PER_PARAM * max(len(param_keys), max_mod):
+        if len(screen_results) < self._MIN_SCREEN_PER_PARAM * max(len(keys), max_mod):
             return None
         import optuna
-        own_impacts, best_value_by_param = self._impact_scores(screen_results, param_keys)
-        optuna_impacts = self._optuna_param_importances(study, param_keys)
+        own_impacts, best_value_by_param = self._impact_scores(screen_results, keys)
+        optuna_impacts = self._optuna_param_importances(study, keys)
         impacts = optuna_impacts if optuna_impacts is not None else own_impacts
 
         frozen, kept_keys = self._freeze_params(
-            impacts, best_value_by_param, param_keys,
+            impacts, best_value_by_param, keys,
             screen_results=screen_results)
         if not frozen:
             return None
@@ -157,12 +158,12 @@ class OptimizerBayesianMixin(OptimizerHost):
             _warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
             study.sampler = optuna.samplers.PartialFixedSampler(fixed_indices, study.sampler)
 
-        card_before = math.prod(len(self.param_space[k]) for k in param_keys)
+        card_before = math.prod(len(self.param_space[k]) for k in keys)
         card_after  = math.prod(1 if k in fixed_indices else len(self.param_space[k])
-                                for k in param_keys)
+                                for k in keys)
         logger.info(
             f"[ParamSearchOptim] {self.strategy_name} (bayésien/TPE) : "
-            f"{len(fixed_indices)}/{len(param_keys)} paramètres gelés "
+            f"{len(fixed_indices)}/{len(keys)} paramètres gelés "
             f"(dépistage {len(screen_results)} essais, dans le budget, sampler figé) — "
             f"cardinalité {card_before:,} -> {card_after:,}"
         )

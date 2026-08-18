@@ -6,7 +6,7 @@
 import logging
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import polars as pl
@@ -136,7 +136,7 @@ class Backtester(PositionLifecycleMixin):
         self.ml_mode            = ml_mode
         # Circuit breakers opt-in — off pour préserver la parité des backtests existants.
         self.realistic_risk     = bool(realistic_risk)
-        self._risk_gate         = None
+        self._risk_gate: Any    = None
         bcfg = cfg.get("backtest", {})
         tcfg = cfg.get("trading",  {})
 
@@ -165,8 +165,8 @@ class Backtester(PositionLifecycleMixin):
         # as_declared : la stratégie garde la main — aucun backtest existant ne change.
         self.exit_mode = str(bcfg.get("exit_mode", "as_declared"))
         self.exit_mode_params = dict(bcfg.get("exit_mode_params") or {})
-        self._venue = None
-        self._cost_model = None
+        self._venue: Any = None
+        self._cost_model: dict | None = None
 
     def _sizing_base(self, ctx) -> float:
         """Enveloppe fixe si fournie — pas ``ctx.capital`` (sinon DD pénalisé deux fois)."""
@@ -264,8 +264,8 @@ class Backtester(PositionLifecycleMixin):
         symbol_key      = symbol or DEFAULT_CONFIG_SYMBOL
         window_start_iso = _iso_of(df, 0)
         window_end_iso   = _iso_of(df, -1)
-        ml_info: Dict[str, Dict] = {"mode": ml_mode, "symbol": symbol_key,
-                                    "timeframe": timeframe, "models": {}}
+        ml_info: Dict[str, Any] = {"mode": ml_mode, "symbol": symbol_key,
+                                   "timeframe": timeframe, "models": {}}
         sim_live_entries: List[Dict] = []
         # ML-03 : compter les fit() inline et la longueur de fenêtre reçue.
         from app.ml.fit_trace import start as _fit_start
@@ -311,14 +311,14 @@ class Backtester(PositionLifecycleMixin):
         risk         = _trade_risk_pct(self.cfg)
         threshold    = self.cfg["trading"].get("score_threshold", 0.60)
 
-        trades       = []
+        trades: list[dict] = []
         equity_curve = [capital]
         equity_mtm   = [capital]
         timestamps   = [str(df["time"][0]) if "time" in df.columns else "0"]
         positions: Dict[str, dict] = {}
         trade_id     = 0
 
-        diag = {
+        diag: dict[str, Any] = {
             "bars_total":            0,   # barres parcourues après warmup
             "bars_in_position":      0,   # barres passées avec une position ouverte
             "bars_seeking_signal":   0,   # barres sans position (recherche active)
@@ -422,7 +422,8 @@ class Backtester(PositionLifecycleMixin):
             from app.engine.backtest_risk_gate import BacktestRiskGate
             # `timeframe` est requis : il convertit la durée de pause du live
             # (en secondes) en nombre de bougies.
-            self._risk_gate = BacktestRiskGate.from_config(self.cfg, timeframe=timeframe)
+            self._risk_gate = BacktestRiskGate.from_config(
+                self.cfg, timeframe=timeframe or "1h")
             ctx.risk_gate = self._risk_gate
             logger.info(
                 f"[Backtest] Mode realistic_risk ACTIF — circuit breakers "

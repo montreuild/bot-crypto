@@ -81,6 +81,7 @@ class BacktestResult:
     exit_mode: str
     cost_model: Any
     realistic_risk: bool
+    realistic_risk_diagnostics: Any
     buy_and_hold_pnl: float
     buy_and_hold_pct: float
     alpha: float
