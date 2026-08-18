@@ -14,7 +14,7 @@
 | # | Sévérité | Titre | Fichier | État au 18/08 |
 |---|----------|-------|---------|---------------|
 | B-01 | 🔴 Critique | Les stops et TP sont remplis au niveau, jamais au gap | `backtest.py:928-944` | ✅ résolu — fill à l'open (`gap`) |
-| B-02 | 🔴 Critique | Une seule position à la fois : le backtest ne simule pas le portefeuille | `backtest.py:1611-1613` | ✅ résolu — `positions` dict + `passing_signals` |
+| B-02 | 🔴 Critique | Une seule position à la fois : le backtest ne simule pas le portefeuille | `backtest.py:1611-1613` | ✅ + R-02 — `RiskLedger.reserve` / `release` |
 | B-03 | 🟠 Majeur | Walk-forward : `timeframe` jamais transmis au `Backtester` | `walk_forward.py:103-104` | ✅ résolu |
 | B-04 | 🟠 Majeur | Walk-forward ne réoptimise rien — ce n'est pas un walk-forward | `walk_forward.py:82-110` | ✅ honnête — `kind: stability`, `reoptimizes: false` (pas de re-opt par fold) |
 | B-05 | 🟠 Majeur | `min_notional` vérifié avant `partial_fill`, jamais après | `backtest.py:1184-1210` | ✅ résolu |

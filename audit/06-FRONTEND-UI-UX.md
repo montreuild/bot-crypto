@@ -14,7 +14,7 @@
 | U-02 | 🟠 Majeur | L'UI présente comme des mesures des valeurs sentinelles et des Sharpe absurdes | `cards/kpi-cards.tsx`, `views/optimizer-view.tsx` |
 | U-03 | 🟠 Majeur | Sondage permanent : ≈ 40 requêtes/min par onglet, en plus du WebSocket | `hooks/use-api.ts` |
 | U-04 | 🟠 Majeur | 98 composants sur 122 sont `'use client'` — le SSR ne sert à rien | ✅ atténué — `dynamic()` lab + portfolio |
-| U-05 | 🟡 Moyen | 212 usages de `any` / `as any` : les types du backend ne protègent rien | 40 fichiers |
+| U-05 | 🟡 Moyen | 212 usages de `any` / `as any` : les types du backend ne protègent rien | ✅ atténué — `StrategyStats.sharpe` nullable, OpenAPI exportable, `errorMessage()` |
 | U-06 | 🟡 Moyen | ~39 champs de saisie sans étiquette associée | ✅ atténué — lab/settings ont Label/aria-label |
 | U-07 | 🟡 Moyen | `dangerouslySetInnerHTML` sur du texte venant du backend | `cards/optimizer-warnings.tsx:50` |
 | U-08 | 🟡 Moyen | Quatre composants de plus de 700 lignes, jusqu'à 1 558 | `views/optimizer-view.tsx` |

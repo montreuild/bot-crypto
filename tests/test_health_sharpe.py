@@ -85,7 +85,8 @@ def trader(tmp_path):
 
 
 def test_sharpe_matches_backtest_style_formula(trader):
-    pnls_in_order = [50.0, -20.0, 30.0]
+    # R-01 : F-02 exige MIN_SIGNIFICANT_TRADES (10), plus 3.
+    pnls_in_order = [50.0, -20.0, 30.0, 10.0, -8.0, 12.0, -5.0, 7.0, -3.0, 9.0]
     with session_scope(trader.SessionLocal) as sess:
         for i, p in enumerate(pnls_in_order):
             _insert_trade(sess, pnl=p, fees=0.1, strategy="trend_rider",
@@ -102,7 +103,7 @@ def test_sharpe_uses_chronological_order_not_db_desc_order(trader):
     inverserait la courbe d'équité synthétique et fausserait complètement
     le Sharpe (asymétrique par construction ici : gain suivi de deux pertes
     vs. deux pertes suivies d'un gain donnent des Sharpe différents)."""
-    pnls_chronological = [80.0, -10.0, -10.0]
+    pnls_chronological = [80.0, -10.0, -10.0, 5.0, -4.0, 6.0, -3.0, 8.0, -2.0, 4.0]
     with session_scope(trader.SessionLocal) as sess:
         for i, p in enumerate(pnls_chronological):
             _insert_trade(sess, pnl=p, fees=0.0, strategy="trend_rider",
@@ -122,20 +123,24 @@ def test_sharpe_uses_dominant_timeframe_annualization(trader):
     """La stratégie trade sur deux TF mélangés dans la DB — l'annualisation
     doit suivre le TF majoritaire (4h ici, 2 trades contre 1)."""
     with session_scope(trader.SessionLocal) as sess:
-        _insert_trade(sess, pnl=40.0, fees=0.0, strategy="trend_rider",
-                      timeframe="4h", seconds_offset=0)
-        _insert_trade(sess, pnl=-15.0, fees=0.0, strategy="trend_rider",
-                      timeframe="1h", seconds_offset=3600)
-        _insert_trade(sess, pnl=25.0, fees=0.0, strategy="trend_rider",
-                      timeframe="4h", seconds_offset=7200)
+        seq = [
+            (40.0, "4h"), (-15.0, "1h"), (25.0, "4h"), (8.0, "4h"),
+            (-6.0, "4h"), (11.0, "4h"), (-4.0, "1h"), (7.0, "4h"),
+            (-3.0, "4h"), (9.0, "4h"),
+        ]
+        for i, (p, tf) in enumerate(seq):
+            _insert_trade(sess, pnl=p, fees=0.0, strategy="trend_rider",
+                          timeframe=tf, seconds_offset=i * 3600)
 
     stats = trader._load_db_stats()
     got = stats["by_strategy"]["trend_rider"]["sharpe"]
-    expected = _expected_sharpe(trader.risk.initial_capital, [40.0, -15.0, 25.0], "4h")
+    expected = _expected_sharpe(
+        trader.risk.initial_capital, [p for p, _ in seq], "4h")
     assert got == expected
 
 
-def test_sharpe_zero_with_fewer_than_three_trades(trader):
+def test_sharpe_none_under_min_significant_trades(trader):
+    """R-01 : sous 10 trades le live publie None, pas 0.0."""
     with session_scope(trader.SessionLocal) as sess:
         _insert_trade(sess, pnl=10.0, fees=0.0, strategy="trend_rider",
                       timeframe="1h", seconds_offset=0)
@@ -143,4 +148,4 @@ def test_sharpe_zero_with_fewer_than_three_trades(trader):
                       timeframe="1h", seconds_offset=3600)
 
     stats = trader._load_db_stats()
-    assert stats["by_strategy"]["trend_rider"]["sharpe"] == 0.0
+    assert stats["by_strategy"]["trend_rider"]["sharpe"] is None

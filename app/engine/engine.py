@@ -27,6 +27,15 @@ class BaseStrategy:
         """Nombre minimum de bougies requis pour calculer les indicateurs."""
         return 50
 
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """P-01 : mémorise le frame complet (O(n) une fois).
+
+        Les stratégies qui recalculent des EMA / HTF via ``ema_window``
+        lisent ``_bt_full_df``. Celles qui n'utilisent que ``_pre_*``
+        ignorent ce cache — no-op inoffensif.
+        """
+        self._bt_full_df = df
+
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         """Retourne {"score": float [0-1], "side": "long"|"short"|"none", "name": str}."""

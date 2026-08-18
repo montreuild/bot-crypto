@@ -101,7 +101,7 @@ Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
 | ID | Tâche | SP | Statut |
 |---|---|---|---|
 | S3-01 | Optimiser/forward-tester par symbole | 5 | ⏳ Reporté |
-| S3-02 | Implémenter le Deflated Sharpe au gate de naissance | 3 | ✅ Fait (app/core/deflated_sharpe.py) |
+| S3-02 | Implémenter le Deflated Sharpe au gate de naissance | 3 | ✅ Fait (`opt_scoring.deflated_sharpe_ratio`) |
 | S3-03 | Exiger ≥ 10 trades OOS minimum | 2 | ⏳ Reporté |
 | S3-04 | Walk-forward dans la décision d'apply | 3 | ⏳ Reporté |
 | S3-05 | Cône d'edge + contrat Monte-Carlo glissant | 5 | ✅ Déjà fait (app/core/oos_tracker.py) |

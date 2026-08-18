@@ -111,7 +111,8 @@ export interface StrategyStats {
   total_fees: number;
   total_trades: number;
   profit_factor: number;
-  sharpe: number;
+  /** R-01 : null sous MIN_SIGNIFICANT_TRADES (10) — non mesurable, pas 0. */
+  sharpe: number | null;
   max_drawdown: number;
 }
 
@@ -311,8 +312,21 @@ export interface Bot {
   state: 'candidat' | 'essai' | 'actif' | 'retire';
   identity?: BotIdentity;
   budget?: SlotBudget;
-  sim?: any;
-  monte_carlo?: any;
+  sim?: {
+    n_trades?: number;
+    sharpe?: number | null;
+    total_pnl?: number;
+    win_rate?: number;
+    max_drawdown?: number;
+    [key: string]: unknown;
+  };
+  monte_carlo?: {
+    max_dd_p95?: number;
+    prob_profit?: number;
+    p5?: number;
+    p95?: number;
+    [key: string]: unknown;
+  };
   edge?: {
     available: boolean;
     ci_low_pct?: number;
@@ -325,7 +339,12 @@ export interface Bot {
   force_active?: boolean;
   /** @deprecated Ancien nom de `force_active` — encore émis par l'API. */
   manual_active?: boolean;
-  live?: any;
+  live?: {
+    n_trades?: number;
+    sharpe?: number | null;
+    total_pnl?: number;
+    [key: string]: unknown;
+  };
   contract?: {
     verdict?: string;
     in_band?: boolean;
@@ -409,7 +428,7 @@ export interface BacktestResult {
   win_rate: number;
   total_pnl: number;
   total_fees: number;
-  sharpe: number;
+  sharpe: number | null;
   expectancy: number;
   max_drawdown: number;
   profit_factor: number;

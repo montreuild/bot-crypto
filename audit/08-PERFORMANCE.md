@@ -19,7 +19,7 @@
 
 | # | Sévérité | Titre | Fichier |
 |---|----------|-------|---------|
-| P-01 | 🟠 Majeur → atténué | Boucle de backtest en Python pur : ~3 000 barres/s au mieux | `engine/backtest.py:1541-1635` |
+| P-01 | 🟠 Majeur → atténué | Boucle de backtest en Python pur : ~3 000 barres/s au mieux | ✅ atténué — `prepare_for_backtest` défaut + P-05 `df.slice` / `bar_index` ; reste la boucle barre-à-barre |
 | P-02 | 🟠 Majeur | Un appel exchange par position et par cycle, multiplié par 5 chemins | `live/*`, `A-04` |
 | P-03 | 🟠 Majeur | `_find_strategy` en O(k) appelé 2× par barre | ✅ dict O(1) |
 | P-04 | 🟡 Moyen | `alpha_vs_buy_hold` en O(n²) | ✅ = F-13 |

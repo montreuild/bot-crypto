@@ -111,7 +111,7 @@ Les seuls symboles à **zéro référence** dans tout le corpus (439 fichiers :
 | `app/engine/regime_stress_test.py` | `regime_summary`, `stress_test_by_regime` | Idem |
 | `app/ml/overfitting_gate.py` | `compute_auc_oos`, `validate_model_quality` | ⚠ Un « gate anti-surapprentissage » non appelé est un **risque produit**, pas du code mort à supprimer |
 | `app/live/live_trader.py` | `_get_cached_atr`, `persist_allocator_state` | ⚠ `persist_allocator_state` : vérifier que la persistance passe bien par un autre chemin |
-| `app/core/deflated_sharpe.py` | `is_deflated_sharpe_significant` | Le module a un test dédié (`test_deflated_sharpe.py`) mais cette fonction n'y figure pas |
+| `app/engine/opt_scoring.py` | `deflated_sharpe_ratio` | Bailey & LdP — `core/deflated_sharpe.py` retiré (X-01) |
 | `app/core/performance_metrics.py` | `compute_extended_metrics` | |
 | `app/core/exchange.py` | `RobustExchange.fetch_margin_balance_usdc` | ⚠ Marge : vérifier avant de toucher |
 | `app/core/events.py` | `publish_ticker` | |

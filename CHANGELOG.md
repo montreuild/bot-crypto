@@ -3,12 +3,26 @@
 Historique des versions du Crypto Bot.
 
 > X-07 : l'état **actuel** des constats d'audit est dans
-> [`audit/14-REVISION-2026-08-18.md`](audit/14-REVISION-2026-08-18.md),
+> [`audit/15-REVISION-2026-08-18.md`](audit/15-REVISION-2026-08-18.md),
 > pas dans ce fichier (narratif historique, parfois en retard).
 
 ---
 
 ## [Non publié]
+
+### 🐛 R-01 / R-02 / X-01 / U-05 / P-01
+
+- **R-01** : Sharpe live = `None` sous 10 trades (`MIN_SIGNIFICANT_TRADES`),
+  plus `0.0` dès 3. `/portfolio` affiche `MetricValue` (pas de `.toFixed` sur
+  null). `/api/trades` slot : même plancher.
+- **R-02** : le backtest réserve via `RiskLedger` (min_notional, slot, symbole,
+  venue) ; `release` à la clôture ; scale-in via `reserve` + `resize`.
+- **X-01** : `app/core/deflated_sharpe.py` (heuristique morte) supprimé. Les
+  cinq autres modules listés étaient déjà câblés.
+- **U-05** : `sharpe: number \| null`, types `sim`/`live`/`monte_carlo`,
+  `errorMessage()`, `scripts/export_openapi.py`.
+- **P-01** : `BaseStrategy.prepare_for_backtest` mémorise le frame (O(n) une
+  fois) pour les EMA / HTF causaux.
 
 ### 🐛 Type-check CI
 

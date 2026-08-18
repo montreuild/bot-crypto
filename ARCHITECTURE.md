@@ -272,8 +272,9 @@ Backtester(engine, cfg, realistic_risk=True)  # opt / WF / FT ; lab opt-in
   (15 règles : échantillon, PnL, outliers, frais, Sharpe, DD, alpha, régimes).
 - `app/core/performance_metrics.py` — métriques étendues (S3-07, désormais
   appelé par `BacktestResult._compute_metrics()`).
-- `app/core/deflated_sharpe.py` — Deflated Sharpe Ratio (López de Prado 2014),
-  câblé dans `opt_scoring.beats_baseline()` comme gate de naissance.
+- `app/engine/opt_scoring.deflated_sharpe_ratio` — Deflated Sharpe (Bailey &
+  López de Prado 2014), câblé dans `beats_baseline()`. L'ancienne heuristique
+  `app/core/deflated_sharpe.py` a été retirée (X-01 / F-07).
 
 ### CandleStore — Flux de données V12
 
