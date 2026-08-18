@@ -10,7 +10,7 @@ import os
 import threading
 from copy import deepcopy
 from datetime import datetime
-from typing import Dict, List
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +204,7 @@ def _append_changelog(config_path: str, strategy: str, timeframe: str,
     # Utiliser le répertoire du fichier config (résolu en absolu)
     abs_config = config_path if os.path.isabs(config_path) else os.path.abspath(config_path)
     changelog_path = os.path.join(os.path.dirname(abs_config), "optimizer_changelog.json")
-    entry = {
+    entry: Dict[str, Any] = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "source":    "optimizer",
         "strategy":  strategy,

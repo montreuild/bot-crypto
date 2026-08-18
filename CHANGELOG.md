@@ -10,6 +10,14 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 ARCH-04 + FE-03
+
+- **ARCH-04** : 9 modules de plus hors `ignore_errors` (yaml_io, smc.quality,
+  opt_freeze, opt_persistence, smc_signals_scan, audit_log, bot_identity,
+  market_calendar, walk_forward). **24** restants.
+- **FE-03** : `gen_frontend_types.py` émet tous les modèles publics de
+  `app.api.schemas` (corps POST inclus). `index.ts` réexporte `generated.ts`.
+
 ### 🐛 TEST-05 / PERF-03 / FE-01 / ML-04
 
 - **TEST-05 / PERF-03** : fixture `gapped_ohlcv` (trous) ; test `slow` de

@@ -17,12 +17,12 @@ import logging
 import os
 import threading
 
-import yaml as _pyyaml
+import yaml as _pyyaml  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 
 try:
-    from ruamel.yaml import YAML  # type: ignore
+    from ruamel.yaml import YAML
     _RUAMEL = True
 
     def _new_yaml() -> "YAML":

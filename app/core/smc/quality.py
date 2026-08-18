@@ -74,7 +74,7 @@ def valeur_attendue(niveau: float, entree: float, risque: float,
 # ── §67 — dealing range explicite ───────────────────────────────────────────
 
 def dealing_range(res: dict, i: int, mode: str = "swing",
-                  lookback: int = 200) -> Optional[Dict[str, float]]:
+                  lookback: int = 200) -> Optional[Dict[str, Any]]:
     """Range de travail à la barre ``i``, avec sa provenance.
 
     ``mode`` : ``swing`` (dernier haut/bas confirmés), ``htf`` (extrêmes des

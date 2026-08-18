@@ -178,8 +178,9 @@ si une refonte modulaire du backend est décidée par ailleurs.
 - **Suivre les `move` littéralement.** Déplacer du code de production dans la
   communauté des tests n'a pas de sens.
 - **Traiter ce plan avant la dette frontend.** Le backend est vert
-  (1392 tests passés) ; c'est le frontend qui portait les vrais défauts, et
-  c'est là que le typage des réponses d'API reste à faire.
+  (pytest `not slow`) ; le typage des réponses chaudes est en place
+  (`app/api/schemas.py` → `frontend/src/types/generated.ts`, FE-03).
+  Il reste `index.ts` pour les contrats UI plus riches.
 
 ---
 
