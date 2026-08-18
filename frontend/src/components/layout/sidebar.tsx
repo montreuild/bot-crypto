@@ -91,7 +91,7 @@ export function Sidebar() {
                     className={cn(
                       'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all',
                       active
-                        ? 'bg-primary-500/10 text-primary-400 border-l-2 border-primary-400'
+                        ? 'bg-primary-500/10 text-primary-800 dark:text-primary-400 border-l-2 border-primary-700 dark:border-primary-400'
                         : 'text-muted hover:text-foreground hover:bg-card-hover',
                     )}
                   >
