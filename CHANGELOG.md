@@ -10,6 +10,17 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 Type-check CI
+
+- Walk-forward : clé de ligne sans ``fold`` / ``start`` (absents de ``FoldResult``).
+
+### 🐛 a11y contraste thème clair
+
+- `--dim` light : `#475569` (AA 4.5:1 sur fond blanc).
+- Lien nav actif : `text-primary-800` en clair (plus de cyan-400 sur cyan pâle).
+- Bouton primary : texte `slate-900` sur `primary-500` (le `text-background`
+  devenait blanc cassé en thème clair).
+
 ### 🐛 Reste d'audit (hors X-01 / X-02 / X-06)
 
 - **P-03** : `_find_strategy` en dict O(1).

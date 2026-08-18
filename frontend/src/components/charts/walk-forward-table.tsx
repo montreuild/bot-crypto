@@ -153,7 +153,7 @@ export function WalkForwardTable({ data }: { data: WalkForwardData }) {
                 // la signature d'un surapprentissage.
                 const isPnl = inSample[i] ? Number(inSample[i].total_pnl ?? 0) : null;
                 return (
-                  <tr key={String(f.fold ?? f.start ?? i)} className="border-b border-border/30 hover:bg-card-hover">
+                  <tr key={`wf-oos-${i}-${Number(f.total_pnl ?? 0)}-${f.total_trades ?? 0}`} className="border-b border-border/30 hover:bg-card-hover">
                     <th scope="row" className="p-2 font-medium text-left text-muted">#{i + 1}</th>
                     <td className={cn('p-2 text-right font-mono', pnl >= 0 ? 'text-emerald-400' : 'text-red-400')}>
                       {formatUSD(pnl)}
