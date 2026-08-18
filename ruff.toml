@@ -2,7 +2,7 @@
 # line-length=120 aligné sur la convention documentée dans CONTRIBUTING.md
 # (PEP 8, line length 120 chars) pour éviter un reformatage de masse.
 line-length = 120
-target-version = "py312"
+target-version = "py314"
 
 extend-exclude = [
     "__pycache__",

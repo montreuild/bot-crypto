@@ -30,20 +30,12 @@ from app.core.risk_curve import risk_multiplier as _risk_multiplier
 from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
 from app.core.risk_envelope import with_reference_envelope
 from app.core.risk_sizer import _floor_to
+from app.core.sanitize import safe_float as _sf
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 from app.core.timeframes import bars_per_year as _bars_per_year
 from app.core.trade_economics import funding_cost as _funding_cost
 from app.core.trailing import TrailingStopManager
 from app.engine.engine import Engine
-
-
-def _sf(v, fallback=None):
-    """Safe float : convertit nan/inf en fallback pour JSON."""
-    try:
-        f = float(v)
-        return fallback if (math.isnan(f) or math.isinf(f)) else f
-    except (TypeError, ValueError):
-        return fallback
 
 logger = logging.getLogger(__name__)
 
@@ -751,14 +743,18 @@ class Backtester:
         return float(getattr(self._venue, "min_notional", 0.0) or 0.0)
 
     def _find_strategy(self, name: str):
-        """Récupère l'instance Strategy par son nom (pour les hooks comme
-        ``check_early_exit``). Retourne None si introuvable."""
+        """Récupère l'instance Strategy par son nom (P-03 : O(1), pas O(k))."""
         if not name:
             return None
-        for s in self.engine.strategies:
-            if getattr(s, "name", None) == name:
-                return s
-        return None
+        cache = getattr(self, "_strat_by_name", None)
+        if cache is None:
+            cache = {
+                getattr(s, "name", None): s
+                for s in self.engine.strategies
+                if getattr(s, "name", None)
+            }
+            self._strat_by_name = cache
+        return cache.get(name)
 
     def _make_trailing(self, override: dict = None):
         ov = override or {}
@@ -1773,7 +1769,9 @@ class Backtester:
                         f"rej_notional={diag['rejected_notional']} "
                         f"rej_atr={diag['rejected_atr_zero']}"
                     )
-            ctx.window = df[:i + 1]
+            # P-05 : slice zéro-copie (pas une reconstruction Python df[:i+1]).
+            ctx.window = df.slice(0, i + 1)
+            ctx.bar_index = i
 
             # ── ml_mode="simulated_live" : rafraîchissement aux frontières de
             # cadence, indépendamment de la gestion de position (comme le

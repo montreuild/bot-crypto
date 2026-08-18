@@ -34,7 +34,7 @@ const NAV_GROUPS = [
     labelKey: 'nav.data',
     items: [
       { href: '/data', labelKey: 'nav.data_ohlcv', icon: Database },
-      { href: '/models', labelKey: 'nav.ml', icon: Archive },
+      { href: '/models', labelKey: 'nav.models', icon: Archive },
     ],
   },
   {

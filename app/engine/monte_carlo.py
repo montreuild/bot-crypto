@@ -14,23 +14,11 @@ statistiques avec la méthode adaptée (BT-02) :
 
 Ré-exportée depuis ``app.engine.backtest`` pour compatibilité ascendante.
 """
-import math
 from typing import List
 
 import numpy as np
 
-
-def _sf(v, fallback=None):
-    """Safe float : convertit nan/inf en fallback pour JSON.
-
-    Dupliqué depuis ``app.engine.backtest`` pour éviter un import circulaire
-    (backtest ré-exporte MonteCarlo en fin de module).
-    """
-    try:
-        f = float(v)
-        return fallback if (math.isnan(f) or math.isinf(f)) else f
-    except (TypeError, ValueError):
-        return fallback
+from app.core.sanitize import safe_float as _sf
 
 
 # ── Monte-Carlo ──

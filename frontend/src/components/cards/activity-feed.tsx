@@ -40,7 +40,7 @@ export function ActivityFeedList({ items }: { items: any[] }) {
         const level = n.level || 'info';
         return (
           <div
-            key={i}
+            key={String(n.id ?? n.ts ?? n.message ?? i)}
             className="flex items-start gap-3 p-3 rounded-lg bg-card-hover border border-border"
           >
             <div className={cn('mt-0.5', LEVEL_COLOR[level] || 'text-muted')}>

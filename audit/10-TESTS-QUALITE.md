@@ -29,11 +29,11 @@
 |---|----------|-------|
 | T-01 | 🟠 Majeur | Les tests vérifient la présence des champs, pas leur signification |
 | T-02 | 🟠 Majeur | 34 modules sans aucun test, dont plusieurs sur le chemin critique |
-| T-03 | 🟠 Majeur | Aucun seuil de couverture Python, aucune mesure en CI |
-| T-04 | 🟡 Moyen | Aucun test de propriété/invariant sur la comptabilité monétaire |
-| T-05 | 🟡 Moyen | Les tests `slow` sont exclus de la CI sans être joués ailleurs |
-| T-06 | 🟡 Moyen | `mypy` absent de la CI et configuré pour ne rien signaler (cf. S-06) |
-| T-07 | 🔵 Mineur | Linters ciblés Python 3.12, runtime en 3.14 |
+| T-03 | 🟠 Majeur | Aucun seuil de couverture Python, aucune mesure en CI | ✅ `--cov-fail-under=25` |
+| T-04 | 🟡 Moyen | Aucun test de propriété/invariant sur la comptabilité monétaire | ✅ journal F-01 + MC p95 |
+| T-05 | 🟡 Moyen | Les tests `slow` sont exclus de la CI sans être joués ailleurs | ✅ workflow hebdo `slow.yml` |
+| T-06 | 🟡 Moyen | `mypy` absent de la CI et configuré pour ne rien signaler (cf. S-06) | ✅ = S-06 |
+| T-07 | 🔵 Mineur | Linters ciblés Python 3.12, runtime en 3.14 | ✅ py314 |
 
 ---
 

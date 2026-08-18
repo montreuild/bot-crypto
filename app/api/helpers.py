@@ -123,17 +123,23 @@ def _get_bt_exchange(cfg: dict):
 _STRATEGY_CLASS_RE = re.compile(r"^class\s+Strategy\b", re.MULTILINE)
 
 
+_STRATEGY_FILE_CACHE: dict = {}  # path -> (mtime, bool)
+
+
 def _module_defines_strategy(path: str) -> bool:
     """True si le fichier définit ``class Strategy``.
 
-    Le test se fait sur le TEXTE, pas par import : importer les ~45 modules
-    de stratégies à chaque expiration de cache coûterait plusieurs secondes
-    (LightGBM, polars…) et exécuterait leur code au niveau module pour une
-    simple question de nommage.
+    P-09 : le contenu n'est relu que si le mtime a changé.
     """
     try:
+        mtime = os.path.getmtime(path)
+        hit = _STRATEGY_FILE_CACHE.get(path)
+        if hit and hit[0] == mtime:
+            return hit[1]
         with open(path, "r", encoding="utf-8") as fh:
-            return bool(_STRATEGY_CLASS_RE.search(fh.read()))
+            ok = bool(_STRATEGY_CLASS_RE.search(fh.read()))
+        _STRATEGY_FILE_CACHE[path] = (mtime, ok)
+        return ok
     except OSError as e:
         logger.warning(f"[Strategies] Lecture impossible de {path} : {e}")
         return False

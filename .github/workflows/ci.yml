@@ -19,6 +19,20 @@ jobs:
       - name: Ruff check
         run: ruff check .
 
+  mypy:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Mypy (modules purs)
+        run: python -m mypy app/core/sanitize.py app/core/ohlcv_gaps.py app/ml/overfitting_gate.py
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -33,6 +47,7 @@ jobs:
         run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Run tests
         run: python -m pytest tests/ -q --tb=short -m "not slow"
+          --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=25
 
   security:
     runs-on: ubuntu-latest

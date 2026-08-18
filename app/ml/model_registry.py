@@ -151,10 +151,16 @@ def train_window_bounds(df) -> Dict[str, Any]:
     return {"train_start": t0, "train_end": t1, "n_bars": n}
 
 
+def _hash_default(obj: Any) -> str:
+    """M-08 : ``default=str`` collisait (datetime vs str identique)."""
+    return f"{type(obj).__module__}.{type(obj).__qualname__}:{obj!r}"
+
+
 def recipe_hash(recipe_cfg: Optional[Dict[str, Any]]) -> str:
     """Hash canonique d'une recette (dict JSON-sérialisable) — identifie la
     recette dans le registre indépendamment de la stratégie appelante."""
-    canon = json.dumps(recipe_cfg or {}, sort_keys=True, default=str)
+    canon = json.dumps(recipe_cfg or {}, sort_keys=True, default=_hash_default,
+                       separators=(",", ":"))
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
@@ -163,9 +169,17 @@ _GIT_COMMIT_CACHE: Optional[str] = ""  # "" = pas encore résolu, None = résolu
 
 def git_commit() -> Optional[str]:
     """Commit git court du HEAD courant (mis en cache par process). ``None``
-    si hors dépôt git (ex. déploiement par archive)."""
+    si hors dépôt git (ex. déploiement par archive).
+
+    S-09 : ``GIT_COMMIT`` / ``SOURCE_DATE_EPOCH`` évitent le subprocess
+    (image Docker, CI). Sinon un seul ``rev-parse`` par process.
+    """
     global _GIT_COMMIT_CACHE
     if _GIT_COMMIT_CACHE != "":
+        return _GIT_COMMIT_CACHE
+    env = os.environ.get("GIT_COMMIT") or os.environ.get("SOURCE_GIT_COMMIT")
+    if env:
+        _GIT_COMMIT_CACHE = env.strip()[:12]
         return _GIT_COMMIT_CACHE
     try:
         out = subprocess.run(

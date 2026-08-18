@@ -1097,11 +1097,16 @@ class OptimizerSearchEngine:
         safe = max(1, min(n_jobs, max(1, _cpu - 1)))
         # Estimation prudente ~5× le payload IPC + 256 Mo (features + LightGBM).
         try:
-            _buf_is = io.BytesIO()
-            self.df_is.write_ipc(_buf_is)
-            _buf_oos = io.BytesIO()
-            self.df_oos.write_ipc(_buf_oos)
-            per_worker = int((_buf_is.tell() + _buf_oos.tell()) * 5) + 256 * 1024 * 1024
+            # P-06 : réutilise la sérialisation déjà faite, pas un 2e write_ipc.
+            cached = getattr(self, "_pool_ipc_sizes", None)
+            if cached is None:
+                _buf_is = io.BytesIO()
+                self.df_is.write_ipc(_buf_is)
+                _buf_oos = io.BytesIO()
+                self.df_oos.write_ipc(_buf_oos)
+                cached = _buf_is.tell() + _buf_oos.tell()
+                self._pool_ipc_sizes = cached
+            per_worker = int(cached * 5) + 256 * 1024 * 1024
             safe = _mem_aware_max_workers(safe, per_worker)
         except Exception:
             pass

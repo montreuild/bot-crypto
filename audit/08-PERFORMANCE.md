@@ -21,14 +21,14 @@
 |---|----------|-------|---------|
 | P-01 | 🟠 Majeur → atténué | Boucle de backtest en Python pur : ~3 000 barres/s au mieux | `engine/backtest.py:1541-1635` |
 | P-02 | 🟠 Majeur | Un appel exchange par position et par cycle, multiplié par 5 chemins | `live/*`, `A-04` |
-| P-03 | 🟠 Majeur | `_find_strategy` en O(k) appelé 2× par barre | `engine/backtest.py:655-663` |
-| P-04 | 🟡 Moyen | `alpha_vs_buy_hold` en O(n²) | `core/performance_metrics.py:164-165` |
-| P-05 | 🟡 Moyen | `ctx.window = df[:i+1]` reconstruit à chaque barre | `engine/backtest.py:1582` |
-| P-06 | 🟡 Moyen | Sérialisation IPC des DataFrames répétée dans `_safe_worker_count` | `engine/optimizer_search.py` |
-| P-07 | 🟡 Moyen | `_reconcile_close_costs` demande tout l'historique depuis l'ouverture | `live/position_close_mixin.py:68-76` |
-| P-08 | 🟡 Moyen | Bundle frontend monolithique : 98 composants clients, aucun `next/dynamic` | `frontend/src` |
-| P-09 | 🔵 Mineur | `_module_defines_strategy` relit 45 fichiers toutes les 60 s | `api/helpers.py:125-163` |
-| P-10 | 🔵 Mineur | `oos_tracker._save_record` relit et réécrit tout le JSON à chaque slot | `core/oos_tracker.py` |
+| P-03 | 🟠 Majeur | `_find_strategy` en O(k) appelé 2× par barre | ✅ dict O(1) |
+| P-04 | 🟡 Moyen | `alpha_vs_buy_hold` en O(n²) | ✅ = F-13 |
+| P-05 | 🟡 Moyen | `ctx.window = df[:i+1]` reconstruit à chaque barre | ✅ `df.slice` + `bar_index` |
+| P-06 | 🟡 Moyen | Sérialisation IPC des DataFrames répétée dans `_safe_worker_count` | ✅ taille mémoïsée |
+| P-07 | 🟡 Moyen | `_reconcile_close_costs` demande tout l'historique depuis l'ouverture | ✅ `since` + `limit=50` |
+| P-08 | 🟡 Moyen | Bundle frontend monolithique : 98 composants clients, aucun `next/dynamic` | ✅ atténué — `dynamic()` lab + portfolio |
+| P-09 | 🔵 Mineur | `_module_defines_strategy` relit 45 fichiers toutes les 60 s | ✅ cache mtime |
+| P-10 | 🔵 Mineur | `oos_tracker._save_record` relit et réécrit tout le JSON à chaque slot | ✅ = D-05 |
 
 ---
 

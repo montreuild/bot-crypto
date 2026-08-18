@@ -17,10 +17,10 @@
 | S-03 | 🟡 Moyen | Clé API acceptée en query string du WebSocket | `routes/ws.py` | ✅ résolu — `ALLOW_WS_QUERY_KEY=1` seulement |
 | S-04 | 🟡 Moyen | Le cookie `api_key` ne porte `Secure` que sous condition | `frontend/src/app/api/[...path]/route.ts:103` | ✅ résolu — `x-forwarded-proto: https` |
 | S-05 | 🟡 Moyen | `notifications.crash_include_log` peut exfiltrer positions et soldes | `config/ops.yaml`, `deploy/notify-crash.py` | ✅ atténué — caviardage pnl/size/capital |
-| S-06 | 🟡 Moyen | `mypy` configuré très permissif et absent de la CI | `mypy.ini`, `.github/workflows/ci.yml` | ouvert |
+| S-06 | 🟡 Moyen | `mypy` configuré très permissif et absent de la CI | `mypy.ini`, `.github/workflows/ci.yml` | ✅ job CI (continue-on-error) + 3.14 |
 | S-07 | 🔵 Mineur | Le handler global renvoie le type d'exception | `api/middleware.py:49` | ✅ résolu — `correlation_id` |
-| S-08 | 🔵 Mineur | 4 dépendances non épinglées sur 32 | `requirements.txt` | ouvert |
-| S-09 | 🔵 Mineur | `git_commit()` lance un `subprocess` par process | `ml/model_registry.py:171` | ouvert |
+| S-08 | 🔵 Mineur | 4 dépendances non épinglées sur 32 | `requirements.txt` | ✅ déjà `==` partout |
+| S-09 | 🔵 Mineur | `git_commit()` lance un `subprocess` par process | `ml/model_registry.py:171` | ✅ cache + `GIT_COMMIT` |
 
 > Détail : [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
 

@@ -13,12 +13,12 @@
 | U-01 | 🟠 Majeur | Le système i18n n'est branché nulle part | `lib/i18n.tsx` |
 | U-02 | 🟠 Majeur | L'UI présente comme des mesures des valeurs sentinelles et des Sharpe absurdes | `cards/kpi-cards.tsx`, `views/optimizer-view.tsx` |
 | U-03 | 🟠 Majeur | Sondage permanent : ≈ 40 requêtes/min par onglet, en plus du WebSocket | `hooks/use-api.ts` |
-| U-04 | 🟠 Majeur | 98 composants sur 122 sont `'use client'` — le SSR ne sert à rien | tout `frontend/src` |
+| U-04 | 🟠 Majeur | 98 composants sur 122 sont `'use client'` — le SSR ne sert à rien | ✅ atténué — `dynamic()` lab + portfolio |
 | U-05 | 🟡 Moyen | 212 usages de `any` / `as any` : les types du backend ne protègent rien | 40 fichiers |
-| U-06 | 🟡 Moyen | ~39 champs de saisie sans étiquette associée | 61 `<input>` / 22 `htmlFor` |
+| U-06 | 🟡 Moyen | ~39 champs de saisie sans étiquette associée | ✅ atténué — lab/settings ont Label/aria-label |
 | U-07 | 🟡 Moyen | `dangerouslySetInnerHTML` sur du texte venant du backend | `cards/optimizer-warnings.tsx:50` |
 | U-08 | 🟡 Moyen | Quatre composants de plus de 700 lignes, jusqu'à 1 558 | `views/optimizer-view.tsx` |
-| U-09 | 🟡 Moyen | `key={i}` sur des listes qui changent d'ordre | 19 emplacements |
+| U-09 | 🟡 Moyen | `key={i}` sur des listes qui changent d'ordre | ✅ atténué — clés stables sur listes métier |
 | U-10 | 🟡 Moyen | Le mode expert a deux sources de vérité qui peuvent diverger | `app/lab/page.tsx:139-145` |
 | U-11 | 🔵 Mineur | `lang="fr"` figé sur `<html>` | `app/layout.tsx` |
 | U-12 | 🔵 Mineur | Le nom des onglets vit dans l'URL sans être validé | `app/lab/page.tsx`, `app/market/page.tsx` |

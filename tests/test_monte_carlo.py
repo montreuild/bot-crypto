@@ -28,9 +28,13 @@ def test_prob_profit_is_a_real_probability():
 
 
 def test_drawdown_stats_still_present():
-    res = MonteCarlo(n_runs=100).run(_trades([10, -5, 8, -4]), 1000.0)
+    """T-01 : le p95 de DD est un quantile de risque, pas seulement un champ ≥ 0."""
+    pnls = [10, -5, 8, -4, 12, -7]
+    res = MonteCarlo(n_runs=200).run(_trades(pnls), 1000.0)
     assert res["max_dd_p95"] >= 0.0
     assert 0.0 <= res["prob_ruin_10pct"] <= 100.0
+    realized = _realized_max_dd_pct(pnls, 1000.0)
+    assert res["max_dd_p95"] + 1e-9 >= realized
 
 
 def _realized_max_dd_pct(pnls, initial_capital):
