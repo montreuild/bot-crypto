@@ -17,7 +17,8 @@ def test_backtester_tracks_peak_and_applies_curve():
     import inspect
 
     from app.engine import backtest
-    src = inspect.getsource(backtest)
+    from app.engine import position_lifecycle
+    src = inspect.getsource(backtest) + inspect.getsource(position_lifecycle)
     assert "peak_capital" in src
     assert "_risk_multiplier(dd)" in src
 

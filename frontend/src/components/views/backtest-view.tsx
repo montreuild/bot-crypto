@@ -746,14 +746,18 @@ function BacktestResults({ result, scoreThreshold }: { result: BacktestResult | 
 
   const csvRows = strategies.map(([name, stats]) => ({ strategy: name, ...stats }));
 
-  const comparisonStrategies = strategies.length > 1
-    ? strategies.map(([name, stats]) => ({
-        ...(stats ?? {}),
-        strategy: name,
-        symbol: r?.symbol,
-        timeframe: r?.timeframe,
-      }))
-    : [];
+  const comparisonStrategies: Array<Partial<BacktestResult> & { strategy: string }> =
+    strategies.length > 1
+      ? strategies.map(([name, stats]) => {
+          const { trades: _count, ...kpis } = stats ?? {};
+          return {
+            ...kpis,
+            strategy: name,
+            symbol: r?.symbol,
+            timeframe: r?.timeframe,
+          };
+        })
+      : [];
 
   const exportPdf = () => {
     // Impression / PDF navigateur (parité Jinja2 export PDF sans dépendance jspdf)
@@ -1000,7 +1004,7 @@ function BacktestResults({ result, scoreThreshold }: { result: BacktestResult | 
           <div className="flex-1 min-h-0 bg-card rounded-lg border border-border p-2 overflow-auto">
             <BacktestEquityChart
               strategy={fsStrategy}
-              equityCurve={byStrategy[fsStrategy]?.equity_curve}
+              equityCurve={byStrategy[fsStrategy]?.equity_curve?.map((p) => p.equity)}
               initialCapital={byStrategy[fsStrategy]?.initial_capital}
               buyAndHoldPnl={byStrategy[fsStrategy]?.buy_and_hold_pnl}
               alpha={byStrategy[fsStrategy]?.alpha}

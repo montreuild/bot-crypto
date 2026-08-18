@@ -95,8 +95,12 @@ export default function DataPage() {
   const [backfillTf, setBackfillTf] = useState('1d');
   const [backfillYears, setBackfillYears] = useState(20);
   const [backfillJob, setBackfillJob] = useState<{
-    status?: string;
+    job_id: string;
+    status: string;
     error?: string | null;
+    tf?: string;
+    years?: number;
+    univers?: string[];
     progress?: { done?: number; total?: number; current_symbol?: string | null };
     results?: Array<{ symbol: string; tf: string; bars: number; ok: boolean; error?: string }>;
   } | null>(null);
@@ -290,10 +294,10 @@ export default function DataPage() {
                     </span>
                   </div>
                   <Badge variant="info">
-                    {backfillJob.progress.done}/{backfillJob.progress.total || '?'}
+                    {backfillJob.progress?.done ?? 0}/{backfillJob.progress?.total || '?'}
                   </Badge>
                 </div>
-                {backfillJob.progress.current_symbol && (
+                {backfillJob.progress?.current_symbol && (
                   <div className="text-xs text-muted font-mono">
                     En cours : {backfillJob.progress.current_symbol}
                   </div>
@@ -303,13 +307,12 @@ export default function DataPage() {
                     Univers : {backfillJob.univers.join(', ')} — TF {backfillJob.tf}, {backfillJob.years} ans
                   </div>
                 )}
-                {/* Barre de progression */}
-                {backfillJob.progress.total > 0 && (
+                {(backfillJob.progress?.total ?? 0) > 0 && (
                   <div className="w-full bg-card rounded-full h-1.5 overflow-hidden">
                     <div
                       className="h-full bg-primary-400 transition-all"
                       style={{
-                        width: `${(backfillJob.progress.done / backfillJob.progress.total) * 100}%`,
+                        width: `${((backfillJob.progress?.done ?? 0) / (backfillJob.progress?.total ?? 1)) * 100}%`,
                       }}
                     />
                   </div>

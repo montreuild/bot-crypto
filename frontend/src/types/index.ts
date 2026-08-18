@@ -115,6 +115,14 @@ export interface StrategyStats {
   /** R-01 : null sous MIN_SIGNIFICANT_TRADES (10) — non mesurable, pas 0. */
   sharpe: number | null;
   max_drawdown: number;
+  expectancy?: number;
+  best_trade?: number;
+  worst_trade?: number;
+  equity_curve?: { time: string; equity: number }[];
+  initial_capital?: number;
+  buy_and_hold_pnl?: number;
+  alpha?: number;
+  monte_carlo?: MonteCarloResult;
   recommendations?: BacktestRecommendation[];
   recommendations_summary?: BacktestRecommendationsSummary;
 }
@@ -529,6 +537,9 @@ export interface BacktestResult {
   runs?: DualPassRuns;
   by_strategy?: Record<string, StrategyStats>;
   score_threshold?: number;
+  limit?: number;
+  n_bars?: number;
+  initial_capital?: number;
   // ── QW-1 : métriques étendues (S3-07 — branchement a posteriori) ──────────
   /** Sortino ratio annualisé (volatilité downside uniquement). */
   sortino?: number;
