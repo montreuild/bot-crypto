@@ -221,6 +221,7 @@ export interface RiskOverview {
   slots: RiskSlot[];
   total_risk_engaged: number;
   rejections: RiskRejections;
+  envelopes_config?: Record<string, VenueEnvelopeConfig>;
 }
 
 export interface RiskDiagnostic {
@@ -1112,4 +1113,261 @@ export interface OptimizeValidateResult {
    * identiques pour n'importe quel paramétrage.
    */
   by_strategy?: Record<string, RegimeStrategyPerf>;
+}
+
+// ── Contrats restants U-05 ─────────────────────────────────────────────────
+
+export interface OosSlot {
+  slot_key?: string;
+  monte_carlo?: {
+    runs?: number;
+    return_p5_pct?: number;
+    return_mean_pct?: number;
+    return_p95_pct?: number;
+    max_dd_p95_pct?: number;
+    prob_profit?: number;
+  };
+  live?: {
+    n_trades?: number;
+    avg_return_pct?: number | null;
+  };
+  contract?: {
+    available?: boolean;
+    live_mean_pct?: number | null;
+    in_band?: boolean | null;
+    verdict?: string;
+  };
+  [key: string]: unknown;
+}
+
+export interface OosTracker {
+  slots?: Record<string, OosSlot> | OosSlot[];
+}
+
+export interface ForwardTestResult {
+  ran?: boolean;
+  edge?: {
+    available?: boolean;
+    ci_low_pct?: number | null;
+    ci_high_pct?: number | null;
+  };
+  sim?: {
+    total_trades?: number;
+    return_pct?: number;
+    win_rate?: number;
+  };
+  contract?: { verdict?: string };
+}
+
+export interface OptimizeStartResult {
+  n_jobs_created?: number;
+  job_ids?: string[];
+  received_bars?: Record<string, number>;
+  fetch_details?: Record<string, number>;
+  skipped?: unknown[];
+}
+
+export interface AuditEvent {
+  id: string | number;
+  ts: string;
+  action: string;
+  actor?: string;
+  ip?: string;
+  method?: string;
+  path?: string;
+  status_code?: number;
+  details?: unknown;
+}
+
+export interface CandleStoreEntry {
+  count?: number;
+  first?: string;
+  last?: string;
+  size_bytes?: number;
+}
+
+export type CandleStore = Record<string, Record<string, CandleStoreEntry>>;
+
+export interface VenueDef {
+  name?: string;
+  market_type?: string;
+  asset_class?: string;
+  quote_currency?: string;
+  can_execute?: boolean;
+  provider?: string;
+  data_provider?: string;
+  exchange?: string;
+}
+
+export interface AppConfig {
+  all_strategies?: string[];
+  venues?: {
+    default?: string;
+    defs?: Record<string, VenueDef>;
+  };
+  [key: string]: unknown;
+}
+
+export interface MlInfoEntry {
+  strategy?: string;
+  auc?: number;
+  n_features?: number;
+  nFeatures?: number;
+  lookahead?: number;
+  proba_up?: number;
+  probaUp?: number;
+  version_id?: string;
+  model_version?: string;
+  train_start?: string;
+  train_end?: string;
+  overlap_warning?: boolean;
+  fallback_to_inline?: boolean;
+}
+
+export interface MlInfoPayload {
+  models?: Record<string, MlInfoEntry>;
+  [key: string]: unknown;
+}
+
+export interface DerivativesStatus {
+  enabled?: boolean;
+}
+
+export interface DerivativesPayload {
+  enabled?: boolean;
+  metrics?: Record<string, unknown>;
+  price?: unknown;
+}
+
+export interface SmcOhlcv {
+  time?: number[];
+  open?: number[];
+  high?: number[];
+  low?: number[];
+  close?: number[];
+  volume?: number[];
+}
+
+export interface SmcTrendline {
+  kind?: string;
+  time1?: number;
+  time2?: number;
+  y1?: number;
+  y2?: number;
+}
+
+export interface SmcChannel {
+  time_start?: number;
+  time_end?: number;
+  half_width?: number;
+  mid_start?: number;
+  mid_end?: number;
+}
+
+export interface SmcStructurePoint {
+  time?: number;
+  price?: number;
+}
+
+export interface SmcCycle {
+  from_time?: number;
+  from_price?: number;
+  target?: number;
+  phase?: string;
+  progress?: number;
+  boundary?: string | number;
+}
+
+export interface SmcLiquidityPool {
+  kind?: string;
+  level?: number;
+  status?: string;
+}
+
+export interface SmcVolumeProfile {
+  poc?: number;
+  hvns?: number[];
+  lvns?: number[];
+}
+
+export interface SmcMarker {
+  type?: string;
+  time?: number;
+  direction?: string;
+  rejected?: boolean;
+}
+
+export interface SmcSwingLabel {
+  time?: number;
+  kind?: string;
+  label?: string;
+}
+
+export interface SmcSignal {
+  side?: string;
+  score?: number;
+  setup?: string;
+  entry?: number;
+  stop?: number;
+  tp?: number;
+  reason?: string;
+}
+
+export interface SmcBias {
+  trend?: number;
+  label?: string;
+}
+
+export interface SmcHtfBias {
+  trend?: number;
+  label?: string;
+  n_htf?: number;
+}
+
+export interface SmcSession {
+  name?: string;
+  in_killzone?: boolean;
+}
+
+export interface SmcRealizedTrade {
+  side?: string;
+  entry?: number;
+  stop?: number;
+  setup?: string;
+  signal_time?: number | null;
+  [key: string]: unknown;
+}
+
+export interface SmcChartData {
+  ohlcv?: SmcOhlcv;
+  trendlines?: SmcTrendline[];
+  channel?: SmcChannel;
+  structure_line?: SmcStructurePoint[];
+  cycle?: SmcCycle;
+  liquidity_pools?: SmcLiquidityPool[];
+  volume_profile?: SmcVolumeProfile;
+  premium_discount?: unknown;
+  markers?: SmcMarker[];
+  swing_labels?: SmcSwingLabel[];
+  trade_plans?: Array<Record<string, unknown>>;
+  signal?: SmcSignal;
+  htf_bias?: SmcHtfBias;
+  session?: SmcSession;
+  bias?: SmcBias;
+  order_blocks?: Array<Record<string, unknown>>;
+  fvgs?: Array<Record<string, unknown>>;
+  liquidity_voids?: Array<Record<string, unknown>>;
+  breakers?: Array<Record<string, unknown>>;
+  rejection_blocks?: Array<Record<string, unknown>>;
+  trades?: SmcRealizedTrade[];
+  n_bars?: number;
+  candles?: unknown[];
+  voids?: unknown[];
+  rejections?: unknown[];
+  pools?: unknown[];
+  structure?: Record<string, unknown>;
+}
+
+export interface BotThresholds {
+  [key: string]: unknown;
 }

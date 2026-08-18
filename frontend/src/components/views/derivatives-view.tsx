@@ -342,7 +342,7 @@ export function DerivativesView() {
     metrics[k] = filterSeriesByDepth(v as TimeSeries, depthDays);
   }
   const priceData = filterPriceByDepth(data?.price || null, depthDays);
-  const isEnabled = (statusData as any)?.enabled ?? (data as any)?.enabled ?? true;
+  const isEnabled = statusData?.enabled ?? data?.enabled ?? true;
 
   // Plage X partagée (min/max timestamps après filtre profondeur)
   const sharedX = (() => {

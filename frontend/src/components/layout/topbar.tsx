@@ -2,7 +2,7 @@
 
 import { useBotStatus, useHealth, useRiskDiagnostics } from '@/hooks/use-api';
 import { useWebSocket } from '@/lib/ws-provider';
-import { cn, formatUSD, getStoredTheme, setStoredTheme } from '@/lib/utils';
+import { cn, formatUSD, getStoredTheme, setStoredTheme, errorMessage } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import {
   Play, Square, RefreshCw, AlertTriangle, Wifi, WifiOff, Loader2,
@@ -66,8 +66,8 @@ export function Topbar() {
         await startBot.mutateAsync();
         toast.success('Bot démarré');
       }
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -75,8 +75,8 @@ export function Topbar() {
     try {
       await resetHalt.mutateAsync(false);
       toast.success('Circuit breaker réinitialisé');
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 

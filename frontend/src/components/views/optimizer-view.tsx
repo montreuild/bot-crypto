@@ -15,7 +15,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatUSD } from '@/lib/utils';
+import { cn, formatUSD, errorMessage } from '@/lib/utils';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import {
@@ -255,7 +255,7 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
     }
     setLaunchFeedback({ kind: 'fetching' });
     try {
-      const res: any = await startOptimize.mutateAsync({
+      const res = await startOptimize.mutateAsync({
         strategies: selectedStrategies.join(','),
         timeframes: selectedTfs.join(','),
         symbols: selectedSymbols.join(','),
@@ -285,9 +285,9 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
         skipped: res?.skipped,
       });
       toast.success(`${nCreated} job(s) lancé(s)`);
-    } catch (e: any) {
+    } catch (e) {
       setLaunchFeedback(null);
-      toast.error(`Erreur: ${e.message}`);
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 

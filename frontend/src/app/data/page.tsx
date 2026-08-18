@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatDateTime } from '@/lib/utils';
+import { cn, formatDateTime, errorMessage } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useDataStatus, useRefetchData } from '@/hooks/use-api';
 import { api } from '@/lib/api';
@@ -122,9 +122,9 @@ export default function DataPage() {
           toast.error(`Backfill échoué : ${status.error}`);
         }
       }
-    } catch (e: any) {
+    } catch (e) {
       setBackfillPolling(false);
-      toast.error(`Suivi backfill échoué : ${e.message}`);
+      toast.error(`Suivi backfill échoué : ${errorMessage(e)}`);
     }
   }, []);
 
@@ -138,8 +138,8 @@ export default function DataPage() {
       );
       // Démarre le polling
       setTimeout(() => pollBackfill(res.job_id), 2000);
-    } catch (e: any) {
-      toast.error(`Backfill échoué : ${e.message}`);
+    } catch (e) {
+      toast.error(`Backfill échoué : ${errorMessage(e)}`);
     }
   };
 
@@ -152,8 +152,8 @@ export default function DataPage() {
       toast.info(`Refetch ${symbol} ${tf}...`);
       await refetchData.mutateAsync({ symbol, tf });
       toast.success(`Refetch terminé: ${symbol} ${tf}`);
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -321,15 +321,15 @@ export default function DataPage() {
                 {backfillJob.status === 'done' && backfillJob.results && (
                   <div className="text-xs text-muted">
                     <span className="text-emerald-400 font-medium">
-                      {backfillJob.results.filter((r: any) => r.ok).length} OK
+                      {backfillJob.results.filter((r) => r.ok).length} OK
                     </span>
                     {' · '}
                     <span className="text-red-400 font-medium">
-                      {backfillJob.results.filter((r: any) => !r.ok).length} échoués
+                      {backfillJob.results.filter((r) => !r.ok).length} échoués
                     </span>
                     {' · '}
                     <span>
-                      {backfillJob.results.reduce((s: number, r: any) => s + r.bars, 0).toLocaleString()} bougies
+                      {backfillJob.results.reduce((s, r) => s + r.bars, 0).toLocaleString()} bougies
                     </span>
                   </div>
                 )}

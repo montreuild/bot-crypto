@@ -12,7 +12,7 @@ import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatUSD, formatPct } from '@/lib/utils';
+import { cn, formatUSD, formatPct, errorMessage } from '@/lib/utils';
 import { useBacktestSettings } from '@/hooks/use-api';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
@@ -79,7 +79,7 @@ const COLUMNS: Array<{ key: SortKey; label: string; numeric: boolean; higherBett
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmtCell(key: SortKey, value: any): string {
+function fmtCell(key: SortKey, value: ResultRow[SortKey] | undefined): string {
   if (value == null) return '—';
   switch (key) {
     case 'strategy': return String(value);
@@ -98,7 +98,7 @@ function fmtCell(key: SortKey, value: any): string {
   }
 }
 
-function cellColor(key: SortKey, value: any): string {
+function cellColor(key: SortKey, value: ResultRow[SortKey] | undefined): string {
   if (value == null) return 'text-muted';
   switch (key) {
     case 'win_rate': return Number(value) >= 50 ? 'text-emerald-400' : 'text-red-400';
@@ -183,7 +183,7 @@ export function CompareView() {
             equity_curve: bt.equity_curve || [],
           };
         }
-        const reason = (res.reason as any)?.message || 'échec';
+        const reason = errorMessage(res.reason, 'échec');
         return {
           strategy,
           total_trades: 0, win_rate: 0, total_pnl: 0, sharpe: 0,
@@ -201,8 +201,8 @@ export function CompareView() {
       } else {
         toast.error('Tous les backtests ont échoué');
       }
-    } catch (e: any) {
-      toast.error(`Erreur: ${e?.message || 'inconnue'}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     } finally {
       setRunning(false);
     }
@@ -217,7 +217,7 @@ export function CompareView() {
     const lines = [headers.join(',')];
     for (const r of sortedRows) {
       const cells = COLUMNS.map((c) => {
-        const v = (r as any)[c.key];
+        const v = r[c.key];
         if (v == null) return '';
         if (c.key === 'strategy') return `"${String(v).replace(/"/g, '""')}"`;
         return String(v);
@@ -240,8 +240,8 @@ export function CompareView() {
   const sortedRows = useMemo(() => {
     const copy = [...rows];
     copy.sort((a, b) => {
-      const av = (a as any)[sortKey];
-      const bv = (b as any)[sortKey];
+      const av = a[sortKey];
+      const bv = b[sortKey];
       let cmp: number;
       if (typeof av === 'string' || typeof bv === 'string') {
         cmp = String(av).localeCompare(String(bv));
@@ -269,7 +269,7 @@ export function CompareView() {
     const map: Record<string, number> = {};
     for (const col of COLUMNS) {
       if (!col.numeric) continue;
-      const vals = rows.map((r) => (r as any)[col.key]).filter((v) => typeof v === 'number' && Number.isFinite(v));
+      const vals = rows.map((r) => r[col.key]).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
       if (vals.length === 0) continue;
       map[col.key] = col.higherBetter ? Math.max(...vals) : Math.min(...vals);
     }
@@ -497,7 +497,7 @@ export function CompareView() {
                           {rank != null ? `#${rank}` : '—'}
                         </td>
                         {COLUMNS.map((col) => {
-                          const v = (r as any)[col.key];
+                          const v = r[col.key];
                           const isBest = col.numeric
                             && bestValues[col.key] != null
                             && Number(v) === bestValues[col.key]

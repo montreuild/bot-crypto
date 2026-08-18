@@ -29,6 +29,7 @@ import { useRunBacktest, useCancelBacktest, useBacktestSettings } from '@/hooks/
 import { useReplayEngine, type CandleRow } from '@/hooks/use-replay-engine';
 import { useReplayKeyboard } from '@/hooks/use-replay-keyboard';
 import { monthsToBougies } from '@/lib/limit-hint';
+import { errorMessage } from '@/lib/utils';
 import { ReplayCandlestickChart } from '@/components/charts/replay-candlestick-chart';
 import { PlaybackControls } from '@/components/controls/playback-controls';
 import { ReplaySignalLog } from '@/components/cards/replay-signal-log';
@@ -167,9 +168,9 @@ export function ReplayView() {
         pushLog('info', 'Moteur de replay prêt — Espace pour lancer');
         toast.success(`${nCandles} bougies chargées · ${nTrades} trades`);
       }
-    } catch (e: any) {
-      pushLog('error', e?.message ?? 'Erreur inconnue');
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      pushLog('error', errorMessage(e));
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -178,9 +179,9 @@ export function ReplayView() {
       await cancelBacktest.mutateAsync();
       pushLog('warn', 'Chargement annulé par l’utilisateur');
       toast.success('Chargement annulé');
-    } catch (e: any) {
-      pushLog('error', `Annulation KO : ${e?.message ?? 'erreur inconnue'}`);
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      pushLog('error', `Annulation KO : ${errorMessage(e)}`);
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 

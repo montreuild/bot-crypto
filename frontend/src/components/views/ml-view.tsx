@@ -24,6 +24,7 @@ import { MLRecipesList } from '@/components/cards/ml-recipes-list';
 import { RecentMlJobs } from '@/components/cards/recent-ml-jobs';
 import { MLVersioningAudit } from '@/components/cards/ml-versioning-audit';
 import { OptimizerView } from '@/components/views/optimizer-view';
+import type { CandleStore } from '@/types';
 import {
   Loader2, BrainCircuit, Database, CheckCircle2, XCircle,
   AlertCircle, Cpu,
@@ -95,8 +96,7 @@ function StrategyTable({ strategies }: { strategies: Record<string, MLStrategyIn
 
 // ── Candles cache stats ─────────────────────────────────────────────────────
 
-function CandlesStatsTable({ store }: { store: any }) {
-  // Expecting store as Record<symbol, Record<tf, {count, first, last, size_bytes?}>>
+function CandlesStatsTable({ store }: { store: CandleStore }) {
   const symbols = Object.entries(store || {});
   if (symbols.length === 0) {
     return <div className="text-sm text-muted text-center py-6">Cache bougies vide</div>;
@@ -104,14 +104,13 @@ function CandlesStatsTable({ store }: { store: any }) {
   const rows: Array<{ symbol: string; tf: string; count: number; first: string; last: string; size: number }> = [];
   for (const [symbol, tfs] of symbols) {
     for (const [tf, info] of Object.entries(tfs || {})) {
-      const i = info as any;
       rows.push({
         symbol,
         tf,
-        count: i?.count ?? 0,
-        first: i?.first ?? '—',
-        last: i?.last ?? '—',
-        size: i?.size_bytes ?? 0,
+        count: info?.count ?? 0,
+        first: info?.first ?? '—',
+        last: info?.last ?? '—',
+        size: info?.size_bytes ?? 0,
       });
     }
   }
@@ -230,7 +229,7 @@ export function MLView() {
                   Erreur lors du chargement du cache
                 </div>
               ) : (
-                <CandlesStatsTable store={candlesData?.store} />
+                <CandlesStatsTable store={candlesData?.store ?? {}} />
               )}
             </CardContent>
           </Card>

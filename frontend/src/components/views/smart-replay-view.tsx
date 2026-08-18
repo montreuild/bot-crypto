@@ -592,7 +592,7 @@ export function SmartReplayView() {
 
       {/* Aligné Smart Graph : recommandés (SMC) + réalisés (backtest replay) */}
       <TradePlansTable
-        plans={smcData?.trade_plans || []}
+        plans={(smcData?.trade_plans || []) as TradePlan[]}
         selectedPlan={selectedPlan}
         onSelectPlan={(p) => setSelectedPlan((prev) =>
           prev && prev.entry === p.entry && prev.setup === p.setup ? null : p)}

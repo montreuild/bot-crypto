@@ -25,7 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { cn, getStoredTheme, setStoredTheme } from '@/lib/utils';
+import { cn, getStoredTheme, setStoredTheme, errorMessage } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { usePresets, useSetRiskPreset, useSetExpertMode, useBotStatus } from '@/hooks/use-api';
 import { toast } from 'sonner';
@@ -59,8 +59,8 @@ function TestNotificationButton() {
     try {
       await api.testNotifications();
       toast.success('Notification de test envoyée — vérifiez vos canaux');
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     } finally {
       setLoading(false);
     }
@@ -209,8 +209,8 @@ function SettingsV2Content() {
       } else {
         toast.info('Demande de permission ignorée');
       }
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     }
   };
 
@@ -228,8 +228,8 @@ function SettingsV2Content() {
     try {
       await setPreset.mutateAsync(preset);
       toast.success(`Preset ${preset} appliqué`);
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     }
   };
 
@@ -240,8 +240,8 @@ function SettingsV2Content() {
         localStorage.setItem('expert_mode', String(enabled));
       }
       toast.success(`Mode expert ${enabled ? 'activé' : 'désactivé'}`);
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     }
   };
 

@@ -22,7 +22,7 @@ import { FastAnalysisPanel } from '@/components/cards/fast-analysis-panel';
 import { useSignals } from '@/hooks/use-api';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
-import { cn } from '@/lib/utils';
+import { cn, errorMessage } from '@/lib/utils';
 
 interface ScannerViewProps {
   initialSymbol?: string;
@@ -98,8 +98,8 @@ export function ScannerView({ initialSymbol, initialTf }: ScannerViewProps) {
       setRows(res?.results || []);
       toast.success(`${(res?.results || []).length} symboles scannés`);
       persistFilters();
-    } catch (e: any) {
-      toast.error(`Scan : ${e.message}`);
+    } catch (e) {
+      toast.error(`Scan : ${errorMessage(e)}`);
     } finally {
       setLoading(false);
     }
@@ -113,8 +113,8 @@ export function ScannerView({ initialSymbol, initialTf }: ScannerViewProps) {
       setScanned({ symbol: sym, tf });
       setSelected(sym);
       toast.success(`Fast Analyse ${sym} ${tf}`);
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (e) {
+      toast.error(errorMessage(e));
     } finally {
       setFaLoading(false);
     }
