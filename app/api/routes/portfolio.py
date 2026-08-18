@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api import state
 from app.api.helpers import verify_api_key
+from app.api.schemas import PortfolioResponse
 from app.core.bot_identity import parse_slot_key
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.core.risk_envelope import base_drift
@@ -408,7 +409,8 @@ def run_bot_forward_test(request: Request, slot_key: str):
 
 
 # ── Portefeuille : santé + allocation réelle/shadow + activité ───────────────
-@router.get("/api/portfolio", dependencies=[Depends(verify_api_key)])
+@router.get("/api/portfolio", dependencies=[Depends(verify_api_key)],
+            response_model=PortfolioResponse)
 def get_portfolio():
     tr = _trader()
     cfg = state.cfg or {}

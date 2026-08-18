@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api import state
 from app.api.helpers import verify_api_key
+from app.api.schemas import RiskOverviewResponse, TradesListResponse
 from app.core.bot_identity import build_slot_key
 from app.core.database import session_scope
 from app.core.risk_gate import _default_venue_capital
@@ -28,7 +29,8 @@ def _validate_slot_key(slot_key: str) -> None:
         raise HTTPException(400, "Format slot_key invalide")
 
 
-@router.get("/api/trades", dependencies=[Depends(verify_api_key)])
+@router.get("/api/trades", dependencies=[Depends(verify_api_key)],
+            response_model=TradesListResponse)
 def list_trades(limit: int = 100, offset: int = 0,
                 symbol: str = None, strategy: str = None):
     """Retourne les trades paginés avec filtres optionnels symbol/strategy."""
@@ -116,7 +118,8 @@ def fee_breakdown(days: int = None):
         return get_fee_breakdown(session, since=since)
 
 
-@router.get("/api/risk", dependencies=[Depends(verify_api_key)])
+@router.get("/api/risk", dependencies=[Depends(verify_api_key)],
+            response_model=RiskOverviewResponse)
 def risk_status():
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")

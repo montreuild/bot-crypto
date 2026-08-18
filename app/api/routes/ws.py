@@ -7,10 +7,9 @@ Protocole :
 - Connexion : ws://localhost:8000/ws
 - Auth (S1-04) : la connexion doit provenir de localhost OU présenter la clé
   API. Le cookie HttpOnly ``api_key`` (posé par le proxy Next) est vérifié
-  EN PREMIER — il n'apparaît jamais dans l'URL, les logs serveur ou les
-  devtools réseau. Le query param ``?api_key=xxx`` n'est honoré que si
-  ``ALLOW_WS_QUERY_KEY=1`` (S-03) : sinon il fuit dans les journaux nginx
-  et l'historique du navigateur.
+  EN PREMIER — il n'apparaît jamais dans l'URL. ``?api_key=`` n'est plus
+  honoré (SEC-02). Un ``POST /api/ws/ticket`` authentifié délivre un jeton
+  éphémère à usage unique (``?ticket=``), valable 30 s.
 
 Messages serveur → client (tous au format JSON) :
 
@@ -39,6 +38,7 @@ from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 from app.api import state
 from app.api.helpers import verify_api_key
+from app.api.ws_tickets import consume_ticket, issue_ticket
 from app.core.events import event_hub
 
 logger = logging.getLogger(__name__)
@@ -62,22 +62,9 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _allow_ws_query_key() -> bool:
-    """S-03 : le repli ``?api_key=`` est opt-in (fuit dans les logs d'accès)."""
-    return os.environ.get("ALLOW_WS_QUERY_KEY", "").strip().lower() in {
-        "1", "true", "yes", "on",
-    }
-
-
 # ── Auth WebSocket ───────────────────────────────────────────────────
-def _check_ws_auth(websocket: WebSocket, api_key_query: Optional[str]) -> bool:
-    """Vérifie l'auth pour une connexion WebSocket.
-
-    Règle (alignée sur verify_api_key) :
-    - Si aucune clé API n'est configurée → seulement localhost autorisé.
-    - Sinon → cookie HttpOnly ``api_key`` vérifié en premier (jamais dans
-      l'URL/les logs). ``?api_key=xxx`` seulement si ``ALLOW_WS_QUERY_KEY=1``.
-    """
+def _check_ws_auth(websocket: WebSocket, ticket: Optional[str]) -> bool:
+    """Cookie HttpOnly d'abord ; sinon jeton éphémère ``?ticket=`` (SEC-02)."""
     cfg = (state.cfg or {}).get("web", {})
     configured_key = cfg.get("api_key", "")
 
@@ -90,16 +77,11 @@ def _check_ws_auth(websocket: WebSocket, api_key_query: Optional[str]) -> bool:
         return False
 
     token = websocket.cookies.get("api_key") or ""
-    if not token and api_key_query and _allow_ws_query_key():
-        token = api_key_query
-        logger.warning(
-            "[WS] Auth via ?api_key= (ALLOW_WS_QUERY_KEY=1) depuis %s — "
-            "la clé apparaît dans les journaux d'accès",
-            client_host or "unknown",
-        )
-    if not token or len(token) > 256:
-        return False
-    return hmac.compare_digest(token, configured_key)
+    if token and len(token) <= 256 and hmac.compare_digest(token, configured_key):
+        return True
+    if consume_ticket(ticket):
+        return True
+    return False
 
 
 # ── Channels disponibles ──────────────────────────────────────────────────
@@ -125,23 +107,14 @@ def _event_channel(event_type: str) -> str:
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    api_key: Optional[str] = Query(default=None),
+    ticket: Optional[str] = Query(default=None),
 ):
     """Endpoint WebSocket temps réel.
 
-    Usage frontend :
-        const ws = new WebSocket('ws://localhost:8000/ws');
-        ws.onmessage = (e) => {
-            const { type, ts, data } = JSON.parse(e.data);
-            console.log(type, data);
-        };
-
-    Le navigateur envoie automatiquement le cookie HttpOnly ``api_key`` (posé
-    par le proxy Next) — aucun paramètre à ajouter à l'URL. ``?api_key=``
-    n'est honoré que si ``ALLOW_WS_QUERY_KEY=1``.
+    Le navigateur envoie le cookie HttpOnly ``api_key``. ``?api_key=`` n'est
+    plus honoré. Un client sans cookie passe par ``POST /api/ws/ticket``.
     """
-    # Auth
-    if not _check_ws_auth(websocket, api_key):
+    if not _check_ws_auth(websocket, ticket):
         await websocket.close(code=4403, reason="Forbidden")
         return
 
@@ -221,6 +194,13 @@ async def websocket_endpoint(
 
 
 # ── Endpoint REST pour debug ───────────────────────────────────────────────
+@router.post("/api/ws/ticket", dependencies=[Depends(verify_api_key)])
+def ws_ticket():
+    """Jeton WS à usage unique, 30 s — jamais la clé API permanente."""
+    token, ttl = issue_ticket()
+    return {"ticket": token, "expires_in": ttl}
+
+
 @router.get("/api/ws/status", dependencies=[Depends(verify_api_key)])
 async def ws_status():
     """Status du hub WebSocket (debug, monitoring)."""

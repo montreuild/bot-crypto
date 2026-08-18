@@ -226,3 +226,90 @@ class NotificationsConfigBody(BaseModel):
     email_to: Optional[str] = Field(None, max_length=255)
     min_pnl_to_notify: Optional[float] = Field(None, ge=0.0)
     position_loss_warn_pct: Optional[float] = Field(None, ge=0.0, le=100.0)
+
+
+# ── Contrats de sortie (API-01 / ARCH-01) ──────────────────────────────────
+# extra="allow" : on déclare le contrat sans casser un champ ajouté côté
+# serveur avant que le modèle ne soit mis à jour.
+
+
+class BacktestResultModel(BaseModel):
+    """Miroir de ``BacktestPayload`` — 45 clés du moteur."""
+
+    model_config = ConfigDict(extra="allow")
+
+    initial_capital: float
+    final_equity: float
+    total_pnl: float
+    net_profit: float
+    total_trades: int
+    win_rate: float
+    max_drawdown: float
+    sharpe: Optional[float] = None
+    profit_factor: Optional[float] = None
+    realistic_risk: bool = False
+    fallback_to_inline: bool = False
+    trades: List[Any] = Field(default_factory=list)
+    cost_model: Optional[Dict[str, Any]] = None
+
+
+class BacktestRunResponse(BaseModel):
+    """``POST /api/backtest`` — payload assemblé par la route."""
+
+    model_config = ConfigDict(extra="allow")
+
+    symbol: str
+    timeframe: str
+    n_bars: int = 0
+    realistic_risk: bool = False
+    cost_model: Optional[Dict[str, Any]] = None
+    by_strategy: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PortfolioResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    running: bool
+    capital: Optional[float] = None
+    paper_mode: Optional[bool] = None
+    allocation: List[Any] = Field(default_factory=list)
+    risk: Dict[str, Any] = Field(default_factory=dict)
+    activity: List[Any] = Field(default_factory=list)
+
+
+class TradeRow(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: Any = None
+    time: Optional[str] = None
+    symbol: Optional[str] = None
+    side: Optional[str] = None
+    strategy: Optional[str] = None
+    pnl: Optional[float] = None
+
+
+class TradesListResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    total: int
+    offset: int
+    limit: int
+    trades: List[TradeRow] = Field(default_factory=list)
+
+
+class RiskOverviewResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    venues: List[Dict[str, Any]] = Field(default_factory=list)
+    symbols: List[Dict[str, Any]] = Field(default_factory=list)
+    slots: List[Dict[str, Any]] = Field(default_factory=list)
+    total_risk_engaged: float = 0.0
+    rejections: Dict[str, Any] = Field(default_factory=dict)
+    envelopes_config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OptimizeResultsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    by_strategy_tf: Dict[str, Any] = Field(default_factory=dict)
+    active_per_tf: Dict[str, Any] = Field(default_factory=dict)

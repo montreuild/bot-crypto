@@ -1,7 +1,10 @@
 """Métriques et sérialisation d'un run de backtest."""
+from __future__ import annotations
+
 import logging
 import math
-from typing import Dict, List, Optional
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -10,11 +13,73 @@ from app.core.timeframes import bars_per_year as _bars_per_year
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class BacktestPayload:
+    """Contrat de sortie typé de ``BacktestResult.to_dict`` (ARCH-01).
+
+    Une seule déclaration des clés exposées — ``to_dict`` en dérive,
+    l'API Pydantic aussi. ``entry_fees`` et ``fees`` ne peuvent plus
+    être confondus : ce sont deux champs distincts.
+    """
+    initial_capital: float
+    rejections: dict
+    final_equity: float
+    total_pnl: float
+    total_pnl_hors_frais_entree: float
+    total_fees: float
+    total_borrow_cost: float
+    total_slippage_cost: float
+    total_funding_cost: float
+    total_entry_fees: float
+    gross_profit: float
+    net_profit: float
+    total_trades: int
+    win_rate: float
+    max_drawdown: float
+    sharpe: Optional[float]
+    sortino: Optional[float]
+    calmar: Optional[float]
+    cagr: float
+    alpha_vs_bh: float
+    expectancy: float
+    avg_mae: float
+    avg_mfe: float
+    avg_win: float
+    avg_loss: float
+    profit_factor: Optional[float]
+    buy_and_hold_pnl: float
+    buy_and_hold_pct: float
+    alpha: float
+    equity_curve: List[float]
+    timestamps: List[str]
+    by_strategy: dict
+    by_setup: dict
+    by_module: dict
+    by_exit_reason: dict
+    by_exit_leg: dict
+    exit_mode: str
+    by_structure_state: dict
+    by_sequence_type: dict
+    by_tier: dict
+    by_target_class: dict
+    trades: list
+    diagnostics: Any
+    ml_info: Any
+    fallback_to_inline: bool
+    cost_model: Any
+    realistic_risk: bool
+    realistic_risk_diagnostics: Any
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
 class BacktestResult:
     def __init__(self, trades: List[dict], equity_curve: List[float],
-                 initial_capital: float, timestamps: List[str] = None,
-                 timeframe: str = "1d", rejections: dict = None,
-                 n_bars: int = 0, equity_mtm: List[float] = None):
+                 initial_capital: float, timestamps: Optional[List[str]] = None,
+                 timeframe: str = "1d", rejections: Optional[dict] = None,
+                 n_bars: int = 0, equity_mtm: Optional[List[float]] = None):
         self.trades          = trades
         self.equity_curve    = equity_curve
         self.equity_mtm      = equity_mtm or []
@@ -264,7 +329,7 @@ class BacktestResult:
             from app.core.performance_metrics import compute_extended_metrics
             closed = [t for t in self.trades if t.get("status", "").startswith("closed")]
             prices = getattr(self, "_close_prices", None) or []
-            bars_per_year = _bars_per_year(self._timeframe) or 252
+            bars_per_year = int(_bars_per_year(self._timeframe) or 252)
             # `_n_bars` est fourni au constructeur : la durée est connue dès le
             # premier appel, plus besoin d'attendre `_add_buy_and_hold`.
             years = self._years()
@@ -305,7 +370,7 @@ class BacktestResult:
         """
         out: Dict[str, dict] = {}
         for s, strat_trades in trades_by_key.items():
-            d = {"trades": 0, "wins": 0, "pnl": 0.0, "fees": 0.0}
+            d: Dict[str, Any] = {"trades": 0, "wins": 0, "pnl": 0.0, "fees": 0.0}
             for t in strat_trades:
                 d["trades"] += 1
                 d["pnl"]    += t["pnl"]
@@ -376,81 +441,76 @@ class BacktestResult:
             d["trades"] = strat_trades
         return out
 
-    def to_dict(self) -> dict:
+    def to_payload(self) -> BacktestPayload:
         pf = self.profit_factor
         if pf is None:
             pf_safe = None
         else:
             pf_safe = round(float(pf), 3) if math.isfinite(float(pf)) else None
-        return {
-            "initial_capital":    self.initial_capital,
-            "rejections":         self.rejections,
-            "final_equity":       round(_sf(self.final_equity, 0.0), 4),
-            "total_pnl":          round(_sf(self.total_pnl, 0.0), 4),
-            # F-01 : alias explicite — depuis que le pnl de trade porte les
-            # frais d'entrée, total_pnl == net_profit. L'ancien montant
-            # (hors frais d'entrée) reste en diagnostic.
-            "total_pnl_hors_frais_entree": round(
-                _sf(self.total_pnl + getattr(self, "total_entry_fees", 0.0), 0.0), 4),
-            "total_fees":         round(_sf(self.total_fees, 0.0), 4),
-            # QW-3 : agrégats de coûts pour analyse what-if frais/levier
-            "total_borrow_cost":  round(_sf(getattr(self, "total_borrow_cost", 0.0), 0.0), 4),
-            "total_slippage_cost": round(_sf(getattr(self, "total_slippage_cost", 0.0), 0.0), 4),
-            # L0 (§49) — décomposition brut → net
-            "total_funding_cost": round(_sf(getattr(self, "total_funding_cost", 0.0), 0.0), 4),
-            "total_entry_fees":   round(_sf(getattr(self, "total_entry_fees", 0.0), 0.0), 4),
-            "gross_profit":       round(_sf(getattr(self, "gross_profit", 0.0), 0.0), 4),
-            "net_profit":         round(_sf(getattr(self, "net_profit", 0.0), 0.0), 4),
-            "total_trades":       self.total_trades,
-            "win_rate":           round(_sf(self.win_rate, 0.0), 2),
-            "max_drawdown":       round(_sf(self.max_drawdown, 0.0), 2),
-            "sharpe":             (None if self.sharpe is None
-                                   else round(_sf(self.sharpe, 0.0), 3)),
-            # QW-1 : métriques étendues (S3-07 — branchement a posteriori)
-            "sortino":            (None if getattr(self, "sortino", None) is None
-                                   or not math.isfinite(float(self.sortino))
-                                   else round(float(self.sortino), 3)),
-            "calmar":             (None if getattr(self, "calmar", None) is None
-                                   or not math.isfinite(float(self.calmar))
-                                   else round(float(self.calmar), 3)),
-            "cagr":               round(_sf(getattr(self, "cagr", 0.0), 0.0), 3),
-            "alpha_vs_bh":        round(_sf(getattr(self, "alpha_vs_bh", 0.0), 0.0), 4),
-            "expectancy":         round(_sf(self.expectancy, 0.0), 4),
-            "avg_mae":            round(_sf(self.avg_mae, 0.0), 4),
-            "avg_mfe":            round(_sf(self.avg_mfe, 0.0), 4),
-            "avg_win":            round(_sf(self.avg_win, 0.0), 4),
-            "avg_loss":           round(_sf(self.avg_loss, 0.0), 4),
-            "profit_factor":      pf_safe,
-            "buy_and_hold_pnl":   round(_sf(getattr(self, "buy_and_hold_pnl", 0), 0.0), 4),
-            "buy_and_hold_pct":   round(_sf(getattr(self, "buy_and_hold_pct", 0), 0.0), 3),
-            "alpha":              round(_sf(getattr(self, "alpha", 0), 0.0), 4),
-            "equity_curve":       [round(_sf(e, 0.0), 4) for e in self.equity_curve],
-            "timestamps":         self.timestamps,
-            "by_strategy":        self.by_strategy,
-            "by_setup":           getattr(self, "by_setup", {}),
-            "by_module":          getattr(self, "by_module", {}),
-            "by_exit_reason":     getattr(self, "by_exit_reason", {}),
-            "by_exit_leg":        getattr(self, "by_exit_leg", {}),
-            # Mode de sortie effectivement appliqué : sans lui, deux backtests
-            # aux résultats différents sont indistinguables dans l'interface.
-            "exit_mode":          getattr(self, "exit_mode", "as_declared"),
-            "by_structure_state": getattr(self, "by_structure_state", {}),
-            "by_sequence_type":   getattr(self, "by_sequence_type", {}),
-            "by_tier":            getattr(self, "by_tier", {}),
-            "by_target_class":    getattr(self, "by_target_class", {}),
-            "trades":             self.trades,
-            "diagnostics":        getattr(self, "diagnostics", None),
-            "ml_info":            getattr(self, "ml_info", None),
-            "fallback_to_inline": any(
+        ml_info = getattr(self, "ml_info", None)
+        fallback = False
+        if isinstance(ml_info, dict):
+            fallback = any(
                 isinstance(m, dict) and m.get("fallback_to_inline")
-                for m in ((getattr(self, "ml_info", None) or {}).get("models") or {}).values()
-            ) if isinstance(getattr(self, "ml_info", None), dict) else False,
-            # Contexte d'exécution facturé (S11) : venue, spot/margin, levier,
-            # détail des frais, emprunt. Cf. app/core/execution.py::cost_model.
-            "cost_model":         getattr(self, "cost_model", None),
-            # QW-6 (étape 6) — diagnostics du risk gate (circuit breakers)
-            "realistic_risk":     getattr(self, "realistic_risk", False),
-            "realistic_risk_diagnostics": getattr(self, "realistic_risk_diagnostics", None),
-        }
+                for m in (ml_info.get("models") or {}).values()
+            )
+        return BacktestPayload(
+            initial_capital=self.initial_capital,
+            rejections=self.rejections,
+            final_equity=round(_sf(self.final_equity, 0.0), 4),
+            total_pnl=round(_sf(self.total_pnl, 0.0), 4),
+            total_pnl_hors_frais_entree=round(
+                _sf(self.total_pnl + getattr(self, "total_entry_fees", 0.0), 0.0), 4),
+            total_fees=round(_sf(self.total_fees, 0.0), 4),
+            total_borrow_cost=round(_sf(getattr(self, "total_borrow_cost", 0.0), 0.0), 4),
+            total_slippage_cost=round(_sf(getattr(self, "total_slippage_cost", 0.0), 0.0), 4),
+            total_funding_cost=round(_sf(getattr(self, "total_funding_cost", 0.0), 0.0), 4),
+            total_entry_fees=round(_sf(getattr(self, "total_entry_fees", 0.0), 0.0), 4),
+            gross_profit=round(_sf(getattr(self, "gross_profit", 0.0), 0.0), 4),
+            net_profit=round(_sf(getattr(self, "net_profit", 0.0), 0.0), 4),
+            total_trades=self.total_trades,
+            win_rate=round(_sf(self.win_rate, 0.0), 2),
+            max_drawdown=round(_sf(self.max_drawdown, 0.0), 2),
+            sharpe=(None if self.sharpe is None else round(_sf(self.sharpe, 0.0), 3)),
+            sortino=(None if getattr(self, "sortino", None) is None
+                     or not math.isfinite(float(self.sortino))
+                     else round(float(self.sortino), 3)),
+            calmar=(None if getattr(self, "calmar", None) is None
+                    or not math.isfinite(float(self.calmar))
+                    else round(float(self.calmar), 3)),
+            cagr=round(_sf(getattr(self, "cagr", 0.0), 0.0), 3),
+            alpha_vs_bh=round(_sf(getattr(self, "alpha_vs_bh", 0.0), 0.0), 4),
+            expectancy=round(_sf(self.expectancy, 0.0), 4),
+            avg_mae=round(_sf(self.avg_mae, 0.0), 4),
+            avg_mfe=round(_sf(self.avg_mfe, 0.0), 4),
+            avg_win=round(_sf(self.avg_win, 0.0), 4),
+            avg_loss=round(_sf(self.avg_loss, 0.0), 4),
+            profit_factor=pf_safe,
+            buy_and_hold_pnl=round(_sf(getattr(self, "buy_and_hold_pnl", 0), 0.0), 4),
+            buy_and_hold_pct=round(_sf(getattr(self, "buy_and_hold_pct", 0), 0.0), 3),
+            alpha=round(_sf(getattr(self, "alpha", 0), 0.0), 4),
+            equity_curve=[round(_sf(e, 0.0), 4) for e in self.equity_curve],
+            timestamps=self.timestamps,
+            by_strategy=self.by_strategy,
+            by_setup=getattr(self, "by_setup", {}),
+            by_module=getattr(self, "by_module", {}),
+            by_exit_reason=getattr(self, "by_exit_reason", {}),
+            by_exit_leg=getattr(self, "by_exit_leg", {}),
+            exit_mode=getattr(self, "exit_mode", "as_declared"),
+            by_structure_state=getattr(self, "by_structure_state", {}),
+            by_sequence_type=getattr(self, "by_sequence_type", {}),
+            by_tier=getattr(self, "by_tier", {}),
+            by_target_class=getattr(self, "by_target_class", {}),
+            trades=self.trades,
+            diagnostics=getattr(self, "diagnostics", None),
+            ml_info=ml_info,
+            fallback_to_inline=fallback,
+            cost_model=getattr(self, "cost_model", None),
+            realistic_risk=getattr(self, "realistic_risk", False),
+            realistic_risk_diagnostics=getattr(self, "realistic_risk_diagnostics", None),
+        )
+
+    def to_dict(self) -> dict:
+        return self.to_payload().to_dict()
 
 

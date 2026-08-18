@@ -1,5 +1,6 @@
 /**
  * Contrats API consommés par l'UI.
+ * Les 5 routes chaudes : `types/generated.ts` (dérivé des response_model).
  * Schéma brut : `python scripts/export_openapi.py` → `types/openapi.json`.
  * Zod (lib/schemas.ts) reste non bloquant.
  */

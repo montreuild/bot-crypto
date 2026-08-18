@@ -21,7 +21,7 @@ jobs:
 
   mypy:
     runs-on: ubuntu-latest
-    continue-on-error: true
+    continue-on-error: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,8 +30,17 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
-      - name: Mypy (modules purs)
-        run: python -m mypy app/core/sanitize.py app/core/ohlcv_gaps.py app/ml/overfitting_gate.py
+      - name: Mypy (core + engine, modules tenus)
+        run: python -m mypy
+          app/core/sanitize.py
+          app/core/ohlcv_gaps.py
+          app/core/risk/curve.py
+          app/core/risk/envelope.py
+          app/core/risk/ledger.py
+          app/api/ws_tickets.py
+          app/live/protocols.py
+          app/engine/backtest_result.py
+          app/ml/overfitting_gate.py
 
   test:
     runs-on: ubuntu-latest
