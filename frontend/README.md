@@ -59,7 +59,7 @@ cible n'est pas validée.
 
 ### Prérequis
 
-- Node.js 20+ (recommandé : via [nvm](https://github.com/nvm-sh/nvm))
+- Node.js 22+ (CI : 22 ; 20 reste acceptable en local)
 - Backend FastAPI qui tourne sur `http://localhost:8000` (cf. `scripts/setup.sh` à la racine du repo)
 
 ### Installation

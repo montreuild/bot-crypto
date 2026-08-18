@@ -24,6 +24,9 @@ Historique des versions du Crypto Bot.
   métier sur bots, lab, data, optimize. Zod non bloquant.
 - Commentaires des fichiers touchés réduits aux contraintes non lisibles
   dans le code.
+- CI : `npm run lint` = `eslint` (plus `next lint`) ; Node 22 ; test
+  `_risk_multiplier` lit aussi `position_lifecycle.py` ; types backfill /
+  `by_strategy` / `limit` / `n_bars`.
 
 ### 🐛 R-01 / R-02 / X-01 / U-05 / P-01
 

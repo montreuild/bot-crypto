@@ -1758,7 +1758,7 @@ Ces sprints sont moins urgents que S0-S9 (qui traitaient les bugs P1 et la dette
 ## Annexe — Revue d'intégration des patches S0-S9
 
 Les 11 patches ont été rejoués sur `feat/refonte-ui-ux-s0-s9` puis vérifiés :
-`tsc --noEmit`, `vitest run`, `next lint`, `next build`, `pytest -m "not slow"`,
+`tsc --noEmit`, `vitest run`, `eslint` (plus `next lint`, #244), `next build`, `pytest -m "not slow"`,
 et exécution réelle des 5 pages méta contre le backend FastAPI. Cette annexe
 liste ce que la vérification a trouvé — la série telle que livrée **ne
 compilait pas** (`next build` en échec), et une fois compilée, `/ml` plantait
@@ -1820,7 +1820,7 @@ Corrigées au passage car elles empêchent l'UI de fonctionner :
 |---|---|
 | `tsc --noEmit` | ✅ 0 erreur (6 avant) |
 | `vitest run` | ✅ 9/9 (7/9 avant) |
-| `next lint` | ✅ 0 warning, 0 erreur |
+| `eslint` (`npm run lint`) | ✅ `next lint` retiré (#244) |
 | `next build` | ✅ 28 routes générées (échec avant) |
 | `pytest -m "not slow"` | ✅ 1392 passés, 3 ignorés — aucune régression backend |
 | Endpoints de l'annexe d'exécution | ✅ 13/13 répondent (`/api/scanner/opportunities` en 503 « Config non chargée » tant que le trader n'est pas démarré — comportement attendu) |
