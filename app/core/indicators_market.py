@@ -33,9 +33,9 @@ def market_structure(high: pl.Series, low: pl.Series,
     """+1 = HH/HL (uptrend), −1 = LL/LH (downtrend), 0 = neutral."""
     if len(high) < n_pivots * window * 2:
         return 0
-    highs = [float(high[-i * window - 1:-i * window + window - 1].max())
+    highs = [float(high[-i * window - 1:-i * window + window - 1].max() or 0)  # type: ignore[arg-type]
              for i in range(1, n_pivots + 1)]
-    lows  = [float(low[-i * window - 1:-i * window + window - 1].min())
+    lows  = [float(low[-i * window - 1:-i * window + window - 1].min() or 0)  # type: ignore[arg-type]
              for i in range(1, n_pivots + 1)]
     hh = sum(1 for i in range(len(highs) - 1) if highs[i] > highs[i + 1])
     hl = sum(1 for i in range(len(lows) - 1)  if lows[i]  > lows[i + 1])

@@ -255,9 +255,9 @@ class PositionLifecycleMixin(LifecycleHost):
             px = c_close * (1 - self.spread_pct) if side == "long" \
                 else c_close * (1 + self.spread_pct)
             return RaisonDeSortie("exit_after_bars", px, c_close, False)
-        if tp_hit:
+        if tp_hit and tp_val is not None:
             exec_price, ref, gapped = self._fill_at_level(
-                side, tp_val, c_open, stop=False)
+                side, float(tp_val), c_open, stop=False)
             return RaisonDeSortie(
                 "gap" if gapped else "take_profit", exec_price, ref, not gapped)
         if stop_hit:

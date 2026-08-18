@@ -61,8 +61,20 @@ class LifecycleHost:
     """Attributs de ``Backtester`` pour ``PositionLifecycleMixin``."""
     spread_pct: float
     taker_fee: float
+    maker_fee: float
+    borrow_rate: float
+    borrow_periods: int
     partial_fill: float
     exit_mode: str
     exit_mode_params: dict
     _venue: Any
     rejections: Any
+    cfg: dict
+    _impact_cost: Any
+    _funding_cost: Any
+    _find_strategy: Any
+    _min_notional: Any
+    _sizing_base: Any
+    _leverage: Any
+    _fees: Any
+    _make_trailing: Any

@@ -16,6 +16,7 @@ registre vide (invariant verrouillé par ``tests/test_sizing_coherence.py``).
 """
 import logging
 import math
+from typing import Any
 
 from app.core.risk.envelope import Envelope
 from app.core.risk.state import _locked, _safe_div
@@ -39,6 +40,13 @@ class RiskSizer:
     Aucune initialisation propre — doit être combiné à ``RiskGate`` (ou tout
     hôte exposant ``equity``, ``peak_equity``, ``base_risk``,
     ``volatility_brake_factor``, ``open_positions``)."""
+
+    equity: float
+    peak_equity: float
+    base_risk: float
+    volatility_brake_factor: float
+    open_positions: dict
+    register_slot_open: Any
 
     # ── Courbe de dé-risquage en drawdown (BT-09) ──────────────────────────
     def _drawdown_multiplier(self) -> float:

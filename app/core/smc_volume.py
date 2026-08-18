@@ -1,3 +1,5 @@
-from app.core._compat import reexport
+"""Shim ARCH-03 — import statique pour que mypy voie les noms."""
+from app.core._compat import copy_privates
+from app.core.smc.volume import *  # noqa: F401,F403
 
-reexport("app.core.smc.volume", globals())
+copy_privates('app.core.smc.volume', globals())
