@@ -1,12 +1,9 @@
-"""Backtester (BacktestResult) — stop vérifié intrabar, trailing dynamique.
+"""Backtester — stop vérifié intrabar, trailing dynamique.
 
-ARCH-010 : ``WalkForwardAnalyzer`` et ``MonteCarlo`` ont été extraits vers
-``app/engine/walk_forward.py`` et ``app/engine/monte_carlo.py``. Ils sont
-ré-exportés en fin de module pour préserver la compatibilité ascendante
-(``from app.engine.backtest import WalkForwardAnalyzer`` continue de fonctionner).
+``WalkForwardAnalyzer`` et ``MonteCarlo`` sont ré-exportés en fin de module
+(``from app.engine.backtest import WalkForwardAnalyzer``).
 """
 import logging
-import math
 import threading
 import time
 from typing import Dict, List, Optional
@@ -15,46 +12,27 @@ import numpy as np
 import polars as pl
 
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
-from app.core.execution import apply_exit_mode as _apply_exit_mode
-from app.core.execution import close_pnl as _close_pnl
 from app.core.execution import cost_model as _cost_model
 from app.core.execution import format_cost_model as _format_cost_model
-from app.core.execution import plan_partial_targets as _plan_partial_targets
-from app.core.execution import quantize_size as _quantize_size
 from app.core.execution import size_impact_cost as _size_impact_cost
 from app.core.execution import venue_trade_cost as _venue_trade_cost
 from app.core.log_throttle import log_throttled
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, resolve_strategy_params
 from app.core.rejections import RejectionCounter
-from app.core.risk_curve import risk_multiplier as _risk_multiplier
 from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
 from app.core.risk_envelope import with_reference_envelope
-from app.core.risk_sizer import _floor_to
-from app.core.sanitize import safe_float as _sf
-from app.core.timeframes import TF_MINUTES as _TF_MINUTES
-from app.core.timeframes import bars_per_year as _bars_per_year
+from app.core.timeframes import bar_to_days as _bar_to_days
 from app.core.trade_economics import funding_cost as _funding_cost
 from app.core.trailing import TrailingStopManager
+from app.engine.backtest_result import BacktestResult
 from app.engine.engine import Engine
+from app.engine.position_lifecycle import PositionLifecycleMixin
 
 logger = logging.getLogger(__name__)
 
 
-# Timeframe → minutes — source unique (V4-A). L'ancienne table locale (9 clés)
-# renvoyait le défaut pour 6h/8h/12h ; la canonique les couvre.
-# S4-01/S4-02 : bars_per_year — facteur d'annualisation partagé avec le Sharpe
-# live (health_mixin.py) — sans source unique, les deux Sharpe n'étaient pas
-# comparables (cf. app/core/timeframes.py::bars_per_year).
-
-
-def _bar_to_days(tf: str) -> float:
-    return _TF_MINUTES.get(tf, 15) / 1440.0
-
-
 def _iso_of(df: pl.DataFrame, idx: int) -> Optional[str]:
-    """``time`` de la barre ``idx`` en ISO — borne ``as_of``/anti-chevauchement
-    du registre ML (``app.ml.model_registry.to_iso``, importé localement pour
-    éviter un import module-wide non nécessaire au reste de ce fichier)."""
+    """``time`` de la barre ``idx`` en ISO (borne ``as_of`` du registre ML)."""
     if df is None or len(df) == 0 or "time" not in df.columns:
         return None
     from app.ml.model_registry import to_iso
@@ -63,22 +41,8 @@ def _iso_of(df: pl.DataFrame, idx: int) -> Optional[str]:
 
 def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
                              window_start: Optional[str], window_end: Optional[str]) -> dict:
-    """Résout et charge le modèle figé pour ``strat`` via le registre ML
-    (``ml_mode="frozen"``, ou repli d'une stratégie sans cadence de
-    réentraînement configurée en ``ml_mode="simulated_live"``).
-
-    ``as_of=window_start`` : ne retient qu'un modèle entraîné AVANT le début
-    de la fenêtre backtestée — c'est la garde qui empêche un backtest de
-    charger un modèle qui a vu des données de la période évaluée. Un
-    chevauchement résiduel (modèle legacy sans date, ou fenêtre de train
-    partiellement postérieure) est signalé (log + ``overlap_warning``), pas
-    silencieusement ignoré.
-
-    Ne lève jamais : un modèle introuvable/illisible reste un repli sur
-    l'entraînement inline (comportement historique), mais ce repli est
-    désormais TOUJOURS visible dans l'entrée retournée (``fallback_to_inline``)
-    au lieu d'un simple log — c'est le changement demandé par ML-02 §4.1
-    (« ce switch silencieux peut fausser une comparaison sans qu'on le voie »).
+    """Charge le modèle figé ``as_of=window_start``. Ne lève jamais :
+    introuvable / illisible / chevauchement → ``fallback_to_inline``.
     """
     import app.ml.model_registry as ml_registry
 
@@ -135,511 +99,27 @@ def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
 def run_dual_pass(engine: Engine, cfg: dict, df, envelope, *,
                   symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "1d",
                   **run_kwargs) -> dict:
-    """Deux exécutions, deux questions différentes (§5.1).
-
-    - ``live``      : l'enveloppe RÉELLE du slot — « ce bot est-il promouvable ? »
-                      C'est la seule passe qui pilote promotion et parité.
-    - ``reference`` : la MÊME enveloppe à une échelle fixe
-                      (``backtest.reference_envelope``) — « cette stratégie
-                      vaut-elle quelque chose ? ». Comparable entre tous les
-                      bots, indépendante de l'allocation courante.
-
-    Le sizing étant linéaire en l'enveloppe, tout écart de PnL % entre les deux
-    passes est imputable aux contraintes ABSOLUES (notionnel minimum, lot
-    indivisible, frais fixes, saturation de budget) — et les compteurs de refus
-    disent lesquelles. Sur une venue fractionnable et sans minimum, les deux
-    passes doivent donner exactement le même PnL %.
+    """``live`` = enveloppe du slot (promouvable ?) ;
+    ``reference`` = même enveloppe à échelle fixe (la stratégie vaut-elle ?).
+    Un écart de PnL % vient des contraintes absolues (min notional, lot, frais).
     """
     reference_capital = float((cfg.get("backtest") or {}).get("reference_envelope", 1000.0))
     out = {}
     for pass_name, env in (("live", envelope),
                            ("reference", with_reference_envelope(envelope, reference_capital))):
         bt = Backtester(engine, cfg, envelope=env, **run_kwargs)
-        # ``timeframe`` doit suivre : il pilote l'annualisation du Sharpe et
-        # le coût d'emprunt. Deux passes annualisées différemment ne seraient
-        # pas comparables — ce qui viderait l'exercice de son sens.
         out[pass_name] = bt.run(df, symbol=symbol, timeframe=timeframe)
     return out
 
 
-# ── BacktestResult ──
-class BacktestResult:
-    def __init__(self, trades: List[dict], equity_curve: List[float],
-                 initial_capital: float, timestamps: List[str] = None,
-                 timeframe: str = "1d", rejections: dict = None,
-                 n_bars: int = 0, equity_mtm: List[float] = None):
-        self.trades          = trades
-        self.equity_curve    = equity_curve
-        self.equity_mtm      = equity_mtm or []
-        self.initial_capital = initial_capital
-        self.timestamps      = timestamps or []
-        self._timeframe      = timeframe
-        # Nombre de bougies effectivement parcourues. C'est la SEULE mesure de
-        # temps fiable d'un backtest : `equity_curve` ne reçoit un point qu'à
-        # chaque trade clôturé, elle ne dit donc rien de la durée écoulée.
-        # Sans cette valeur, toute annualisation (Sharpe, Sortino, CAGR) est
-        # calculée sur une durée inventée.
-        self._n_bars         = int(n_bars or 0)
-        # S12 : motifs de refus, mêmes codes que le live — sans eux, impossible
-        # de dire POURQUOI un backtest et son équivalent live divergent.
-        self.rejections      = rejections or {}
-        self._compute_metrics()
-
-    def _years(self) -> Optional[float]:
-        """Durée du backtest en années, ou None si elle n'est pas connue.
-
-        None plutôt qu'une valeur par défaut : un ratio annualisé sur une durée
-        supposée est un chiffre faux d'apparence crédible, ce qui est pire
-        qu'une absence de chiffre.
-        """
-        bpy = _bars_per_year(self._timeframe)
-        if not self._n_bars or not bpy:
-            return None
-        return self._n_bars / bpy
-
-    def _compute_metrics(self):
-        closed = [t for t in self.trades if t.get("status", "").startswith("closed")]
-        pnls   = [t["pnl"] for t in closed]
-        fees   = [t.get("fees", 0) for t in closed]
-        wins   = [p for p in pnls if p > 0]
-        losses = [p for p in pnls if p <= 0]
-
-        self.total_trades = len(closed)
-        self.win_rate     = len(wins) / len(closed) * 100 if closed else 0.0
-        self.total_pnl    = sum(pnls)
-        self.total_fees   = sum(fees)
-        self.final_equity = self.equity_curve[-1] if self.equity_curve else self.initial_capital
-
-        eq = np.array(self.equity_curve, dtype=float)
-        # F-06 : le drawdown se lit sur l'équité mark-to-market (un point
-        # par barre), pas sur la courbe par trade qui ignore les pertes
-        # latentes.
-        eq_dd = np.array(self.equity_mtm, dtype=float) if len(self.equity_mtm) > 1 else eq
-        if len(eq_dd) > 1:
-            peak              = np.maximum.accumulate(eq_dd)
-            drawdowns         = (eq_dd - peak) / np.where(peak > 0, peak, 1.0) * 100
-            self.max_drawdown = _sf(float(drawdowns.min()), 0.0)
-        else:
-            self.max_drawdown = 0.0
-        if len(eq) > 1:
-            returns           = np.diff(eq) / np.where(eq[:-1] > 0, eq[:-1], 1.0)
-            std               = float(returns.std())
-            # Annualisation à la cadence RÉELLE de la série. `equity_curve` a un
-            # point par trade clôturé, pas un par bougie : l'annualiser avec
-            # `bars_per_year` supposait 365 observations/an là où le bot en
-            # produit 1,5, et gonflait le Sharpe de sqrt(bougies/trades) — ×15
-            # sur un run de 8 trades en 5,5 ans (Sharpe affiché 9,5).
-            from app.core.performance_metrics import returns_per_year
-            from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES
-            # F-02 : un écart-type sur 1-3 points n'est pas estimable. None
-            # (non mesurable) ≠ 0.0 (ratio nul). Aligné sur MIN_SIGNIFICANT_TRADES.
-            if len(returns) < MIN_SIGNIFICANT_TRADES:
-                self.sharpe = None
-            else:
-                ann_factor        = np.sqrt(returns_per_year(
-                    len(returns), self._years(), _bars_per_year(self._timeframe)))
-                raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
-                self.sharpe       = _sf(raw_sharpe, 0.0)
-        else:
-            self.sharpe       = None
-
-        self.avg_win  = _sf(float(np.mean(wins)),   0.0) if wins   else 0.0
-        self.avg_loss = _sf(float(np.mean(losses)), 0.0) if losses else 0.0
-
-        self.expectancy = (
-            len(wins) / len(closed) * self.avg_win +
-            len(losses) / len(closed) * self.avg_loss
-        ) if closed else 0.0
-
-        win_sum  = sum(wins)
-        loss_sum = abs(sum(losses))
-        # F-10 : aucune perte → non mesurable (None), pas une sentinelle 999
-        # qui gagne tous les tris.
-        self.profit_factor = (win_sum / loss_sum) if loss_sum > 0 else (None if win_sum > 0 else 0.0)
-
-        maes = [t.get("mae", 0) for t in closed if t.get("mae") is not None]
-        mfes = [t.get("mfe", 0) for t in closed if t.get("mfe") is not None]
-        self.avg_mae = _sf(float(np.mean(maes)), 0.0) if maes else 0.0
-        self.avg_mfe = _sf(float(np.mean(mfes)), 0.0) if mfes else 0.0
-
-        # ── Métriques par stratégie ───────────────────────────────────────────
-        # S4-05 : pré-groupement en une passe — l'ancien code refiltrait
-        # `closed` (par ex. `[t for t in closed if t.get("strategy") == s]`)
-        # TROIS fois par stratégie, soit O(n×k) sur n trades / k stratégies.
-        # `trades_by_strategy` préserve l'ordre chronologique (celui de
-        # `closed`), requis par la courbe d'équité et le Sharpe ci-dessous.
-        from collections import defaultdict as _defaultdict
-        trades_by_strategy: Dict[str, list] = _defaultdict(list)
-        for t in closed:
-            trades_by_strategy[t.get("strategy", "unknown")].append(t)
-
-        self.by_strategy = self._group_metrics(trades_by_strategy)
-
-        # ── §65 : statistiques par SETUP et par MODULE ────────────────────────
-        # Une stratégie SMC agrège plusieurs familles de setups dont rien ne dit
-        # qu'elles ont le même edge — la spécification demande des statistiques
-        # SÉPARÉES par module (SMC Core / ICT Session / ICT Advanced), et le
-        # YAML de `smart_money` documente déjà une ablation setup par setup
-        # faite à la main.
-        #
-        # Générique DÉLIBÉRÉMENT : toute stratégie qui pose `setup` et/ou
-        # `module` sur son signal obtient le découpage sans rien coder ici, et
-        # les dicts restent vides pour celles qui n'en posent pas — aucun
-        # appelant existant ne change de comportement.
-        trades_by_setup: Dict[str, list] = _defaultdict(list)
-        trades_by_module: Dict[str, list] = _defaultdict(list)
-        for t in closed:
-            if t.get("setup"):
-                trades_by_setup[str(t["setup"])].append(t)
-            if t.get("module"):
-                trades_by_module[str(t["module"])].append(t)
-        self.by_setup: Dict[str, dict] = self._group_metrics(trades_by_setup)
-        self.by_module: Dict[str, dict] = self._group_metrics(trades_by_module)
-
-        # ── L0 (§101) — statistiques par RAISON DE SORTIE ────────────────────
-        # La question « les positions meurent-elles sur stop, sur trailing ou sur
-        # expiration ? » n'avait aucune réponse chiffrée : c'est elle qui décide
-        # si le problème est le stop, la cible ou la durée de détention.
-        trades_by_exit: Dict[str, list] = _defaultdict(list)
-        for t in closed:
-            trades_by_exit[str(t.get("exit_reason") or "inconnu")].append(t)
-        self.by_exit_reason: Dict[str, dict] = self._group_metrics(trades_by_exit)
-
-        # ── §5 — répartition du PnL PAR JAMBE de sortie ──────────────────────
-        # `by_exit_reason` compte des TRADES ; il ne dit rien de la façon dont
-        # un trade fractionné a gagné son argent. Or c'est exactement la
-        # question que pose un mode TP1/TP2/runner : le reliquat paie-t-il les
-        # jambes prises tôt, ou les jambes sauvent-elles un reliquat perdant ?
-        #
-        # INVARIANT : la somme des postes redonne EXACTEMENT `total_pnl`. Sans
-        # lui, le découpage est un piège — voir le commentaire du poste
-        # « complet » plus bas. Le reliquat n'est pas journalisé comme une
-        # jambe (il part avec la clôture du trade) : on le reconstitue par
-        # différence, ce qui est précisément ce qui rend l'invariant vrai.
-        jambes: Dict[str, dict] = {}
-
-        def _cumule(cle: str, pnl: float) -> None:
-            d = jambes.setdefault(cle, {"n": 0, "pnl": 0.0, "wins": 0})
-            d["n"] += 1
-            d["pnl"] += float(pnl)
-            if pnl > 0:
-                d["wins"] += 1
-
-        for t in closed:
-            legs = t.get("exits") or []
-            if legs:
-                for leg in legs:
-                    _cumule(str(leg.get("reason") or "jambe"),
-                            float(leg.get("pnl") or 0.0))
-                reste = float(t.get("pnl", 0.0)) - sum(float(x.get("pnl") or 0.0)
-                                                       for x in legs)
-                _cumule("runner", reste)
-            else:
-                # Trade sorti EN UNE FOIS. L'inclure n'est pas un détail : sans
-                # lui, le découpage ne couvrait que les trades fractionnés —
-                # tous gagnants par construction, puisqu'une jambe partielle ne
-                # se déclenche qu'en atteignant sa cible. Mesuré sur ETH/USDC
-                # 4 h : 80 trades fractionnés à +1 902 affichés, 89 trades non
-                # fractionnés à −1 629 invisibles, et un tableau qui annonçait
-                # 695 % du PnL réel avec 100 % de réussite sur chaque ligne.
-                _cumule(f"complet · {t.get('exit_reason') or 'inconnu'}",
-                        float(t.get("pnl", 0.0)))
-        total_abs = sum(abs(d["pnl"]) for d in jambes.values()) or 1.0
-        for d in jambes.values():
-            d["pnl"] = round(d["pnl"], 4)
-            d["win_rate"] = round(d["wins"] / d["n"] * 100, 1) if d["n"] else 0.0
-            # Part du mouvement TOTAL (en valeur absolue) portée par la jambe :
-            # dit d'un coup d'œil si le reliquat pèse ou s'il est décoratif.
-            d["part_pct"] = round(abs(d["pnl"]) / total_abs * 100, 1)
-        self.by_exit_leg: Dict[str, dict] = jambes
-
-        # ── L3 (§60) / L6 (§72) — par état de structure et par séquence ──────
-        # « Entrer en WARNING est-il pire qu'entrer en CONFIRMED ? » est la
-        # question que L3 doit trancher par un chiffre, pas par un principe.
-        for axe, cle in (("by_structure_state", "structure_state"),
-                         ("by_sequence_type", "sequence_type"),
-                         ("by_tier", "tier")):
-            groupes: Dict[str, list] = _defaultdict(list)
-            for t in closed:
-                if t.get(cle):
-                    groupes[str(t[cle])].append(t)
-            setattr(self, axe, self._group_metrics(groupes))
-
-        # L4 (§77 §78) — par CLASSE de liquidité visée. C'est la mesure qui dit
-        # si la hiérarchie de la spécification correspond à quelque chose : une
-        # cible hebdomadaire est-elle vraiment plus souvent atteinte qu'un
-        # swing local ?
-        par_classe: Dict[str, list] = _defaultdict(list)
-        for t in closed:
-            cl = (t.get("indicators") or {}).get("tp_class")
-            if cl:
-                par_classe[str(cl)].append(t)
-        self.by_target_class: Dict[str, dict] = self._group_metrics(par_classe)
-
-        # ── QW-1 : métriques étendues (Sortino, Calmar, CAGR, alpha vs B&H) ──
-        self._compute_extended_metrics()
-
-        # ── QW-3 : agrégats de coûts (borrow + slippage) pour analyse frais ──
-        # Exigence 4 (estimation frais/levier) : sans ces agrégats, l'utilisateur
-        # ne peut pas savoir quelle part du PnL est mangée par le borrow margin
-        # vs le slippage. On les calcule à partir des trades fermés.
-        # L0 (§49) — chaque poste de coût est désormais porté par le trade
-        # (_close_at), donc agrégeable au lieu d'être estimé ou laissé à 0.
-        def _sum(key: str) -> float:
-            return round(_sf(float(sum(t.get(key, 0) or 0 for t in closed)), 0.0), 4)
-
-        try:
-            self.total_borrow_cost   = _sum("borrow_cost")
-            self.total_slippage_cost = _sum("slippage_cost")
-            self.total_funding_cost  = _sum("funding_cost")
-            self.gross_profit        = _sum("gross_pnl")
-            # ⚠ `total_pnl` somme les `pnl` de clôture, qui ne retranchent PAS
-            # les frais d'entrée (prélevés sur le capital à l'ouverture) :
-            # `net_profit` est la variation d'équité réelle, et l'écart entre
-            # les deux vaut exactement la somme des frais d'entrée.
-            self.net_profit          = round(_sf(
-                self.final_equity - self.initial_capital, 0.0), 4)
-            self.total_entry_fees    = _sum("entry_fees")
-        except Exception:
-            self.total_borrow_cost = self.total_slippage_cost = 0.0
-            self.total_funding_cost = self.gross_profit = 0.0
-            self.net_profit = self.total_entry_fees = 0.0
-
-    def _compute_extended_metrics(self):
-        """QW-1 — Sortino, Calmar, CAGR et alpha vs Buy & Hold (S3-07).
-
-        `app/core/performance_metrics.py` était écrit et testé unitairement mais
-        jamais appelé : ces 4 métriques alimentent le comparatif multi-stratégies
-        (exigence 7) et les recommandations (exigence 8).
-
-        Appelée deux fois : une première depuis `_compute_metrics()` (dans
-        `__init__`), puis une seconde depuis `_add_buy_and_hold()` une fois que
-        `_close_prices` est disponible. L'alpha vs B&H a besoin de la série des
-        prix, qui n'est connue qu'après le run — sans ce second appel il
-        resterait silencieusement à 0 (`alpha_vs_buy_hold` renvoie 0 quand le
-        benchmark est vide). L'opération est idempotente et peu coûteuse.
-
-        La durée du backtest se déduit du nombre de BOUGIES, jamais du nombre
-        de points d'équité : `equity_curve` ne reçoit un point qu'à chaque trade
-        clôturé (cf. `_close_at`). Compter 9 points comme 9 périodes donnait
-        « 0,025 an » pour un run de 5,5 ans, et un CAGR de 3 809 %/an.
-        """
-        try:
-            from app.core.performance_metrics import compute_extended_metrics
-            closed = [t for t in self.trades if t.get("status", "").startswith("closed")]
-            prices = getattr(self, "_close_prices", None) or []
-            bars_per_year = _bars_per_year(self._timeframe) or 252
-            # `_n_bars` est fourni au constructeur : la durée est connue dès le
-            # premier appel, plus besoin d'attendre `_add_buy_and_hold`.
-            years = self._years()
-            ext = compute_extended_metrics(
-                trades=closed,
-                equity_curve=self.equity_curve,
-                initial_capital=self.initial_capital,
-                prices=prices,
-                years=years,
-                periods_per_year=bars_per_year,
-            )
-            self.sortino = ext["sortino"]
-            self.calmar = ext["calmar"]
-            self.cagr = ext["cagr"]
-            self.alpha_vs_bh = ext["alpha_vs_bh"]
-        except Exception as _ext_err:
-            # Ne jamais planter le backtest à cause des métriques étendues —
-            # on logge et on dégrade vers 0 (comportement inchangé avant QW-1).
-            logger.warning(
-                f"[BacktestResult] compute_extended_metrics KO ({_ext_err}) — "
-                f"Sortino/Calmar/CAGR/alpha_vs_bh mis à 0"
-            )
-            self.sortino = 0.0
-            self.calmar = 0.0
-            self.cagr = 0.0
-            self.alpha_vs_bh = 0.0
-
-    def _group_metrics(self, trades_by_key: Dict[str, list]) -> Dict[str, dict]:
-        """Statistiques complètes par groupe de trades.
-
-        Extraite de la boucle `by_strategy` pour être réutilisée telle quelle
-        par les découpages par setup et par module : trois copies de ce calcul
-        auraient fini par diverger, et un profit factor calculé différemment
-        selon l'axe d'analyse ne serait comparable à rien.
-
-        Le groupement préserve l'ordre chronologique de `closed`, requis par la
-        courbe d'équité et le Sharpe.
-        """
-        out: Dict[str, dict] = {}
-        for s, strat_trades in trades_by_key.items():
-            d = {"trades": 0, "wins": 0, "pnl": 0.0, "fees": 0.0}
-            for t in strat_trades:
-                d["trades"] += 1
-                d["pnl"]    += t["pnl"]
-                d["fees"]   += t.get("fees", 0)
-                if t["pnl"] > 0:
-                    d["wins"] += 1
-            out[s] = d
-
-        for s, d in out.items():
-            strat_trades = trades_by_key[s]
-            sd_pnls = [t["pnl"] for t in strat_trades]
-            wins_s  = [p for p in sd_pnls if p > 0]
-            loss_s  = [p for p in sd_pnls if p <= 0]
-
-            d["win_rate"]     = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] else 0.0
-            d["pnl"]          = round(d["pnl"], 4)
-            d["fees"]         = round(d["fees"], 4)
-            d["avg_win"]      = round(_sf(float(np.mean(wins_s)), 0.0), 4) if wins_s else 0.0
-            d["avg_loss"]     = round(_sf(float(np.mean(loss_s)), 0.0), 4) if loss_s else 0.0
-            _loss_sum = abs(sum(loss_s))
-            d["profit_factor"] = (round(sum(wins_s) / _loss_sum, 3) if _loss_sum > 0
-                                  else (None if wins_s else 0.0))
-            d["expectancy"]   = round(
-                len(wins_s) / len(sd_pnls) * d["avg_win"] +
-                len(loss_s) / len(sd_pnls) * d["avg_loss"], 4
-            ) if sd_pnls else 0.0
-            d["total_trades"] = d["trades"]
-            d["total_pnl"]    = d["pnl"]
-            d["total_fees"]   = d["fees"]
-
-            eq_s  = [self.initial_capital]
-            cap   = self.initial_capital
-            for t in strat_trades:
-                cap += t["pnl"]
-                eq_s.append(round(cap, 4))
-            d["equity_curve"]    = eq_s
-            d["initial_capital"] = self.initial_capital
-            d["final_equity"]    = round(eq_s[-1], 4)
-
-            eq_arr = np.array(eq_s, dtype=float)
-            peak_s = np.maximum.accumulate(eq_arr)
-            if len(eq_arr) > 1:
-                dd_arr = (eq_arr - peak_s) / np.where(peak_s > 0, peak_s, 1.0) * 100
-                d["max_drawdown"] = round(_sf(float(dd_arr.min()), 0.0), 2)
-            else:
-                d["max_drawdown"] = 0.0
-
-            if len(eq_arr) > 1:
-                denom  = np.where(eq_arr[:-1] > 0, eq_arr[:-1], 1.0)
-                rets_s = np.diff(eq_arr) / denom
-            else:
-                rets_s = np.array([0.0])
-            # Même correction que le Sharpe global : `eq_s` est construite trade
-            # par trade juste au-dessus, sa cadence est celle des trades DE CETTE
-            # stratégie — qui peut différer de celle du portefeuille entier.
-            from app.core.performance_metrics import returns_per_year as _rpy
-            ann_s  = np.sqrt(_rpy(len(rets_s), self._years(),
-                                  _bars_per_year(self._timeframe)))
-            std_s  = float(rets_s.std())
-            from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES as _MIN_SH
-            if len(rets_s) < _MIN_SH:
-                d["sharpe"] = None
-            elif std_s > 0:
-                d["sharpe"] = round(_sf(float(rets_s.mean() / std_s * ann_s), 0.0), 3)
-            else:
-                d["sharpe"] = 0.0
-
-            d["trades"] = strat_trades
-        return out
-
-    def to_dict(self) -> dict:
-        pf = self.profit_factor
-        if pf is None:
-            pf_safe = None
-        else:
-            pf_safe = round(float(pf), 3) if math.isfinite(float(pf)) else None
-        return {
-            "initial_capital":    self.initial_capital,
-            "rejections":         self.rejections,
-            "final_equity":       round(_sf(self.final_equity, 0.0), 4),
-            "total_pnl":          round(_sf(self.total_pnl, 0.0), 4),
-            # F-01 : alias explicite — depuis que le pnl de trade porte les
-            # frais d'entrée, total_pnl == net_profit. L'ancien montant
-            # (hors frais d'entrée) reste en diagnostic.
-            "total_pnl_hors_frais_entree": round(
-                _sf(self.total_pnl + getattr(self, "total_entry_fees", 0.0), 0.0), 4),
-            "total_fees":         round(_sf(self.total_fees, 0.0), 4),
-            # QW-3 : agrégats de coûts pour analyse what-if frais/levier
-            "total_borrow_cost":  round(_sf(getattr(self, "total_borrow_cost", 0.0), 0.0), 4),
-            "total_slippage_cost": round(_sf(getattr(self, "total_slippage_cost", 0.0), 0.0), 4),
-            # L0 (§49) — décomposition brut → net
-            "total_funding_cost": round(_sf(getattr(self, "total_funding_cost", 0.0), 0.0), 4),
-            "total_entry_fees":   round(_sf(getattr(self, "total_entry_fees", 0.0), 0.0), 4),
-            "gross_profit":       round(_sf(getattr(self, "gross_profit", 0.0), 0.0), 4),
-            "net_profit":         round(_sf(getattr(self, "net_profit", 0.0), 0.0), 4),
-            "total_trades":       self.total_trades,
-            "win_rate":           round(_sf(self.win_rate, 0.0), 2),
-            "max_drawdown":       round(_sf(self.max_drawdown, 0.0), 2),
-            "sharpe":             (None if self.sharpe is None
-                                   else round(_sf(self.sharpe, 0.0), 3)),
-            # QW-1 : métriques étendues (S3-07 — branchement a posteriori)
-            "sortino":            (None if getattr(self, "sortino", None) is None
-                                   or not math.isfinite(float(self.sortino))
-                                   else round(float(self.sortino), 3)),
-            "calmar":             (None if getattr(self, "calmar", None) is None
-                                   or not math.isfinite(float(self.calmar))
-                                   else round(float(self.calmar), 3)),
-            "cagr":               round(_sf(getattr(self, "cagr", 0.0), 0.0), 3),
-            "alpha_vs_bh":        round(_sf(getattr(self, "alpha_vs_bh", 0.0), 0.0), 4),
-            "expectancy":         round(_sf(self.expectancy, 0.0), 4),
-            "avg_mae":            round(_sf(self.avg_mae, 0.0), 4),
-            "avg_mfe":            round(_sf(self.avg_mfe, 0.0), 4),
-            "avg_win":            round(_sf(self.avg_win, 0.0), 4),
-            "avg_loss":           round(_sf(self.avg_loss, 0.0), 4),
-            "profit_factor":      pf_safe,
-            "buy_and_hold_pnl":   round(_sf(getattr(self, "buy_and_hold_pnl", 0), 0.0), 4),
-            "buy_and_hold_pct":   round(_sf(getattr(self, "buy_and_hold_pct", 0), 0.0), 3),
-            "alpha":              round(_sf(getattr(self, "alpha", 0), 0.0), 4),
-            "equity_curve":       [round(_sf(e, 0.0), 4) for e in self.equity_curve],
-            "timestamps":         self.timestamps,
-            "by_strategy":        self.by_strategy,
-            "by_setup":           getattr(self, "by_setup", {}),
-            "by_module":          getattr(self, "by_module", {}),
-            "by_exit_reason":     getattr(self, "by_exit_reason", {}),
-            "by_exit_leg":        getattr(self, "by_exit_leg", {}),
-            # Mode de sortie effectivement appliqué : sans lui, deux backtests
-            # aux résultats différents sont indistinguables dans l'interface.
-            "exit_mode":          getattr(self, "exit_mode", "as_declared"),
-            "by_structure_state": getattr(self, "by_structure_state", {}),
-            "by_sequence_type":   getattr(self, "by_sequence_type", {}),
-            "by_tier":            getattr(self, "by_tier", {}),
-            "by_target_class":    getattr(self, "by_target_class", {}),
-            "trades":             self.trades,
-            "diagnostics":        getattr(self, "diagnostics", None),
-            "ml_info":            getattr(self, "ml_info", None),
-            # Contexte d'exécution facturé (S11) : venue, spot/margin, levier,
-            # détail des frais, emprunt. Cf. app/core/execution.py::cost_model.
-            "cost_model":         getattr(self, "cost_model", None),
-            # QW-6 (étape 6) — diagnostics du risk gate (circuit breakers)
-            "realistic_risk":     getattr(self, "realistic_risk", False),
-            "realistic_risk_diagnostics": getattr(self, "realistic_risk_diagnostics", None),
-        }
-
-
-# ── Backtester ──
 _ML_MODES = ("frozen", "inline", "simulated_live")
 
 
-class Backtester:
-    """Backtester trailing stop multi-phases, sans TP fixe.
+class Backtester(PositionLifecycleMixin):
+    """Trailing stop multi-phases.
 
-    ``ml_mode`` (ML-02) pilote le comportement des stratégies ``BaseStrategyML`` :
-
-    - ``"frozen"`` (défaut) : résout le dernier modèle promu au registre
-      antérieur au début de la fenêtre backtestée (``as_of``) — rapide,
-      déterministe, sans fuite temporelle. Repli visible sur l'entraînement
-      inline si aucun modèle n'est résoluble (cf. ``result.ml_info``).
-    - ``"inline"`` : réentraînement walk-forward par la stratégie elle-même —
-      utilisé par l'optimiseur et les tests qui évaluent le comportement réel
-      de la ML.
-    - ``"simulated_live"`` : rejoue la politique de rafraîchissement complète
-      (``app.ml.policy.maybe_refresh`` — entraînement + gate + registre) aux
-      frontières de cadence de chaque stratégie, comme si le backtest était
-      vécu en live. Pour une stratégie sans cadence configurée (modèle figé
-      pour toujours), se comporte comme ``"frozen"``.
-
-    ``ml_mode`` est le SEUL levier. Le booléen historique
-    ``use_pretrained_ml`` a été retiré : deux réglages pour un même concept,
-    dont l'un se traduisait silencieusement dans l'autre, sont exactement ce
-    qui rendait le mode effectif difficile à lire depuis un appelant.
+    ``ml_mode`` : ``frozen`` (défaut, ``as_of`` début de fenêtre), ``inline``
+    (réentraînement WF), ``simulated_live`` (``maybe_refresh`` aux cadences).
     """
     def __init__(self, engine: Engine, cfg: dict,
                  cancel_event: Optional[threading.Event] = None,
@@ -649,27 +129,20 @@ class Backtester:
         self.engine             = engine
         self.cfg                = cfg
         self._cancel_event      = cancel_event
-        # S12 : le backtest d'un bot tourne sur l'ENVELOPPE de ce bot, pas sur
-        # un capital global — c'est ce qui rend son PnL comparable au live et
-        # fait mordre `min_notional`, le lot et les frais fixes à la même
-        # échelle des deux côtés. Sans enveloppe (études libres, walk-forward
-        # historique), on retombe sur le capital de la venue par défaut.
+        # Sans enveloppe (études libres) : capital de la venue par défaut.
         self.envelope           = envelope
         self.rejections         = RejectionCounter()
         if ml_mode not in _ML_MODES:
             raise ValueError(f"ml_mode invalide : {ml_mode!r} (attendu parmi {_ML_MODES})")
         self.ml_mode            = ml_mode
-        # QW-6 (étape 6) — mode realistic_risk : active les circuit breakers
-        # (consecutive losses, slot daily DD, max trades/day, volatility brake,
-        # kill-switch global). Opt-in pour préserver la parité avec les
-        # backtests existants. Cf. app/engine/backtest_risk_gate.py.
+        # Circuit breakers opt-in — off pour préserver la parité des backtests existants.
         self.realistic_risk     = bool(realistic_risk)
-        self._risk_gate         = None  # initialisé dans run() quand realistic_risk=True
+        self._risk_gate         = None
         bcfg = cfg.get("backtest", {})
         tcfg = cfg.get("trading",  {})
 
         self.atr_stop_mult = float(bcfg.get("atr_stop_mult", 2.5))
-        self.atr_tp_mult   = None  # TP fixe supprimé — trailing gère les sorties
+        self.atr_tp_mult   = None
 
         self.trail_wide   = float(bcfg.get("trail_wide",   2.5))
         self.trail_normal = float(bcfg.get("trail_normal", 2.0))
@@ -687,49 +160,17 @@ class Backtester:
         self.borrow_rate  = tcfg.get("borrow_rate_daily", 0.0002)
         self.borrow_periods = int(tcfg.get("borrow_periods_per_day", 24))
         self.spread_pct   = bcfg.get("spread_pct",        0.0005)
-        # BT-10 : modèle de slippage dépendant de la taille (off par défaut).
-        # "size" → coût d'impact additionnel notional × spread_pct × k ×
-        # (notional / volume quote moyen 20 barres), appliqué à l'entrée, aux
-        # scale-ins et à la sortie. "static" (défaut) = byte-identique.
         self.slippage_model = str(bcfg.get("slippage_model", "static"))
         self.slippage_k     = float(bcfg.get("slippage_k", 1.0))
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
-        # Mode de sortie GÉNÉRIQUE appliqué à toutes les stratégies (§5).
-        # `as_declared` = la stratégie garde la main, donc aucun backtest
-        # existant ne change tant que personne ne demande autre chose.
+        # as_declared : la stratégie garde la main — aucun backtest existant ne change.
         self.exit_mode = str(bcfg.get("exit_mode", "as_declared"))
         self.exit_mode_params = dict(bcfg.get("exit_mode_params") or {})
-        # S12 : `backtest.max_notional_pct` est supprimé — le plafond notionnel
-        # s'exprime sur l'enveloppe du slot × levier (§2.2), la bonne base.
-        # G2 : venue de l'instrument backtesté (quantification des tailles,
-        # frais fixes, TTF). Résolue par symbole dans run() — None jusque-là,
-        # ce qui signifie « comportement crypto historique » partout.
         self._venue = None
-        # S11 : décompte des coûts effectivement appliqués (spot/margin, levier,
-        # frais, emprunt). Rempli dans run(), reporté dans le résultat — sans
-        # lui, deux backtests aux chiffres très différents ne disent pas qu'ils
-        # ne diffèrent que par la venue résolue.
         self._cost_model = None
 
-    # ── Bornes économiques (S12) ───────────────────────────────────────────
-    # Portées par l'enveloppe quand elle existe, sinon par la venue résolue :
-    # les mêmes valeurs que le live consulte, pour que les contraintes
-    # absolues mordent des deux côtés au même moment.
-
     def _sizing_base(self, ctx) -> float:
-        """Base économique du sizing — distincte de l'équité courante.
-
-        ``ctx.capital`` joue deux rôles : suivre l'équité (courbe, PnL,
-        drawdown) et servir de base au sizing. S12 les sépare dès qu'une
-        enveloppe est fournie : le live dimensionne sur une enveloppe FIXE
-        (une décision d'allocation, pas une valeur de marché), et la courbe de
-        dé-risquage est le seul mécanisme qui réduit la voilure après pertes.
-
-        Sans cette séparation, le backtest pénaliserait deux fois un
-        drawdown — base rétrécie ET multiplicateur — là où le live ne le fait
-        qu'une, et le sizing cesserait d'être linéaire en l'enveloppe, ce qui
-        ruinerait l'invariance d'échelle de la double passe (§5.1).
-        """
+        """Enveloppe fixe si fournie — pas ``ctx.capital`` (sinon DD pénalisé deux fois)."""
         return self.envelope.slot_envelope if self.envelope is not None else ctx.capital
 
     def _leverage(self) -> float:
@@ -743,22 +184,14 @@ class Backtester:
         return float(getattr(self._venue, "min_notional", 0.0) or 0.0)
 
     def _ledger_envelope(self, ctx):
-        """R-02 : Envelope consommée par RiskLedger (même objet que le live).
-
-        Sans enveloppe de slot (études libres), on reconstruit une enveloppe
-        qui reproduit les anciens plafonds inline : notionnel max = capital
-        × levier, min_notional venue, budgets de risque = capital (ne lient
-        pas). Dès qu'une Envelope réelle est fournie, les plafonds symbole
-        / venue de L-05 / F-05 s'appliquent aussi au backtest.
+        """Envelope RiskLedger. Sans slot : budgets symbole/venue = base×1e6
+        (ne lient pas — B-02 multi-stratégies), plafond slot = base×levier.
         """
         if self.envelope is not None:
             return self.envelope
         from app.core.risk_envelope import Envelope
         base = float(self._sizing_base(ctx) or 0.0) or float(ctx.capital or 0.0)
         venue = self._venue
-        # Sans enveloppe réelle, les agrégats symbole/venue ne doivent pas
-        # lier : l'ancien code ne les vérifiait pas. Le plafond slot
-        # (base × levier) reste celui du sizing inline.
         wide = max(base, 1.0) * 1e6
         return Envelope(
             venue=getattr(venue, "name", None) or "default",
@@ -778,7 +211,6 @@ class Backtester:
         )
 
     def _find_strategy(self, name: str):
-        """Récupère l'instance Strategy par son nom (P-03 : O(1), pas O(k))."""
         if not name:
             return None
         cache = getattr(self, "_strat_by_name", None)
@@ -803,780 +235,22 @@ class Backtester:
             lock_ratio       = float(ov.get("lock_ratio",   self.lock_ratio)),
             use_swing        = bool(ov.get("use_swing",     self.use_swing)),
             mode             = str(ov.get("mode",           "dynamic")),
-            # §30 — trailing structurel : marge sous le pivot et demi-fenêtre
-            # de confirmation du pivot.
             struct_buffer_atr = float(ov.get("struct_buffer_atr", 0.25)),
             struct_pivot_k    = int(ov.get("struct_pivot_k", 2)),
         )
 
-    # ── Cycle de vie d'une position (extrait de run() — V13) ──────────────────
-
-    def _close_at(self, ctx, position: dict, i: int, exec_price: float,
-                  exit_reason: str, *, maker: bool, status: str = "closed",
-                  append_ts: bool = True, ref_price: Optional[float] = None) -> float:
-        """Clôture commune à toutes les sorties (early-exit, time-exit, TP,
-        stop, fin de série) : frais, coût d'emprunt (formule composée partagée
-        avec le live — app/core/execution.py), PnL net, enregistrement du
-        trade et de la courbe d'équité. Retourne le PnL net.
-
-        L0 — ``ref_price`` : prix AVANT application du spread, quand l'appelant
-        l'a appliqué. Sert à isoler le coût de spread du reste des frais ; sans
-        lui le slippage de sortie compte pour 0 (aucun changement de PnL)."""
-        df         = ctx.df
-        side       = position["side"]
-        entry      = position["entry"]
-        # position["size"] est déjà la taille post-partial_fill (appliquée à
-        # l'entrée) : ne pas réappliquer partial_fill à la sortie.
-        fill_size  = position["size"]
-        bars_held  = i - position["bar"]
-        hours_held = bars_held * _bar_to_days(ctx.timeframe) * 24.0
-        pnl, fees, borrow = _close_pnl(
-            side=side, entry=entry, exit_price=exec_price, size=fill_size,
-            notional=position["notional"],
-            fee_rate=(self.maker_fee if maker else self.taker_fee),
-            daily_rate=self.borrow_rate, hours_held=hours_held,
-            periods_per_day=self.borrow_periods,
-            venue=self._venue,
-        )
-        impact = self._impact_cost(ctx, i, position["notional"])   # BT-10
-        if impact:
-            pnl -= impact
-            fees += impact
-        # L2 (§27) — funding des perpétuels. `venue_borrow_rate` rend 0 sur une
-        # venue perp depuis L2 : le portage y passe par le funding, qui change
-        # de signe (un funding négatif est ENCAISSÉ, pas payé).
-        funding = self._funding_cost(ctx, position, i, hours_held)
-        if funding:
-            pnl -= funding
-            position["funding_cost"] = round(
-                position.get("funding_cost", 0.0) + funding, 8)
-        # L0 — coût de spread de la sortie, isolé (déjà dans le PnL via exec_price).
-        slip_exit = (abs(exec_price - ref_price) * fill_size
-                     if ref_price is not None else 0.0) + impact
-        # L0 — `close_pnl` ne rend que les frais de SORTIE ; les écrire tels quels
-        # écrasait les frais d'entrée déjà portés par la position (et payés par
-        # ctx.capital dans _try_enter). `total_fees` sous-déclarait donc un côté.
-        # Correction de report seule : ni l'équité ni aucune décision ne bougent.
-        entry_fees = float(position.get("fees", 0.0) or 0.0)
-        fees = entry_fees + fees
-        ctx.capital += pnl
-        # L1 — les jambes déjà sorties ont encaissé leur PnL au fil de l'eau ;
-        # le trade journalisé porte le total, l'équité n'ajoute que le reliquat.
-        realized = position.pop("_realized_pnl", 0.0)
-        gross_realized = position.pop("_gross_realized", 0.0)
-        # BT-09 : plus-haut d'équité pour la courbe de dé-risquage en drawdown.
-        ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
-        ts = str(df["time"][i]) if "time" in df.columns else str(i)
-        position.update({
-            # F-01 : le PnL du trade porte aussi les frais d'entrée (déjà
-            # prélevés sur ctx.capital à l'ouverture). Sans ça, un trade dont
-            # le gain brut < frais d'entrée était compté gagnant, et
-            # total_pnl ≠ final_equity − initial_capital.
-            "pnl":           round(pnl + realized - entry_fees, 6),
-            "entry_fees":    round(entry_fees, 6),
-            "fees":          round(fees, 6),
-            "borrow_cost":   round(borrow, 6),
-            "exit":          round(exec_price, 6),
-            "status":        status,
-            "exit_bar":      i,
-            "exit_time":     ts,
-            "exit_reason":   str(exit_reason),
-            "pnl_pct":       round((exec_price - entry) / entry * 100 *
-                                   (1 if side == "long" else -1), 3) if entry else 0.0,
-            "duration_bars": bars_held,
-            "fill_pct":      self.partial_fill,
-            "stop_trail":    position.pop("_stop_trail", []),
-            # L0 (§99/§49) — coûts ventilés. `fees` agrège entrée+sortie+impact ;
-            # `gross_pnl` vient des PRIX, pas d'une somme de composantes : ⚠ `pnl`
-            # ne retranche pas les frais d'entrée (déjà prélevés sur ctx.capital
-            # à l'ouverture), donc `pnl + fees + borrow` ne les reconstituerait pas.
-            "slippage_cost": round(position.get("slippage_cost", 0.0) + slip_exit, 6),
-            "funding_cost":  round(position.get("funding_cost", 0.0), 6),
-            "gross_pnl":     round(gross_realized + (exec_price - entry) * fill_size *
-                                   (1 if side == "long" else -1), 6),
-            # L1 — jambes réalisées avant la clôture finale (§29). Liste vide
-            # pour toute stratégie qui ne demande pas de sorties partielles.
-            "exits":         position.pop("_exits", []),
-            "size_initial":  position.pop("size_initial", fill_size),
-        })
-        position.pop("_trailing", None)
-        position.pop("_targets", None)
-        position.pop("_be_done", None)
-        ctx.trades.append(position)
-        ctx.equity_curve.append(round(ctx.capital, 4))
-        _ledger = getattr(ctx, "ledger", None)
-        _pk = position.get("_pos_key")
-        if _ledger is not None and _pk:
-            _ledger.release(_pk)
-        if append_ts:
-            ctx.timestamps.append(ts)
-
-        # QW-6 (étape 6) — notifier le risk gate du résultat du trade
-        # (pour incrémenter les compteurs consecutive_losses, daily_pnl, etc.)
-        gate = getattr(ctx, "risk_gate", None)
-        if gate is not None:
-            from app.core.bot_identity import build_slot_key
-            strat_name = position.get("strategy", "")
-            slot_key = build_slot_key(strat_name, ctx.timeframe, ctx.symbol)
-            try:
-                close_ts = df["time"][i]
-                day_key = str(close_ts)[:10] if close_ts is not None else ""
-            except Exception:
-                day_key = ""
-            # B-11 : ctx.capital inclut déjà les jambes partielles (`realized`).
-            # Soustraire seulement `pnl` décalait le DD journalier du slot.
-            capital_before = ctx.capital - pnl - realized
-            gate.record_trade_result(i, slot_key, pnl + realized, day_key,
-                                     capital_before)
-
-        return pnl + realized
-
-    def _close_partial_at(self, ctx, position: dict, i: int, exec_price: float,
-                          fraction: float, reason: str, *, maker: bool,
-                          ref_price: Optional[float] = None) -> float:
-        """L1 (§29) — réalise ``fraction`` de la taille INITIALE de la position.
-
-        Le trade n'est journalisé qu'à sa clôture COMPLÈTE (``_close_at``) :
-        ici on encaisse le PnL de la jambe, on réduit taille et notionnel, et on
-        trace la sortie dans ``_exits``. La courbe d'équité ne reçoit pas de
-        point — elle en a un par trade, pas un par jambe, et changer sa cadence
-        modifierait l'annualisation du Sharpe de tous les backtests.
-
-        Retourne le PnL de la jambe (0.0 si elle n'est pas négociable)."""
-        size0 = position.get("size_initial", position["size"])
-        part = _quantize_size(min(_floor_to(size0 * fraction, 6),
-                                  position["size"]), self._venue)
-        if part <= 0 or position["size"] <= 0:
-            return 0.0
-        # Prorata du notionnel : le reliquat doit rester cohérent avec la taille.
-        notional_part = position["notional"] * (part / position["size"])
-        bars_held  = i - position["bar"]
-        hours_held = bars_held * _bar_to_days(ctx.timeframe) * 24.0
-        side = position["side"]
-        pnl, fees, borrow = _close_pnl(
-            side=side, entry=position["entry"], exit_price=exec_price, size=part,
-            notional=notional_part,
-            fee_rate=(self.maker_fee if maker else self.taker_fee),
-            daily_rate=self.borrow_rate, hours_held=hours_held,
-            periods_per_day=self.borrow_periods, venue=self._venue,
-        )
-        impact = self._impact_cost(ctx, i, notional_part)
-        if impact:
-            pnl -= impact
-            fees += impact
-        slip = (abs(exec_price - ref_price) * part
-                if ref_price is not None else 0.0) + impact
-
-        ctx.capital += pnl
-        ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
-        position["size"]     = round(position["size"] - part, 8)
-        position["notional"] = round(position["notional"] - notional_part, 6)
-        position["fees"]     = round(position.get("fees", 0.0) + fees, 8)
-        position["borrow_cost"]   = round(position.get("borrow_cost", 0.0) + borrow, 8)
-        position["slippage_cost"] = round(position.get("slippage_cost", 0.0) + slip, 8)
-        position["_realized_pnl"] = position.get("_realized_pnl", 0.0) + pnl
-        position["_gross_realized"] = position.get("_gross_realized", 0.0) + \
-            (exec_price - position["entry"]) * part * (1 if side == "long" else -1)
-        position.setdefault("_exits", []).append({
-            "bar": i, "price": round(exec_price, 6), "size": round(part, 8),
-            "fraction": round(part / size0, 4) if size0 else 0.0,
-            "reason": str(reason), "pnl": round(pnl, 6),
-        })
-        ctx.diag["partial_exits"] = ctx.diag.get("partial_exits", 0) + 1
-        return pnl
-
-    def _fill_at_level(self, side: str, level: float, open_px: float,
-                       *, stop: bool) -> tuple:
-        """B-01 : fill au gap si la bougie ouvre au-delà du niveau.
-
-        Un stop-market réel se remplit à l'ouverture, pas au niveau, quand
-        celle-ci a déjà franchi le seuil. Symétrique pour un TP favorable.
-        Retourne ``(exec_price, ref_price, gapped)``.
-        """
-        if stop:
-            gapped = (side == "long" and open_px < level) or \
-                     (side == "short" and open_px > level)
-        else:
-            gapped = (side == "long" and open_px > level) or \
-                     (side == "short" and open_px < level)
-        ref = open_px if gapped else level
-        exec_price = ref * (1 - self.spread_pct) if side == "long" \
-            else ref * (1 + self.spread_pct)
-        return exec_price, ref, gapped
-
-    def _manage_open_position(self, ctx, position: dict, i: int):
-        """Gère la position ouverte sur la barre ``i`` : MAE/MFE, sorties
-        (early-exit stratégie, time-exit, TP, stop intrabar), sinon mise à
-        jour du trailing et pyramidage. Retourne la position (None si close)."""
-        diag    = ctx.diag
-        diag["bars_in_position"] += 1
-        ctx.bars_current_position += 1
-        side    = position["side"]
-        entry   = position["entry"]
-        stop    = position["stop"]
-        c_high  = ctx.high_arr[i]
-        c_low   = ctx.low_arr[i]
-        c_close = ctx.close_arr[i]
-        c_open  = ctx.open_arr[i] if getattr(ctx, "open_arr", None) is not None \
-            else c_close
-
-        if side == "long":
-            mae_pts = c_low  - entry
-            mfe_pts = c_high - entry
-        else:
-            mae_pts = entry - c_high
-            mfe_pts = entry - c_low
-        if entry > 0:
-            position["mae"] = min(position.get("mae", 0.0), mae_pts / entry * 100)
-            position["mfe"] = max(position.get("mfe", 0.0), mfe_pts / entry * 100)
-
-        # ── Sortie temporelle (exit_after_bars) — prioritaire sur trailing.
-        # Utilisée par les stratégies type rapport V4 : sortie à la clôture
-        # de la barre suivante, sans SL/TP (mesure pure du signal directionnel).
-        exit_after = position.get("exit_after_bars")
-        time_exit  = (exit_after is not None
-                      and (i - position["bar"]) >= int(exit_after))
-
-        stop_hit = (side == "long"  and c_low  <= stop) or \
-                   (side == "short" and c_high >= stop)
-
-        # ── Sortie anticipée pilotée par la stratégie ────────────────────────
-        # Hook BaseStrategy.check_early_exit (changement de régime, inversion
-        # du signal…). Non priorisée sur le SL : si SL touché intrabar, le SL
-        # l'emporte.
-        early_exit_reason = None
-        if not stop_hit and not time_exit:
-            strat = self._find_strategy(position.get("strategy", ""))
-            if strat is not None:
-                try:
-                    early_exit_reason = strat.check_early_exit(
-                        ctx.window, position, ctx.strat_params
-                    )
-                except Exception as _ee:
-                    logger.warning(
-                        f"[Backtest] check_early_exit({position.get('strategy', '')}) "
-                        f"KO : {_ee}"
-                    )
-
-        # ── Take-profit fixe (intrabar) — optionnel via signal["tp_hint"].
-        # Vérifié seulement si stop NON touché (priorité conservative au stop
-        # en cas d'ambiguïté intrabar high/low).
-        tp_val = position.get("take_profit")
-        tp_hit = False
-        if tp_val is not None and not stop_hit:
-            tp_hit = (side == "long"  and c_high >= tp_val) or \
-                     (side == "short" and c_low  <= tp_val)
-        elif tp_val is not None and stop_hit:
-            # STRAT-06/BT-13 : diagnostic pur — le stop l'emporte toujours
-            # (comportement inchangé), on compte seulement les barres où le TP
-            # aurait AUSSI été touché (ambiguïté intrabar réelle, mesurable
-            # seulement en high/low faute de données tick).
-            would_tp_hit = (side == "long"  and c_high >= tp_val) or \
-                           (side == "short" and c_low  <= tp_val)
-            if would_tp_hit:
-                diag["tp_sl_ambiguous_bars"] += 1
-
-        if early_exit_reason and not stop_hit and not tp_hit:
-            self._close_at(ctx, position, i, c_close, early_exit_reason, maker=True)
-            return None
-
-        if time_exit and not stop_hit and not tp_hit:
-            self._close_at(ctx, position, i, c_close, "exit_after_bars", maker=True)
-            return None
-
-        if tp_hit:
-            exec_price, ref, gapped = self._fill_at_level(
-                side, tp_val, c_open, stop=False)
-            self._close_at(ctx, position, i, exec_price,
-                           "gap" if gapped else "take_profit",
-                           maker=not gapped, ref_price=ref)
-            return None
-
-        if stop_hit:
-            exec_price, ref, gapped = self._fill_at_level(
-                side, stop, c_open, stop=True)
-            _tr = position.get("_trailing")
-            if _tr and hasattr(_tr, "_dts") and _tr._dts:
-                position["trail_phase"] = _tr._dts.phase_name
-            else:
-                position["trail_phase"] = "unknown"
-            reason = "gap" if gapped else (
-                "stop_loss" if position.get("disable_trailing")
-                else "trailing_stop")
-            self._close_at(ctx, position, i, exec_price, reason,
-                           maker=False, ref_price=ref)
-            return None
-
-        # ── L1 (§29) — sorties partielles TP1 / TP2, runner ──────────────────
-        # Vérifiées seulement si le stop n'a pas été touché : même priorité
-        # conservative que le TP fixe en cas d'ambiguïté intrabar.
-        cibles = position.get("_targets")
-        if cibles:
-            atteintes = [c for c in cibles
-                         if (side == "long" and c_high >= c["price"])
-                         or (side == "short" and c_low <= c["price"])]
-            for cible in atteintes:
-                cibles.remove(cible)
-                px, ref, gapped = self._fill_at_level(
-                    side, cible["price"], c_open, stop=False)
-                self._close_partial_at(ctx, position, i, px,
-                                       cible["fraction"],
-                                       "gap" if gapped else cible["reason"],
-                                       maker=not gapped, ref_price=ref)
-                # §30 — après la première jambe, le stop passe au point mort
-                # frais compris : le trade ne peut plus coûter d'argent.
-                if position.get("be_after_partial") and not position.get("_be_done"):
-                    cout = 2 * self.taker_fee + self.spread_pct
-                    be = entry * (1 + cout) if side == "long" else entry * (1 - cout)
-                    if (side == "long" and be > position["stop"]) or \
-                            (side == "short" and be < position["stop"]):
-                        position["stop"] = round(be, 6)
-                    position["_be_done"] = True
-            if atteintes:
-                # Reliquat non négociable (quantification venue) : on solde.
-                if position["size"] <= 0 or \
-                        position["size"] * c_close < self._min_notional():
-                    self._close_at(ctx, position, i, c_close, "partial_final",
-                                   maker=True)
-                    return None
-                stop = position["stop"]
-
-        # ── Position conservée : trailing + pyramidage ───────────────────────
-        atr_v         = float(ctx.atr_arr[i]) or 1e-8
-        bars_held_now = i - position["bar"]
-        # Skip trailing si désactivé via signal["disable_trailing"]=True :
-        # le stop reste fixe (V4 standalone style : SL = entry ∓ 1.5×ATR).
-        _tr = (None if position.get("disable_trailing")
-               else position.get("_trailing"))
-        # §5 — armement différé : tant que le profit courant n'atteint pas
-        # `_trail_activate_r` fois le risque initial, on laisse le stop initial
-        # tranquille. Resserrer trop tôt est ce qui coupait les positions avant
-        # leur cible (cf. docs/STRATEGY_SMC_ML_EDGE.md §4).
-        _act_r = position.get("_trail_activate_r")
-        if _tr and _act_r is not None:
-            _risque = abs(entry - position.get("planned_stop", stop))
-            _profit = (c_close - entry) if side == "long" else (entry - c_close)
-            if _risque <= 0 or _profit < float(_act_r) * _risque:
-                _tr = None
-        if _tr:
-            lo20 = ctx.low_arr[max(0, i - 19):i + 1].tolist()
-            hi20 = ctx.high_arr[max(0, i - 19):i + 1].tolist()
-            new_stop = _tr.update_stop(
-                current_price = c_close,
-                current_stop  = stop,
-                atr           = atr_v, side = side, entry = entry,
-                bars_held     = bars_held_now,
-                recent_lows   = lo20,
-                recent_highs  = hi20,
-            )
-            position["stop"] = new_stop
-            if hasattr(_tr, "_dts") and _tr._dts:
-                position["trail_phase"] = _tr._dts.phase_name
-            if i % 3 == 0:
-                position["_stop_trail"].append({"bar": i, "stop": round(new_stop, 6)})
-
-        # ── Pyramidage (check_scale_in) ──────────────────────────────────────
-        # La stratégie peut demander l'ajout d'une unité sur une position
-        # gagnante. L'unité est sizée comme une entrée normale (risque %
-        # capital / distance au stop courant), le prix d'entrée moyen et le
-        # notional sont recalculés.
-        strat_si = self._find_strategy(position.get("strategy", ""))
-        if strat_si is not None:
-            try:
-                scale = strat_si.check_scale_in(ctx.window, position, ctx.strat_params)
-            except Exception as _si:
-                logger.warning(
-                    f"[Backtest] check_scale_in({position.get('strategy', '')}) "
-                    f"KO : {_si}"
-                )
-                scale = None
-            if scale:
-                # B-06 : le pyramidage passe par le même gate que l'entrée.
-                gate = getattr(ctx, "risk_gate", None)
-                if gate is not None:
-                    from app.core.bot_identity import build_slot_key
-                    _sk = build_slot_key(position.get("strategy", ""),
-                                         ctx.timeframe, ctx.symbol)
-                    try:
-                        _ts = ctx.df["time"][i]
-                        _day = str(_ts)[:10] if _ts is not None else ""
-                    except Exception:
-                        _day = ""
-                    _ok, _why = gate.can_slot_trade(
-                        i, _sk, _day, ctx.capital,
-                        getattr(ctx, "peak_capital", ctx.capital),
-                    )
-                    if not _ok:
-                        logger.debug(f"[Backtest] bar {i} : scale-in refusé — {_why}")
-                        scale = None
-            if scale:
-                add_price = c_close * (1 + self.spread_pct) if side == "long" \
-                            else c_close * (1 - self.spread_pct)
-                stop_dist = abs(add_price - position["stop"])
-                if stop_dist > 0:
-                    sf = max(0.0, min(float(scale.get("size_factor", 1.0)), 2.0))
-                    _base = self._sizing_base(ctx)
-                    add_size = _base * ctx.risk / stop_dist * sf * self.partial_fill
-                    add_notional = add_size * add_price
-                    # Cap : le notional total reste sous l'enveloppe × levier
-                    room = _base * max(self._leverage(), 1.0) - position["notional"]
-                    if add_notional > room:
-                        add_notional = max(room, 0.0)
-                        add_size = add_notional / add_price
-                    add_size = _quantize_size(add_size, self._venue)   # G2
-                    add_notional = add_size * add_price
-                    _ledger = getattr(ctx, "ledger", None)
-                    _env = getattr(ctx, "ledger_env", None)
-                    _pk = position.get("_pos_key")
-                    if (_ledger is not None and _env is not None and _pk
-                            and add_notional >= 1.0 and add_size > 0):
-                        _inc_key = f"{_pk}:scale:{position.get('scale_ins', 0)}"
-                        _inc_risk = abs(add_price - float(position["stop"])) * add_size
-                        _dec = _ledger.reserve(
-                            _env, risk=_inc_risk, notional=add_notional,
-                            pos_key=_inc_key)
-                        if not _dec.allowed:
-                            logger.debug(
-                                f"[Backtest] bar {i} : scale-in refusé par "
-                                f"RiskLedger ({_dec.reason_code})"
-                            )
-                            add_size = 0.0
-                            add_notional = 0.0
-                        else:
-                            _new_n = float(position["notional"]) + add_notional
-                            _new_r = float(position.get("_reserved_risk") or 0.0) + _inc_risk
-                            _ledger.resize(_pk, risk=_new_r, notional=_new_n)
-                            _ledger.release(_inc_key)
-                            position["_reserved_risk"] = _new_r
-                    if add_notional >= 1.0 and add_size > 0:
-                        add_fees = self._fees(add_price, add_size, maker=False,
-                                              side=position["side"], is_entry=True)
-                        add_fees += self._impact_cost(ctx, i, add_notional)  # BT-10
-                        ctx.capital -= add_fees
-                        new_size = position["size"] + add_size
-                        position["entry"] = round(
-                            (position["entry"] * position["size"]
-                             + add_price * add_size) / new_size, 6)
-                        position["size"]     = round(new_size, 6)
-                        position["notional"] = round(
-                            position["notional"] + add_notional, 4)
-                        position["fees"]     = round(
-                            position.get("fees", 0.0) + add_fees, 6)
-                        position["scale_ins"] = position.get("scale_ins", 0) + 1
-                        diag["scale_ins"] = diag.get("scale_ins", 0) + 1
-
-        return position
-
-    def _try_enter(self, ctx, signal: dict, i: int):
-        # Le mode du signal l'emporte sur celui de la config : une stratégie
-        # qui sait ce qu'elle fait garde le dernier mot, comme partout ailleurs
-        # dans la résolution de paramètres.
-        _mode = str(signal.get("exit_mode") or self.exit_mode)
-        if _mode != "as_declared":
-            signal = _apply_exit_mode(signal, _mode, self.exit_mode_params)
-        """Tente d'ouvrir une position depuis un signal accepté : stop/TP
-        initiaux, sizing par risque (cap notional, size_factor, partial fill),
-        frais d'entrée. Retourne le dict position ou None si rejeté."""
-        df   = ctx.df
-        diag = ctx.diag
-
-        # QW-6 (étape 6) — circuit breakers si realistic_risk=True
-        gate = getattr(ctx, "risk_gate", None)
-        if gate is not None:
-            from app.core.bot_identity import build_slot_key
-            # Le signal porte le nom de la stratégie sous `name` — c'est de là
-            # que vient le `"strategy"` de la position (cf. construction du
-            # trade plus bas). Lire `signal["strategy"]` renvoyait toujours ""
-            # et fabriquait un slot fantôme « ::tf::symbole » : les entrées
-            # étaient contrôlées sur ce slot vide pendant que les pertes
-            # s'enregistraient sur le vrai. Les trois breakers par slot
-            # (pertes consécutives, DD journalier, trades/jour) ne pouvaient
-            # donc JAMAIS se déclencher.
-            strat_name = signal.get("name") or signal.get("strategy") or ""
-            slot_key = build_slot_key(strat_name, ctx.timeframe, ctx.symbol)
-            # day_key depuis le timestamp de la bougie
-            try:
-                ts = df["time"][i]
-                day_key = str(ts)[:10] if ts is not None else ""
-            except Exception:
-                day_key = ""
-            ok, reason = gate.can_slot_trade(
-                i, slot_key, day_key, ctx.capital,
-                getattr(ctx, "peak_capital", ctx.capital),
-            )
-            if not ok:
-                diag["rejected_circuit_breaker"] = diag.get("rejected_circuit_breaker", 0) + 1
-                self.rejections.record("circuit_breaker", symbol=ctx.symbol)
-                logger.debug(f"[Backtest] bar {i} : trade rejeté (circuit_breaker) — {reason}")
-                return None
-
-        # ── L6 (§97 §98) — un événement de liquidité, un trade ───────────────
-        # Le même balayage produit plusieurs setups (sweep, retest d'OB, FVG…) ;
-        # les traiter comme des signaux indépendants revenait à multiplier le
-        # risque sur un seul événement de marché. Le cooldown devient donc
-        # ÉVÉNEMENTIEL et non plus temporel : trois bougies ne justifient pas
-        # une nouvelle entrée, un nouvel événement si.
-        event_id = signal.get("market_event_id")
-        if event_id and bool(self.cfg.get("trading", {}).get("dedup_events", True)):
-            vus = getattr(ctx, "events_traded", None)
-            if vus is None:
-                vus = ctx.events_traded = set()
-            if event_id in vus:
-                diag["rejected_dedup"] = diag.get("rejected_dedup", 0) + 1
-                self.rejections.record("evenement_deja_trade", symbol=ctx.symbol)
-                return None
-
-        atr_v = float(ctx.atr_arr[i])
-        if atr_v <= 0:
-            diag["rejected_atr_zero"] += 1
-            logger.debug(f"[Backtest] bar {i} : trade rejeté (ATR<=0)")
-            return None
-
-        # G2 — parité avec le live : une venue au comptant sans SRD refuse les
-        # shorts. Les laisser passer en backtest produirait un edge fantôme.
-        if signal["side"] == "short" and self._venue is not None \
-                and not self._venue.allow_short:
-            diag["rejected_venue"] = diag.get("rejected_venue", 0) + 1
-            return None
-
-        raw_price  = float(df["open"][i + 1])           # L0 — avant spread
-        exec_price = raw_price
-        if signal["side"] == "long":
-            exec_price *= (1 + self.spread_pct)
-        else:
-            exec_price *= (1 - self.spread_pct)
-
-        _trailing = self._make_trailing(signal.get("trail_override"))
-        # Stop initial : priorité au multiplicateur ATR (calé sur exec_price,
-        # robuste aux gaps close→open) ; sinon stop_hint absolu ; sinon trailing.
-        if signal.get("sl_atr_mult") is not None:
-            _sl_mult = float(signal["sl_atr_mult"])
-            stop = (exec_price - _sl_mult * atr_v) if signal["side"] == "long" \
-                   else (exec_price + _sl_mult * atr_v)
-        elif signal.get("stop_hint") is not None:
-            stop = float(signal["stop_hint"])
-        else:
-            stop = _trailing.initial_stop(exec_price, atr_v, signal["side"])
-
-        # TP fixe optionnel : priorité au multiplicateur ATR (calé sur
-        # exec_price), sinon tp_hint absolu fourni par la stratégie.
-        if signal.get("tp_atr_mult") is not None:
-            _tp_mult = float(signal["tp_atr_mult"])
-            tp_init = (exec_price + _tp_mult * atr_v) if signal["side"] == "long" \
-                      else (exec_price - _tp_mult * atr_v)
-        elif signal.get("tp_hint") is not None:
-            tp_init = float(signal["tp_hint"])
-        else:
-            tp_init = None
-
-        disable_trailing = bool(signal.get("disable_trailing", False))
-
-        stop_dist    = abs(exec_price - stop)
-        if stop_dist <= 0:
-            diag["rejected_stop"] = diag.get("rejected_stop", 0) + 1
-            diag["rejected_notional"] += 1
-            self.rejections.record("stop_invalide", symbol=ctx.symbol)
-            return None
-        # S12 — sizing STRICTEMENT identique au live (app/core/risk_sizer.py) :
-        # même base (l'enveloppe), même ordre des facteurs, même arrondi à la
-        # baisse. Toute divergence ici rouvrirait l'écart de base que cette
-        # refonte supprime — c'est ce que verrouille test_backtest_live_parity.
-        #
-        # BT-09 : même courbe de dé-risquage que le live — ×0.75 si drawdown
-        # > 5 %, ×0.5 si > 10 % (app/core/risk_curve.py).
-        peak = getattr(ctx, "peak_capital", ctx.capital) or ctx.capital
-        dd   = max(0.0, (peak - ctx.capital) / peak) if peak > 0 else 0.0
-        size_factor  = max(0.0, min(float(signal.get("size_factor", 1.0)), 2.0))
-        base         = self._sizing_base(ctx)
-        risk_amount  = base * ctx.risk * size_factor * _risk_multiplier(dd)
-        # QW-6 — volatility brake : marché agité → ×0.5, comme le live. Ne
-        # s'applique QU'EN mode realistic_risk (hors de ce mode, `risk_gate`
-        # est None et le facteur vaut 1.0), donc la parité des backtests
-        # existants est préservée.
-        _gate = getattr(ctx, "risk_gate", None)
-        if _gate is not None:
-            risk_amount *= _gate.volatility_brake_factor
-        # Plafond notionnel exprimé sur la base du bot, pas sur un pourcentage
-        # global d'un capital qui n'existe plus.
-        max_notional = base * max(self._leverage(), 1.0)
-        size = _floor_to(risk_amount / stop_dist, 6)
-        if size * exec_price > max_notional:
-            size = _floor_to(max_notional / exec_price, 6)
-        notional = _floor_to(size * exec_price, 4)
-
-        if size <= 0:
-            diag["rejected_size"] = diag.get("rejected_size", 0) + 1
-            diag["rejected_notional"] += 1
-            self.rejections.record("notionnel_min", symbol=ctx.symbol)
-            return None
-
-        # Remplissage partiel : réalisme d'exécution propre au backtest (le
-        # live, lui, réaligne la taille sur le `filled` réel de l'ordre).
-        size       *= self.partial_fill
-        # G2 — quantification par la venue (lot/unité entière) : mêmes bornes
-        # qu'à l'exécution live, sinon le backtest actions surestime le PnL en
-        # tradant des fractions de titre. No-op en crypto (lot_size = 0).
-        q_size = _quantize_size(size, self._venue)
-        if q_size <= 0:
-            diag["rejected_venue"] = diag.get("rejected_venue", 0) + 1
-            diag["rejected_notional"] += 1
-            self.rejections.record("venue", symbol=ctx.symbol)
-            logger.debug(
-                f"[Backtest] bar {i} : trade rejeté (taille {size:.6f} < 1 unité "
-                f"négociable sur la venue)"
-            )
-            return None
-        size        = q_size
-        notional    = size * exec_price
-        # R-02 / B-05 : tous les plafonds (min_notional, slot, symbole, venue)
-        # passent par RiskLedger.reserve — plus de copie inline qui peut
-        # dériver du live.
-        from app.core.bot_identity import build_pos_key as _bpk_enter
-        pos_key = _bpk_enter(
-            ctx.symbol,
-            signal.get("name") or signal.get("strategy") or "",
-            ctx.timeframe,
-        )
-        ledger = getattr(ctx, "ledger", None)
-        env = getattr(ctx, "ledger_env", None)
-        if ledger is not None and env is not None:
-            risk_amt = abs(float(exec_price) - float(stop)) * float(size)
-            dec = ledger.reserve(env, risk=risk_amt, notional=notional, pos_key=pos_key)
-            if not dec.allowed:
-                code = dec.reason_code or "notionnel_min"
-                if code == "notionnel_min":
-                    diag["rejected_min_notional"] = diag.get("rejected_min_notional", 0) + 1
-                elif code == "enveloppe_venue":
-                    diag["rejected_venue"] = diag.get("rejected_venue", 0) + 1
-                diag["rejected_notional"] = diag.get("rejected_notional", 0) + 1
-                self.rejections.record(code, symbol=ctx.symbol)
-                logger.debug(
-                    f"[Backtest] bar {i} : trade rejeté par RiskLedger "
-                    f"({code} — {dec.detail})"
-                )
-                return None
-        else:
-            min_notional = self._min_notional()
-            if notional < min_notional:
-                diag["rejected_min_notional"] = diag.get("rejected_min_notional", 0) + 1
-                diag["rejected_notional"] += 1
-                self.rejections.record("notionnel_min", symbol=ctx.symbol)
-                return None
-        entry_fees  = self._fees(exec_price, size, maker=False,
-                                 side=signal["side"], is_entry=True)
-        _impact_in  = self._impact_cost(ctx, i, notional)   # BT-10
-        entry_fees += _impact_in
-        ctx.capital -= entry_fees
-        slip_entry  = abs(exec_price - raw_price) * size + _impact_in   # L0
-        ctx.trade_id += 1
-        ts = str(df["time"][i]) if "time" in df.columns else str(i)
-
-        position = {
-            "id":              ctx.trade_id,
-            "symbol":          ctx.symbol,
-            "side":            signal["side"],
-            "strategy":        signal.get("name", ""),
-            "score":           round(signal.get("score", 0), 3),
-            "entry":           round(exec_price, 6),
-            "stop":            round(stop, 6),
-            "take_profit":     round(tp_init, 6) if tp_init is not None else None,
-            "exit_after_bars": signal.get("exit_after_bars"),
-            "disable_trailing": disable_trailing,
-            "size":            round(size, 6),
-            "notional":     round(notional, 4),
-            "bar":          i + 1,
-            "entry_time":   ts,
-            "fees":         round(entry_fees, 6),
-            "borrow_cost":  0.0,
-            "status":       "open",
-            "pnl":          None,
-            "exit":         None,
-            "trail_phase":  "grace",
-            "_trailing":    _trailing,
-            "reason":       signal.get("reason", ""),
-            "conditions":   signal.get("conditions", []),
-            "indicators":   signal.get("indicators", {}),
-            # Champs V7 / V4 — utilisés pour les colonnes 'Sortie' et 'Setup'
-            # du tableau de trades et pour les statistiques par exit_reason.
-            "setup":           signal.get("setup"),
-            # §65 — module SMC/ICT du setup, pour des statistiques séparées.
-            "module":          signal.get("module"),
-            "setup_priority":  signal.get("setup_priority"),
-            "regime":          signal.get("regime"),
-            "regime_lbl":      signal.get("regime_lbl"),
-            "sl_atr_mult":     signal.get("sl_atr_mult"),
-            "tp_atr_mult":     signal.get("tp_atr_mult"),
-            "size_factor":     signal.get("size_factor"),
-            "tf_detected":     signal.get("tf_detected"),
-            "mae":          0.0,
-            "mfe":          0.0,
-            "_stop_trail":  [{"bar": i + 1, "stop": round(stop, 6)}],
-            # ── L0 (§99) — journal de trade : contexte de décision ────────────
-            # Repris tels quels du signal : une stratégie qui ne les pose pas
-            # laisse des None, aucune n'est obligée de changer.
-            "entry_fees":      round(entry_fees, 6),
-            "slippage_cost":   round(slip_entry, 6),
-            "funding_cost":    0.0,
-            "session":         signal.get("session"),
-            "htf_bias":        signal.get("htf_bias"),
-            "structure_state": signal.get("structure_state"),
-            "sequence_type":   signal.get("sequence_type"),
-            "sequence_id":     signal.get("sequence_id"),
-            "market_event_id": signal.get("market_event_id"),
-            "tier":            signal.get("tier"),
-            "liquidity_swept": signal.get("liquidity_swept"),
-            "pd_zone":         (signal.get("indicators") or {}).get("pd_zone"),
-            "gross_rr":        signal.get("gross_rr"),
-            "net_rr":          signal.get("net_rr"),
-            "score_breakdown": signal.get("score_breakdown"),
-            "planned_stop":    round(stop, 6),
-            "planned_tp":      round(tp_init, 6) if tp_init is not None else None,
-            # ── L1 (§29) — sorties partielles ────────────────────────────────
-            "size_initial":    round(size, 6),
-            "_pos_key":        pos_key,
-            "_reserved_risk":  abs(float(exec_price) - float(stop)) * float(size),
-            "_targets":        _plan_partial_targets(signal, exec_price, stop),
-            "be_after_partial": bool(signal.get("be_after_partial", True)),
-            # §5 — `trailing_after_profit` : le suiveur reste au repos tant que
-            # le trade n'a pas fait ses preuves (cf. `_manage_open_position`).
-            "_trail_activate_r": signal.get("_trail_activate_r"),
-        }
-        diag["trades_opened"] += 1
-        diag["last_trade_bar"] = i
-        ctx.bars_current_position = 0
-        vus = getattr(ctx, "events_traded", None)
-        if event_id and vus is not None:
-            vus.add(event_id)
-        return position
-
-    # ── run ───────────────────────────────────────────────────────────────────
     def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL,
             timeframe: str = None) -> "BacktestResult":
         import app.ml.policy as _ml_policy
         from app.engine.engine import BaseStrategyML
-        # Résolution des paramètres en amont du hook ``prepare_for_backtest`` :
-        # certaines stratégies pré-calculent leurs features/votes en fonction du
-        # paramétrage résolu (ex: signal_consensus → votes des sous-stratégies).
-        # On expose donc ``_bt_params`` avant l'appel à prepare.
-        # ``symbol`` transmis : une config héritée (sans dimension symbole) reste
-        # celle de BTC/USDC ; les autres symboles prennent leur config dédiée si
-        # elle existe, sinon les params de base (séparation des configs).
+        # ``_bt_params`` avant prepare_for_backtest : les hooks lisent le paramétrage résolu.
         strat_params = resolve_strategy_params(self.cfg, timeframe, symbol)
-        # F-14 : un même Backtester sert IS puis OOS (optimiseur). Sans reset,
-        # les rejets de l'IS polluent le résultat OOS.
+        # Un même Backtester sert IS puis OOS : reset sinon les rejets IS polluent l'OOS.
         self.rejections = RejectionCounter()
 
-        # G2 : la venue de l'instrument pilote la quantification des tailles et
-        # le modèle de coûts. Résolue au niveau du SYMBOLE (une action porte sa
-        # venue quelle que soit la stratégie qui la trade, cf. resolve_venue) —
-        # neutre tant qu'aucune venue actions n'est déclarée.
         from app.core.bot_identity import resolve_venue as _resolve_venue
         self._venue = _resolve_venue(self.cfg, tf=timeframe, symbol=symbol)
 
-        # S11 : annonce du contexte d'exécution facturé (spot/margin, levier,
-        # frais, emprunt). `log_throttled` avec une clé dérivée du modèle : émis
-        # une fois par contexte distinct, puis en DEBUG — l'optimiseur crée un
-        # Backtester par essai, un log par essai noierait tout.
         self._cost_model = _cost_model(self.cfg, self._venue)
         _key = f"cost_model:{symbol}:{timeframe}:{sorted(self._cost_model.items())}"
         log_throttled(
@@ -1585,22 +259,17 @@ class Backtester:
             level=logging.INFO, ttl=3600.0,
         )
 
-        # ML-02 : relu ICI plutôt que figé à __init__ — un appelant peut poser
-        # ``bt.ml_mode = "inline"`` entre deux ``run()`` (optimiseur, tests).
+        # Relu ici : un appelant peut poser ``bt.ml_mode = "inline"`` entre deux ``run()``.
         ml_mode = self.ml_mode
         symbol_key      = symbol or DEFAULT_CONFIG_SYMBOL
         window_start_iso = _iso_of(df, 0)
         window_end_iso   = _iso_of(df, -1)
         ml_info: Dict[str, Dict] = {"mode": ml_mode, "symbol": symbol_key,
                                     "timeframe": timeframe, "models": {}}
-        # (stratégie, cadence_bars, dernière barre rafraîchie, params) pour le
-        # rafraîchissement périodique en ml_mode="simulated_live" — alimenté
-        # ci-dessous, consommé dans la boucle bar-par-bar plus loin.
         sim_live_entries: List[Dict] = []
 
         for strat in self.engine.strategies:
             strat._bt_params = strat_params
-            # ── Spécifique ML : reset + configuration selon ml_mode ────────────
             if isinstance(strat, BaseStrategyML):
                 strat.reset_model()
                 strat._cancel_event = self._cancel_event
@@ -1608,11 +277,8 @@ class Backtester:
                 cadence_bars = int(sp.get("retrain_every") or 0)
 
                 if ml_mode == "inline":
-                    pass  # comportement historique : la stratégie s'auto-entraîne (need_train interne)
+                    pass
                 elif ml_mode == "simulated_live" and cadence_bars > 0 and timeframe:
-                    # Pas de résolution figée ici : la politique de gate décide
-                    # au fil de la boucle (cf. plus bas), à partir d'un état
-                    # non entraîné (cold start, comme un live fraîchement déployé).
                     strat.managed_externally = True
                     entry = {"requested_mode": "simulated_live", "cadence_bars": cadence_bars,
                              "n_refreshes": 0, "decisions": []}
@@ -1623,43 +289,10 @@ class Backtester:
                         "params": sp, "entry": entry,
                     })
                 else:
-                    # "frozen", ou "simulated_live" sans cadence configurée
-                    # (modèle figé pour toujours, ex. familles V4 pretrained).
                     entry = _resolve_frozen_ml_model(strat, symbol_key, timeframe,
                                                      window_start_iso, window_end_iso)
                     entry["requested_mode"] = ml_mode
                     ml_info["models"][strat.name] = entry
-            # ── Pré-calcul des features (optionnel, par stratégie) ───────────
-            # Hook ouvert à TOUTES les stratégies (ML ou rule-based) : les
-            # stratégies rule-based l'utilisent aussi pour réutiliser des séries
-            # causales lourdes (ex: supertrend_macd → SuperTrend pré-calculé,
-            # signal_consensus → propagation à ses sous-stratégies).
-            # Les stratégies à features lourdes exposent un hook
-            # ``prepare_for_backtest(df)`` qui construit toutes leurs features
-            # sur la fenêtre complète, en une seule passe. Ensuite ``score()``
-            # lit la dernière ligne du cache au lieu de rebuild.
-            #
-            # Stratégies actuellement instrumentées (voir leur ``__init__`` /
-            # ``prepare_for_backtest`` pour les détails de cache) :
-            #   - opus_stat_pretrained_v4     (pandas, ~462 features)
-            #   - opus_stat_retrained_v4      (polars, ~462 features)
-            #   - opus_omnibus_v7_pretrained  (pandas, ~462 features)
-            #   - opus_omnibus_v7             (polars, ~462 features)
-            #   - scoring_statistique_opus_v4 (numpy, ~48 features, cache par adx_thr)
-            #   - scoring_statistique_opus_v5 (numpy, ~48 features, cache par adx_thr)
-            #   - ml_dynamic_threshold        (polars, ~30 features)
-            #   - supertrend_macd             (SuperTrend/MACD causaux, O(n²)→O(n))
-            #   - signal_consensus            (propage le hook à ses sous-stratégies)
-            #
-            # Ce hook est invoqué par TOUS les chemins qui passent par
-            # ``Backtester.run`` — y compris donc les workers d'optimisation
-            # (``app.engine.optimizer._eval_worker``), les folds Walk-Forward
-            # (``WalkForwardAnalyzer.run``) et le replay live
-            # (``app.api.routes.replay``). Chaque trial subprocess en
-            # bénéficie automatiquement (build × 1 puis ~N-1 lookups O(1) par
-            # barre du backtest), sans modification supplémentaire.
-            # Symbole/TF exposés à la stratégie pour le catalogue FeatureStore
-            # (clé (symbol, tf) du cache disque de features pré-calculées).
             strat._bt_symbol = symbol
             strat._bt_tf = timeframe or self.cfg["trading"].get("timeframe", "1h")
             prep = getattr(strat, "prepare_for_backtest", None)
@@ -1675,9 +308,6 @@ class Backtester:
         risk         = _trade_risk_pct(self.cfg)
         threshold    = self.cfg["trading"].get("score_threshold", 0.60)
 
-        # ``strat_params`` déjà résolu plus haut (avant prepare_for_backtest) :
-        # base (strategy_params) + overlay optimizer_results, même logique que le
-        # live trader — garantit la cohérence backtest/live.
         trades       = []
         equity_curve = [capital]
         equity_mtm   = [capital]
@@ -1685,10 +315,6 @@ class Backtester:
         positions: Dict[str, dict] = {}
         trade_id     = 0
 
-        # ── Diagnostics ──────────────────────────────────────────────────────
-        # Compteurs alimentés à chaque barre pour répondre à la question
-        # « pourquoi mon backtest s'arrête de trader ? ». Exposés dans le
-        # dict retourné par to_dict() sous la clé ``diagnostics``.
         diag = {
             "bars_total":            0,   # barres parcourues après warmup
             "bars_in_position":      0,   # barres passées avec une position ouverte
@@ -2118,12 +744,6 @@ class Backtester:
                                  venue=self._venue, is_entry=is_entry)
 
 
-# ── Ré-exports (compat ascendante — ARCH-010) ────────────────────────────────
-# ``WalkForwardAnalyzer`` et ``MonteCarlo`` ont été extraits vers leurs propres
-# modules (walk_forward.py / monte_carlo.py). Ils restent importables depuis
-# backtest.py pour ne pas casser les callers existants (api/routes, cli,
-# research/*, auto_optimizer). Imports placés EN FIN de module pour éviter un
-# cycle : walk_forward.py fait un import lazy de ``Backtester`` dans sa méthode
-# ``run``, et ``Backtester`` doit donc être défini avant cet import.
+# Imports en fin de module : walk_forward importe Backtester en lazy dans run().
 from app.engine.monte_carlo import MonteCarlo  # noqa: E402,F401
 from app.engine.walk_forward import WalkForwardAnalyzer  # noqa: E402,F401

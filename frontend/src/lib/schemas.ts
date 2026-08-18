@@ -79,6 +79,8 @@ export const BotSchema = z
         ci_low_pct: num,
         ci_high_pct: num,
         worst_trade_pct: num,
+        mean_pct: num,
+        avg_return_pct: num,
       })
       .passthrough()
       .nullish(),

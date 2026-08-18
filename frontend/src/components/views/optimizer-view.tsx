@@ -9,7 +9,7 @@
  * `/lab?tab=optimizer`.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,534 +23,25 @@ import {
   useOptimizeResults,
   useOptimizeStatus,
   useStartOptimize,
-  useApplyOptimize,
-  useCancelOptimize,
-  useDeleteOptimizeJob,
   useConfig,
 } from '@/hooks/use-api';
 import {
-  Play, Loader2, CheckCircle2, XCircle, Trash2, StopCircle,
+  Play, Loader2, CheckCircle2, XCircle,
   Sparkles, Cpu, Layers, Activity, Zap, ChevronDown, ChevronRight, Info,
-  AlertTriangle, History, FileDown, GitCompare,
+  History, FileDown, GitCompare,
 } from 'lucide-react';
-import type { OptimizeJob, OptimizeSpaces } from '@/types';
-import { CostModelCard } from '@/components/cards/cost-model-card';
-import { BeforeAfterGrid } from '@/components/cards/before-after-grid';
-import { TopTrialsTable } from '@/components/tables/top-trials-table';
-import { OptimizerWarnings } from '@/components/cards/optimizer-warnings';
+import type { OptimizeJob } from '@/types';
 import { OptimizerHistory } from '@/components/cards/optimizer-history';
-import { TrialsChart } from '@/components/charts/trials-chart';
-import { OptimizerValidatePanel } from '@/components/cards/optimizer-validate-panel';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ParamSpaceTable } from '@/components/optimizer/param-space-table';
-import { timeAgoShort, Metric } from '@/components/optimizer/optimizer-utils';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { isOosHint } from '@/lib/limit-hint';
-import { normalizeBaseline, deriveAfter, normalizeTopTrials } from '@/lib/backend-normalizers';
+import { JobCard } from '@/components/optimizer/job-card';
+import {
+  METHODS, FALLBACK_SYMBOLS, PRESETS, STATUS_LABEL,
+  type PresetKey,
+} from '@/components/optimizer/status';
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-const METHODS = ['grid', 'random', 'bayesian'] as const;
-// P1-7 : symbols dynamiques depuis la config (plus hardcodés). Fallback
-// sur la liste historique si la config n'est pas chargée.
-const FALLBACK_SYMBOLS = ['BTC/USDC', 'ETH/USDC', 'SOL/USDC', 'BNB/USDC', 'XRP/USDC'];
-
-// P1-2 : Presets d'optimisation (Rapide/Équilibré/Approfondi). L'utilisateur
-// ne sait pas forcément régler n_trials/n_jobs/early_stopping — ces presets
-// couvrent les 3 cas d'usage principaux.
-const PRESETS = {
-  fast: { nTrials: 20, nJobs: 1, earlyStopping: 10, mlTuneHp: false, label: 'Rapide', description: '20 trials, 1 worker — ~2 min' },
-  balanced: { nTrials: 60, nJobs: 2, earlyStopping: 15, mlTuneHp: false, label: 'Équilibré', description: '60 trials, 2 workers — ~10 min' },
-  deep: { nTrials: 150, nJobs: 2, earlyStopping: 0, mlTuneHp: true, label: 'Approfondi', description: '150 trials, 2 workers, ML HP — ~45 min' },
-} as const;
-type PresetKey = keyof typeof PRESETS;
-
-// P0-4 : ajout de 'queued' et 'skipped' (manquants — tombaient sur 'default'
-// et le label brut). Le backend auto_optimizer.py peut produire ces statuts.
-const STATUS_VARIANT: Record<string, 'success' | 'danger' | 'warning' | 'info' | 'default'> = {
-  pending: 'warning',
-  running: 'info',
-  done: 'success',
-  error: 'danger',
-  cancelled: 'default',
-  queued: 'warning',
-  skipped: 'default',
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  pending: 'En attente',
-  running: 'En cours',
-  done: 'Terminé',
-  error: 'Erreur',
-  cancelled: 'Annulé',
-  queued: 'En file',
-  skipped: 'Ignoré',
-};
-
-function LiveProgress({ job }: { job: OptimizeJob }) {
-  const [live, setLive] = useState<Partial<OptimizeJob> | null>(null);
-  // OPT-006 — pour l'ETA on a besoin du timestamp du premier trial reçu.
-  // Sans lui, on ne saurait pas combien de temps a pris chaque trial.
-  const firstTrialAtRef = useRef<number | null>(null);
-  const firstTrialDoneRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (job.status !== 'running') {
-      setLive(null);
-      // Reset des refs à la fermeture pour qu'un éventuel second run reparte
-      // d'un ETA vierge.
-      firstTrialAtRef.current = null;
-      firstTrialDoneRef.current = null;
-      return;
-    }
-    const url = api.optimizeStreamUrl(job.job_id);
-    // withCredentials : envoie le cookie HttpOnly api_key même en dev
-    // (frontend/backend sur des ports différents = origines distinctes) —
-    // S1-05, plus de clé API en query string.
-    // P2-7 : reconnexion SSE avec backoff exponentiel (1s/2s/4s/8s/16s, max 5 essais).
-    let retryCount = 0;
-    const MAX_RETRIES = 5;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let es: EventSource | null = null;
-
-    const connect = () => {
-      es = new EventSource(url, { withCredentials: true });
-      es.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          setLive(data);
-          retryCount = 0; // reset sur succès
-          if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
-            es?.close();
-          }
-        } catch {
-          // ignore malformed SSE frames
-        }
-      };
-      es.onerror = () => {
-        es?.close();
-        if (retryCount < MAX_RETRIES) {
-          const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s, 8s, 16s
-          retryCount++;
-          retryTimer = setTimeout(connect, delay);
-        }
-        // Si max retries atteint, le polling /status prend le relais
-      };
-    };
-    connect();
-    return () => {
-      es?.close();
-      if (retryTimer) clearTimeout(retryTimer);
-    };
-  }, [job.job_id, job.status]);
-
-  const progress = live?.progress ?? job.progress ?? 0;
-  const bestScore = live?.best_score ?? job.best_score ?? 0;
-  const trialsDone = live?.trials_done ?? job.trials_done ?? 0;
-  const nTrials = live?.n_trials ?? job.n_trials ?? 0;
-  const isRunning = (live?.status ?? job.status) === 'running';
-
-  // OPT-006 — ETA = (nTrials - trialsDone) * avg_trial_duration.
-  // avg_trial_duration = (now - firstTrialAt) / (trialsDone - firstTrialDone).
-  // On cache le timestamp du premier trial vu pour la première fois ; on
-  // ignore les 5 premières secondes (warmup) pour ne pas afficher un ETA
-  // erratique sur 1-2 trials.
-  let etaText: string | null = null;
-  const startTs = job.started_at ? job.started_at * 1000 : null;
-  const elapsedMs = startTs ? Date.now() - startTs : 0;
-  if (isRunning && trialsDone > 0 && elapsedMs > 5000 && nTrials > 0) {
-    const avgPerTrialMs = elapsedMs / Math.max(1, trialsDone);
-    const remainingMs = (nTrials - trialsDone) * avgPerTrialMs;
-    if (remainingMs < 60_000) {
-      etaText = `~${Math.max(1, Math.ceil(remainingMs / 1000))}s restant`;
-    } else {
-      etaText = `~${Math.ceil(remainingMs / 60_000)}min restant`;
-    }
-  }
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-muted">
-          {isRunning && <Loader2 className="w-3 h-3 inline animate-spin mr-1" />}
-          Trials: <span className="font-mono text-foreground">{trialsDone}/{nTrials || '∞'}</span>
-        </span>
-        <span className="text-muted">
-          Best score: <span className="font-mono text-primary-400">{bestScore.toFixed(4)}</span>
-        </span>
-        <span className="font-mono text-muted">
-          {progress.toFixed(1)}%
-          {etaText && <span className="ml-2 text-amber-400">{etaText}</span>}
-        </span>
-      </div>
-      <div className="h-1.5 bg-card-hover rounded-full overflow-hidden">
-        <div
-          className={cn(
-            'h-full rounded-full transition-all',
-            isRunning ? 'bg-primary-400' : job.status === 'done' ? 'bg-emerald-400' : 'bg-dim',
-          )}
-          style={{ width: `${Math.min(progress, 100)}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ── Param space recap (P1-1 : extrait dans @/components/optimizer/param-space-table) ──
-
-// ── Job card ────────────────────────────────────────────────────────────────
-
-function JobCard({
-  job,
-  defaultExpanded,
-  filterMl = false,
-  compareMode = false,
-  compareSelected = false,
-  onCompareToggle,
-}: {
-  job: OptimizeJob;
-  defaultExpanded?: boolean;
-  filterMl?: boolean;
-  /** P1-10 : mode comparaison — affiche une checkbox au lieu du bouton expand. */
-  compareMode?: boolean;
-  compareSelected?: boolean;
-  onCompareToggle?: (jobId: string) => void;
-}) {
-  const apply = useApplyOptimize();
-  const cancel = useCancelOptimize();
-  const del = useDeleteOptimizeJob();
-  const qc = useQueryClient();
-
-  // OPT-007 — carte repliable : dépliée par défaut pour les jobs en cours,
-  // repliée pour les jobs terminés/annulés en erreur (le verdict OOS tient
-  // en 5 KPIs dans l'en-tête ; le détail est volumineux).
-  const [expanded, setExpanded] = useState<boolean>(defaultExpanded ?? job.status === 'running');
-
-  const handleApply = async () => {
-    try {
-      const applied = await apply.mutateAsync({ jobId: job.job_id });
-      const src = applied?.gate_source;
-      toast.success(
-        src === 'holdout'
-          ? 'Paramètres appliqués (gate holdout)'
-          : src === 'selection'
-            ? 'Paramètres appliqués (gate sur la tranche de sélection)'
-            : 'Paramètres appliqués au slot',
-      );
-      // ML-004 — en mode ML, l'apply déclenche aussi l'entraînement du modèle
-      // côté backend. On invalide les queries consommées par le tab ML pour
-      // que la StrategyTable (statut Entraîné/Non entraîné, AUC) se
-      // rafraîchisse sans attendre le prochain poll de 30 s.
-      if (filterMl) {
-        qc.invalidateQueries({ queryKey: ['mlInfo'] });
-        qc.invalidateQueries({ queryKey: ['ml-recipes'] });
-      }
-    } catch (e: any) {
-      // P1-8 : si le gate refuse (409), afficher un ConfirmDialog avec la
-      // raison et un bouton "Forcer l'application" (force=true).
-      const msg = e?.message ?? '';
-      if (msg.includes('409') || msg.includes('refusé') || msg.includes('refused')) {
-        setForceApplyDialog({ jobId: job.job_id, reason: msg, strategy: job.strategy, tf: job.timeframe });
-      } else {
-        toast.error(`Apply failed: ${msg}`);
-      }
-    }
-  };
-
-  // P1-8 : état du dialog "Forcer l'application" (quand le gate refuse)
-  const [forceApplyDialog, setForceApplyDialog] = useState<{ jobId: string; reason: string; strategy: string; tf: string } | null>(null);
-
-  const handleForceApply = async () => {
-    if (!forceApplyDialog) return;
-    try {
-      await apply.mutateAsync({ jobId: forceApplyDialog.jobId, force: true });
-      toast.success('Paramètres forcés au slot (override gate)');
-      if (filterMl) {
-        qc.invalidateQueries({ queryKey: ['mlInfo'] });
-        qc.invalidateQueries({ queryKey: ['ml-recipes'] });
-      }
-    } catch (e: any) {
-      toast.error(`Force apply failed: ${e.message}`);
-    } finally {
-      setForceApplyDialog(null);
-    }
-  };
-
-  const handleCancel = async () => {
-    try {
-      await cancel.mutateAsync(job.job_id);
-      toast.success('Job annulé');
-    } catch (e: any) {
-      toast.error(`Cancel failed: ${e.message}`);
-    }
-  };
-
-  const handleDelete = async () => {
-    try {
-      await del.mutateAsync(job.job_id);
-      toast.success('Job supprimé');
-    } catch (e: any) {
-      toast.error(`Delete failed: ${e.message}`);
-    }
-  };
-
-  const variant = STATUS_VARIANT[job.status] || 'default';
-  const isRunning = job.status === 'running';
-  const isDone = job.status === 'done';
-  const result = job.result || {};
-
-  // OPT-001/002 — détail avant/après + top-5 trials. Reconstruits via les
-  // normalizers car le backend ne renvoie pas toujours le bloc `after` (cf.
-  // audit §3.2) et `top5` est l'alias legacy de `top_trials`.
-  const baseline = normalizeBaseline(job.baseline);
-  const after = deriveAfter(job);
-  const trials = normalizeTopTrials(job.result);
-  const baselineSource = (job.baseline as any)?.baseline_source ?? (job.baseline as any)?.source;
-
-  return (
-    <Card className="space-y-3">
-      <CardContent className="space-y-3">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3">
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="flex-1 min-w-0 text-left"
-            aria-expanded={expanded}
-            aria-label={expanded ? 'Réduire la carte job' : 'Déplier la carte job'}
-          >
-            <div className="flex items-center gap-2">
-              {expanded
-                ? <ChevronDown className="w-3.5 h-3.5 text-muted flex-shrink-0" />
-                : <ChevronRight className="w-3.5 h-3.5 text-muted flex-shrink-0" />}
-              <Cpu className="w-4 h-4 text-primary-400 flex-shrink-0" />
-              <span className="font-mono text-sm font-semibold truncate">{job.strategy}</span>
-              <span className="text-xs text-muted">{job.timeframe}</span>
-              {job.symbol && <span className="text-xs text-dim">· {job.symbol}</span>}
-            </div>
-            <div className="text-[10px] text-dim mt-1 font-mono pl-6">
-              {job.job_id} · {job.method} · started {job.started_at ? timeAgoShort(job.started_at) : '—'}
-              {/* P2-8 : badge si TF non recommandé */}
-              {job.is_recommended === false && (
-                <span className="text-amber-400 ml-2" title={`TFs recommandés: ${job.recommended_tfs?.join(', ') ?? '?'}`}>
-                  ⚠ TF non recommandé
-                </span>
-              )}
-            </div>
-          </button>
-          <Badge variant={variant}>{STATUS_LABEL[job.status] || job.status}</Badge>
-        </div>
-
-        {/* Progress — toujours visible (même replié, l'utilisateur voit si ça tourne). */}
-        <LiveProgress job={job} />
-
-        {expanded && (
-          <>
-            {/* Result */}
-            {isDone && result.best_params && (
-              <div className="rounded-lg bg-card-hover border border-border p-3 space-y-2">
-                <div className="flex items-center gap-2 text-xs text-emerald-400 font-semibold">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Résultat validation
-                  <span className="font-normal text-dim">
-                    (tranche de sélection — pas un holdout)
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                  <Metric label="Score val." value={(result.best_val_score ?? result.best_oos_score ?? 0).toFixed(4)} />
-                  <Metric label="PnL val." value={formatUSD(result.best_val_pnl ?? result.best_oos_pnl ?? 0)} />
-                  <Metric label="Trades val." value={String(result.best_val_trades ?? result.best_oos_trades ?? 0)} />
-                  <Metric label="Win rate val." value={`${((result.best_val_wr ?? result.best_oos_wr ?? 0) * 100).toFixed(1)}%`} />
-                  <Metric label="Sharpe val." value={(result.best_val_sharpe ?? result.best_oos_sharpe ?? 0).toFixed(2)} />
-                  {/* P0-2 : Deflated Sharpe (probabilité que le Sharpe soit réel,
-                      corrigée du biais de sélection multiple). */}
-                  <Metric
-                    label="Deflated Sharpe"
-                    value={job.deflated_sharpe != null
-                      ? `${(job.deflated_sharpe * 100).toFixed(1)}%`
-                      : '—'}
-                  />
-                  {/* P0-3 : Walk-Forward consistency (% de folds OOS positifs
-                      avec les best_params figés). */}
-                  <Metric
-                    label="WF Consistency"
-                    value={job.wf_consistency != null
-                      ? `${job.wf_consistency.toFixed(0)}%`
-                      : '—'}
-                  />
-                  <Metric label="Apply" value={job.applied ? 'Oui' : 'Non'} />
-                  {job.gate_source && (
-                    <Metric
-                      label="Gate"
-                      value={job.gate_source === 'holdout' ? 'holdout' : 'sélection'}
-                    />
-                  )}
-                </div>
-                {/* P0-2 : warning si Deflated Sharpe < 50% (edge probablement nul) */}
-                {job.deflated_sharpe != null && job.deflated_sharpe < 0.5 && (
-                  <div className="flex items-center gap-1.5 text-[10px] text-amber-400">
-                    <AlertTriangle className="w-3 h-3" />
-                    Deflated Sharpe &lt; 50% — edge probablement nul (biais de sélection)
-                  </div>
-                )}
-                {/* P0-3 : warning si WF consistency < 60% (params non robustes) */}
-                {job.wf_consistency != null && job.wf_consistency < 60 && (
-                  <div className="flex items-center gap-1.5 text-[10px] text-amber-400">
-                    <AlertTriangle className="w-3 h-3" />
-                    WF Consistency &lt; 60% — best_params non robustes sur fenêtres glissantes
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* OPT-003 — warnings anti-surapprentissage (overfit, OOS trades, score). */}
-            {isDone && (
-              <OptimizerWarnings
-                overfit={result.overfit}
-                oosTrades={result.best_oos_trades}
-                oosScore={result.best_oos_score}
-              />
-            )}
-
-            {/* OPT-001 — Avant/Après (baseline vs OOS après optimisation). */}
-            {isDone && (baseline || after) && (
-              <BeforeAfterGrid
-                baseline={baseline}
-                baselineSource={baselineSource}
-                after={after}
-              />
-            )}
-
-            {/* OPT-002 — Top-5 trials + best params. */}
-            {isDone && (trials.length > 0 || result.best_params) && (
-              <TopTrialsTable
-                trials={trials}
-                bestParams={result.best_params ?? null}
-              />
-            )}
-
-            {/* P1-3 — Courbe d'apprentissage (final_score + overfit au fil des trials).
-                Affichée seulement si ≥ 3 trials (sinon pas lisible). */}
-            {isDone && trials.length >= 3 && (
-              <TrialsChart trials={trials} />
-            )}
-
-            {/* Contexte facturé pendant l'optimisation : un `oos_score` n'est pas
-                comparable d'un run à l'autre sans lui — deux scores très différents
-                peuvent ne différer que par la venue résolue (spot vs margin). */}
-            {isDone && result.cost_model && <CostModelCard model={result.cost_model} />}
-
-            {/* P1-4 : éprouver le paramétrage retenu (Monte-Carlo, régimes).
-                Réservé aux jobs terminés — la route exige un `best_params`. */}
-            {isDone && result.best_params && (
-              <OptimizerValidatePanel jobId={job.job_id} />
-            )}
-
-            {/* Error */}
-            {job.status === 'error' && job.error && (
-              <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded p-2">
-                {job.error}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Actions */}
-        <div className="space-y-2 pt-1 border-t border-border">
-          {/* ML-007 — note « modèle ML sauvegardé automatiquement » près du
-              bouton Apply : rappelle que l'apply n'écrase que les params
-              optimisés (le modèle est géré par le backend). */}
-          {filterMl && isDone && !job.applied && (
-            <p className="text-[10px] text-cyan-300/80 italic">
-              Écrase uniquement les params optimisés — le modèle ML est sauvegardé automatiquement.
-            </p>
-          )}
-          <div className="flex gap-2">
-            {isDone && !job.applied && (
-              <Button
-                size="sm"
-                variant="success"
-                onClick={handleApply}
-                disabled={apply.isPending}
-                className="flex-1"
-                // ML-004 — en mode ML, l'apply entraîne aussi le modèle : le
-                // tooltip l'indique pour éviter la confusion avec un apply
-                // classique qui ne touche qu'aux params.
-                title={filterMl ? 'Applique les params + entraîne le modèle' : undefined}
-              >
-                <CheckCircle2 className="w-3 h-3" />
-                Apply
-              </Button>
-            )}
-            {isRunning && (
-              <Button
-                size="sm"
-                variant="danger"
-                onClick={handleCancel}
-                disabled={cancel.isPending}
-                className="flex-1"
-              >
-                <StopCircle className="w-3 h-3" />
-                Annuler
-              </Button>
-            )}
-            {!isRunning && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleDelete}
-                disabled={del.isPending}
-                // Bouton à icône seule : sans nom accessible, axe le remonte en
-                // `button-name` (critique) et un lecteur d'écran n'annonce que
-                // « bouton ». C'est l'item #26 de l'audit, donné pour traité en
-                // S2 mais jamais appliqué ici — et le job a11y de la CI est
-                // depuis passé bloquant.
-                aria-label="Supprimer ce job d'optimisation"
-                title="Supprimer ce job"
-              >
-                <Trash2 className="w-3 h-3" />
-              </Button>
-            )}
-          </div>
-        </div>
-      </CardContent>
-
-      {/* P1-8 : ConfirmDialog "Forcer l'application" quand le gate refuse.
-          Affiche la raison du refus (Deflated Sharpe, échantillon insuffisant,
-          PnL non amélioré) et propose un bouton "Forcer" (force=true). */}
-      <ConfirmDialog
-        open={!!forceApplyDialog}
-        onOpenChange={(open) => { if (!open) setForceApplyDialog(null); }}
-        title="⚠ Application refusée par le gate"
-        description={
-          forceApplyDialog
-            ? `Le gate de qualité a refusé l'application des paramètres pour ${forceApplyDialog.strategy}@${forceApplyDialog.tf}. ` +
-              `Raison : ${forceApplyDialog.reason}. ` +
-              `Forcer l'application outrepasse le gate (Deflated Sharpe, échantillon minimum, PnL vs baseline). ` +
-              `À utiliser en connaissance de cause — le paramétrage refusé deviendra actif.`
-            : ''
-        }
-        confirmLabel="Forcer l'application"
-        cancelLabel="Annuler"
-        variant="danger"
-        onConfirm={handleForceApply}
-      />
-    </Card>
-  );
-}
-
-// P2-4 : timeAgoShort et Metric extraits vers @/components/optimizer/optimizer-utils
-
-// ── Vue ─────────────────────────────────────────────────────────────────────
-
-/**
- * ML-001 — `filterMl` restreint la vue aux stratégies ML et active les
- * affordances dédiées (label de bouton cyan « ⬇ Lancer l'optimisation ML »,
- * warning omnibus ML-006, ml_tune_hp labellisé, note Apply ML-007). Utilisé
- * par `ml-view.tsx` pour intégrer l'optimiseur ML directement dans l'onglet
- * ML au lieu de renvoyer vers l'onglet Optimizer.
- */
 export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   const { data: spaces, isLoading: spacesLoading } = useOptimizeSpaces();
   const { data: resultsData } = useOptimizeResults();
@@ -598,7 +89,7 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   // sur /api/config et expose scanner.symbols. Fallback sur FALLBACK_SYMBOLS.
   const { data: configData } = useConfig();
   const availableSymbols = useMemo(() => {
-    const scannerSymbols = (configData as any)?.scanner?.symbols;
+    const scannerSymbols = (configData as { scanner?: { symbols?: string[] } } | undefined)?.scanner?.symbols;
     if (Array.isArray(scannerSymbols) && scannerSymbols.length > 0) {
       return scannerSymbols;
     }
@@ -629,7 +120,7 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   // TF et les combinaisons ignorées.
   type LaunchFeedback =
     | { kind: 'fetching' }
-    | { kind: 'ok'; nJobs: number; receivedBars?: Record<string, number>; fetchDetails?: Record<string, number>; skipped?: any[] }
+    | { kind: 'ok'; nJobs: number; receivedBars?: Record<string, number>; fetchDetails?: Record<string, number>; skipped?: unknown[] }
     | null;
   const [launchFeedback, setLaunchFeedback] = useState<LaunchFeedback>(null);
 
@@ -642,31 +133,20 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   } = useOptimizeStatus();
 
   const jobs: OptimizeJob[] = (() => {
-    const d = jobsData as any;
+    const d = jobsData;
     if (!d) return [];
-    if (Array.isArray(d)) return d;
-    if (Array.isArray(d.jobs)) return d.jobs;
-    // Forme « job unique » : la réponse porte directement `job_id`
-    // (appel `/api/optimize/status?job_id=…`).
-    if (typeof d.job_id === 'string') return [d];
-    /*
-      Sinon la réponse est le DICTIONNAIRE indexé par job_id renvoyé par
-      `get_all_jobs()` (app/engine/auto_optimizer.py:208) — c'est d'ailleurs ce
-      que documente déjà `OptimizeStatusSchema`.
-
-      Le repli précédent (`return d ? [d] : []`) emballait le dictionnaire
-      ENTIER comme s'il s'agissait d'un seul job : sans job en cours, `{}` est
-      truthy, donc la page rendait une carte fantôme au `job_id` undefined
-      (d'où l'avertissement React « unique key prop »), et avec des jobs réels
-      elle en affichait un seul, illisible. Même famille que R15/R16.
-    */
-    return Object.entries(d).map(([job_id, job]: [string, any]) => ({
+    if (Array.isArray(d)) return d as OptimizeJob[];
+    if (typeof d !== 'object') return [];
+    const rec = d as Record<string, unknown>;
+    if (Array.isArray(rec.jobs)) return rec.jobs as OptimizeJob[];
+    if (typeof rec.job_id === 'string') return [d as OptimizeJob];
+    return Object.entries(rec).map(([job_id, job]) => ({
       job_id,
       ...(job && typeof job === 'object' ? job : {}),
     })) as OptimizeJob[];
   })();
   const jobsError = jobsIsError
-    ? (jobsErrorObj as any)?.message || 'Erreur de chargement'
+    ? (jobsErrorObj instanceof Error ? jobsErrorObj.message : 'Erreur de chargement')
     : null;
 
   // P1-6 : filtre/recherche sur la liste de jobs

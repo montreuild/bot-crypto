@@ -1,6 +1,7 @@
 /**
- * Types correspondant aux réponses de l'API FastAPI du backend.
- * Source : app/api/routes/* du backend.
+ * Contrats API consommés par l'UI.
+ * Schéma brut : `python scripts/export_openapi.py` → `types/openapi.json`.
+ * Zod (lib/schemas.ts) reste non bloquant.
  */
 
 export interface BotStatus {
@@ -114,6 +115,8 @@ export interface StrategyStats {
   /** R-01 : null sous MIN_SIGNIFICANT_TRADES (10) — non mesurable, pas 0. */
   sharpe: number | null;
   max_drawdown: number;
+  recommendations?: BacktestRecommendation[];
+  recommendations_summary?: BacktestRecommendationsSummary;
 }
 
 export interface SignalLogEntry {
@@ -304,10 +307,61 @@ export interface Trade {
   reason: string;
 }
 
+export interface DualPassRuns {
+  reference?: {
+    initial_capital?: number;
+    total_trades?: number;
+    total_pnl?: number;
+    pnl_pct?: number;
+    max_drawdown?: number;
+    rejections?: { total?: number; par_motif?: Record<string, number> };
+  };
+  live?: {
+    initial_capital?: number;
+    total_trades?: number;
+    total_pnl?: number;
+    pnl_pct?: number;
+    max_drawdown?: number;
+    rejections?: { total?: number; par_motif?: Record<string, number> };
+  };
+  ecart_pnl_pct?: number;
+}
+
+export interface WalkForwardResult {
+  error?: string;
+  n_bars?: number;
+  fold_n?: number;
+  min_required?: number;
+  n_folds?: number;
+  kind?: string;
+  reoptimizes?: boolean;
+  avg_oos_pnl?: number;
+  avg_fold_pnl?: number;
+  avg_oos_sharpe?: number;
+  avg_oos_wr?: number;
+  consistency?: number;
+  in_sample?: Array<Record<string, unknown>>;
+  out_of_sample?: Array<Record<string, unknown>>;
+}
+
+export interface MonteCarloResult {
+  error?: string;
+  runs?: number;
+  confidence?: number;
+  final_equity_mean?: number;
+  final_equity_p5?: number;
+  final_equity_p95?: number;
+  max_dd_p95?: number;
+  prob_profit?: number;
+  prob_ruin_10pct?: number;
+}
+
 export interface Bot {
   slot_key: string;
   strategy: string;
   timeframe: string;
+  /** Alias historique encore émis par certains payloads. */
+  tf?: string;
   symbol: string;
   state: 'candidat' | 'essai' | 'actif' | 'retire';
   identity?: BotIdentity;
@@ -333,6 +387,8 @@ export interface Bot {
     ci_high_pct?: number;
     n?: number;
     worst_trade_pct?: number;
+    mean_pct?: number;
+    avg_return_pct?: number;
   };
   edge_significant: boolean;
   /** Slot forcé ACTIF via `lifecycle.force_active` (D6). */
@@ -446,9 +502,8 @@ export interface BacktestResult {
   buy_and_hold_pnl?: number;
   buy_and_hold_pct?: number;
   alpha?: number;
-  /** Walk-Forward, Monte-Carlo, par stratégie. */
-  walk_forward?: any;
-  monte_carlo?: any;
+  walk_forward?: WalkForwardResult;
+  monte_carlo?: MonteCarloResult;
   /** OHLCV brut pour le chart prix+signaux (BT-001). */
   ohlcv?: {
     time: (string | number)[];
@@ -471,8 +526,9 @@ export interface BacktestResult {
   refreshed?: boolean;
   gaps_warning?: string;
   cost_model?: CostModel;
-  /** Étude vs réel (dual_pass). */
-  runs?: any;
+  runs?: DualPassRuns;
+  by_strategy?: Record<string, StrategyStats>;
+  score_threshold?: number;
   // ── QW-1 : métriques étendues (S3-07 — branchement a posteriori) ──────────
   /** Sortino ratio annualisé (volatilité downside uniquement). */
   sortino?: number;

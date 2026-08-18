@@ -41,7 +41,7 @@ import { isForcedActive } from '@/lib/schemas';
 function botTimeframe(bot: Bot): string {
   const fromSlot = parseSlotKey(String(bot.slot_key || ''));
   if (fromSlot?.tf) return String(fromSlot.tf);
-  return String((bot as any).timeframe || (bot as any).tf || '');
+  return String(bot.timeframe || bot.tf || '');
 }
 
 /** Extrait le symbole d'un slot_key (ex. smart_money::4h::BTC/USDC → BTC/USDC). */
@@ -57,7 +57,7 @@ function edgeSortValue(bot: Bot): number {
   if (!e || !e.available) return -Infinity;
   const lo = e.ci_low_pct;
   if (lo != null && Number.isFinite(Number(lo))) return Number(lo);
-  const mean = (e as any).mean_pct ?? (e as any).avg_return_pct;
+  const mean = e.mean_pct ?? e.avg_return_pct;
   return mean != null && Number.isFinite(Number(mean)) ? Number(mean) : -Infinity;
 }
 
@@ -154,7 +154,7 @@ function BotsV2Content() {
         // Edge positif = borne basse CI > 0 (ou moyenne si pas de CI)
         const lo = e.ci_low_pct;
         if (lo != null && Number.isFinite(Number(lo))) return Number(lo) > 0;
-        const mean = (e as any).mean_pct ?? (e as any).avg_return_pct;
+        const mean = e.mean_pct ?? e.avg_return_pct;
         return mean != null && Number(mean) > 0;
       });
     }

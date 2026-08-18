@@ -33,28 +33,45 @@ interface DatasetRow {
   size: number;
 }
 
-function flattenDatasets(data: any): DatasetRow[] {
+interface DatasetInfo {
+  symbol?: string;
+  tf?: string;
+  timeframe?: string;
+  bars?: number;
+  count?: number;
+  from?: string;
+  first?: string;
+  to?: string;
+  last?: string;
+  size_bytes?: number;
+  size_kb?: number;
+}
+
+interface DataStatusPayload {
+  datasets?: DatasetInfo[];
+  store?: Record<string, Record<string, DatasetInfo>>;
+}
+
+function flattenDatasets(data?: DataStatusPayload | DatasetInfo[] | null): DatasetRow[] {
   if (!data) return [];
-  // Backend `/api/data/status` → { datasets: [{ symbol, tf, bars, from, to, size_kb }] }
-  const mapRow = (d: any): DatasetRow => ({
-    symbol: d.symbol,
-    tf: d.timeframe || d.tf,
+  const mapRow = (d: DatasetInfo): DatasetRow => ({
+    symbol: d.symbol ?? '',
+    tf: d.timeframe || d.tf || '',
     count: Number(d.bars ?? d.count ?? 0),
     first: d.from ?? d.first ?? '',
     last: d.to ?? d.last ?? '',
-    // size_kb (API) ou size_bytes (legacy)
     size: d.size_bytes != null
       ? Number(d.size_bytes)
       : Math.round(Number(d.size_kb ?? 0) * 1024),
   });
-  if (Array.isArray(data.datasets)) {
+  if (!Array.isArray(data) && Array.isArray(data.datasets)) {
     return data.datasets.map(mapRow);
   }
-  if (data.store && typeof data.store === 'object') {
+  if (!Array.isArray(data) && data.store && typeof data.store === 'object') {
     const rows: DatasetRow[] = [];
     for (const [symbol, tfs] of Object.entries(data.store)) {
-      for (const [tf, info] of Object.entries(tfs as any)) {
-        rows.push(mapRow({ symbol, tf, ...(info as any) }));
+      for (const [tf, info] of Object.entries(tfs)) {
+        rows.push(mapRow({ symbol, tf, ...info }));
       }
     }
     return rows;
@@ -77,7 +94,12 @@ export default function DataPage() {
   // ── Backfill des actions (S5 — équivalent du bouton Jinja2 /data) ────────
   const [backfillTf, setBackfillTf] = useState('1d');
   const [backfillYears, setBackfillYears] = useState(20);
-  const [backfillJob, setBackfillJob] = useState<any>(null);
+  const [backfillJob, setBackfillJob] = useState<{
+    status?: string;
+    error?: string | null;
+    progress?: { done?: number; total?: number; current_symbol?: string | null };
+    results?: Array<{ symbol: string; tf: string; bars: number; ok: boolean; error?: string }>;
+  } | null>(null);
   const [backfillPolling, setBackfillPolling] = useState(false);
 
   const pollBackfill = useCallback(async (jobId: string) => {
