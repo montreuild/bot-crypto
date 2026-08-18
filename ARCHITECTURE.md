@@ -54,8 +54,8 @@ app/api         (routes FastAPI + app/api/services — peut tout importer)
    │
 app/live        (LiveTrader + mixins — importe core/engine/strategies,
    │             JAMAIS app.api : l'écriture config passe par core/yaml_io)
-app/engine      (Engine, Backtester + backtest_result + position_lifecycle,
-   │             optimiseur, forward-test, scanner — importe core + strategies)
+app/engine      (Engine, Backtester + result + lifecycle, optimiseur
+   │             + freeze/bayesian mixins, forward-test, scanner)
 app/strategies  (importe core ; exception documentée : engine.BaseStrategy)
    │
 app/core        (fondation pure : config, timeframes, param_resolution,

@@ -133,7 +133,8 @@ export function JobCard({
   const baseline = normalizeBaseline(job.baseline);
   const after = deriveAfter(job);
   const trials = normalizeTopTrials(job.result);
-  const baselineSource = (job.baseline as any)?.baseline_source ?? (job.baseline as any)?.source;
+  const baselineRec = job.baseline as { baseline_source?: string; source?: string } | undefined;
+  const baselineSource = baselineRec?.baseline_source ?? baselineRec?.source;
 
   return (
     <Card className="space-y-3">

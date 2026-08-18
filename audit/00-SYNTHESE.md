@@ -1,8 +1,8 @@
 # Audit complet — Synthèse
 
 > ⚠️ **RÉVISÉ le 18 août 2026** — état courant :
-> [`16-REVISION-2026-08-18.md`](16-REVISION-2026-08-18.md)
-> (U-05 / U-08 / X-03, PR #244). Passes précédentes :
+> [`17-REVISION-2026-08-18.md`](17-REVISION-2026-08-18.md)
+> (reste X-03 / U-08 / U-05). Passes précédentes : [`16`](16-REVISION-2026-08-18.md),
 > [`15`](15-REVISION-2026-08-18.md), [`14`](14-REVISION-2026-08-18.md),
 > [`13`](13-REVISION-2026-08-17.md).
 >

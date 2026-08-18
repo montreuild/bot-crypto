@@ -167,7 +167,7 @@ function SettingsV2Content() {
   const { data: presets } = presetsQuery;
   const currentPreset = presets?.current || 'equilibre';
   const expertMode = presets?.expert_mode || false;
-  const gitCommit = (status as any)?.git_commit as string | null | undefined;
+  const gitCommit = status?.git_commit;
 
   // Lot Réglages — thème et permission de notification, portés depuis
   // /settings. Lus côté client uniquement (localStorage / API Notification).

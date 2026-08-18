@@ -108,8 +108,11 @@ exactement ce que font `smart_money_aux` / `smart_money_params` /
 | 1 809 → ~686 | `app/engine/backtest.py` | `run()` + diagnostics ; import `Backtester, BacktestResult` inchangé |
 | — → ~410 | `app/engine/backtest_result.py` | métriques + sérialisation |
 | — → ~646 | `app/engine/position_lifecycle.py` | mixin : `_close_at` / `_try_enter` / scale-in (`RiskLedger`) |
-| 1 312 | `app/engine/optimizer_search.py` | **non découpé** |
-| 1 212 | `app/strategies/smart_money_signals.py` | **non découpé** |
+| 1 312 → ~817 | `app/engine/optimizer_search.py` | grid/random/pool ; mixins freeze + bayesian |
+| — → ~184 | `app/engine/opt_freeze.py` | gel à faible impact |
+| — → ~328 | `app/engine/opt_bayesian.py` | Optuna TPE / heuristique |
+| 1 212 → ~592 | `app/strategies/smart_money_signals.py` | `_signal_at` / score |
+| — → ~506 | `app/strategies/smart_money_setups.py` | checkers + `_SignalCtx` |
 | 1 559 → ~1 015 | `optimizer-view.tsx` | `JobCard` / `LiveProgress` extraits |
 | 1 488 → ~175 | `app/lab/page.tsx` | shell + `dynamic` ; onglet Backtest dans `backtest-view.tsx` |
 
@@ -127,7 +130,8 @@ Découpages naturels de `backtest.py` — **faits** (#244) :
 - `run()` + diagnostics → `backtest.py`.
 
 `_try_enter` et le scale-in passent tous deux par `RiskLedger.reserve`
-(R-02). Restent à découper : `optimizer_search.py`, `smart_money_signals.py`.
+(R-02). `optimizer_search.py` et `smart_money_signals.py` sont découpés
+(voir [`17`](17-REVISION-2026-08-18.md)).
 
 ---
 

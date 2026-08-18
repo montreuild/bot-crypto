@@ -376,7 +376,7 @@ export function useBacktestSettings() {
 
 export function useRunBacktest() {
   return useMutation({
-    mutationFn: (payload: any) => api.runBacktest(payload),
+    mutationFn: (payload: Parameters<typeof api.runBacktest>[0]) => api.runBacktest(payload),
   });
 }
 
@@ -689,7 +689,7 @@ export function useDerivativesStatus(symbol = 'BTC/USDC') {
 // ── Replay ──────────────────────────────────────────────────────────────────
 export function useRunReplay() {
   return useMutation({
-    mutationFn: (params: any) => api.runReplay(params),
+    mutationFn: (params: Parameters<typeof api.runReplay>[0]) => api.runReplay(params),
   });
 }
 
