@@ -70,6 +70,9 @@ describe('useUpdateTradingConfig', () => {
     const { result } = renderHook(() => useUpdateTradingConfig(), { wrapper: wrapper() });
     result.current.mutate({ paper_mode: false });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(api.updateTradingConfig).toHaveBeenCalledWith({ paper_mode: false });
+    expect(api.updateTradingConfig).toHaveBeenCalledWith(
+      { paper_mode: false },
+      expect.anything(),
+    );
   });
 });
