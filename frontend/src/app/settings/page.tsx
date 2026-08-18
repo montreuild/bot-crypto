@@ -126,15 +126,15 @@ const PRESETS = [
   },
 ] as const;
 
-function mergePreset(fallback: (typeof PRESETS)[number], remote: any) {
+function mergePreset(fallback: (typeof PRESETS)[number], remote: Record<string, unknown> | undefined) {
   if (!remote) return { ...fallback };
   const pick = (value: unknown, dflt: number | null) =>
     value == null ? dflt : Number(value);
   return {
     ...fallback,
-    label: remote.label || fallback.label,
-    description: remote.description || fallback.description,
-    profile: remote.profile ?? fallback.profile,
+    label: typeof remote.label === 'string' ? remote.label : fallback.label,
+    description: typeof remote.description === 'string' ? remote.description : fallback.description,
+    profile: typeof remote.profile === 'string' ? remote.profile : fallback.profile,
     custom: Boolean(remote.custom ?? fallback.custom),
     trade_risk_pct: pick(remote.trade_risk_pct, fallback.trade_risk_pct),
     daily_dd: pick(remote.daily_drawdown_limit, fallback.daily_dd),

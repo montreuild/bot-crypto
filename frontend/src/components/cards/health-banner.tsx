@@ -13,11 +13,11 @@
 import { Card } from '@/components/ui/card';
 import { TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Activity } from 'lucide-react';
 import { cn, formatUSD, formatPct } from '@/lib/utils';
-import type { BotStatus } from '@/types';
+import type { BotStatus, PortfolioSnapshot, StrategyStats } from '@/types';
 
 interface HealthBannerProps {
   status: BotStatus | undefined;
-  portfolio: any | undefined;
+  portfolio: PortfolioSnapshot | undefined;
   expert?: boolean;
 }
 
@@ -62,7 +62,7 @@ export function HealthBanner({ status, portfolio, expert = false }: HealthBanner
   // Top contributeur (best strategy by PnL)
   const byStrategy = status.by_strategy || {};
   const topStrategy = Object.entries(byStrategy)
-    .sort(([, a]: any, [, b]: any) => (b.total_pnl ?? 0) - (a.total_pnl ?? 0))[0];
+    .sort(([, a], [, b]) => ((b as StrategyStats).total_pnl ?? 0) - ((a as StrategyStats).total_pnl ?? 0))[0];
   const topStrategyName = topStrategy?.[0];
   const topStrategyPnl = topStrategy?.[1]?.total_pnl ?? 0;
 

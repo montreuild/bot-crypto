@@ -40,7 +40,7 @@ import {
   Loader2, Rocket, CheckCircle2, XCircle, ExternalLink, AlertCircle, AlertTriangle,
 } from 'lucide-react';
 import Link from 'next/link';
-import { cn } from '@/lib/utils';
+import {cn, errorMessage} from '@/lib/utils';
 
 export interface TrainRecipeDialogRecipe {
   recipe: string;
@@ -194,10 +194,10 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
       const res = await api.startMLTrain(params);
       setJobId(res.job_id);
       setPhase('polling');
-    } catch (e: any) {
+    } catch (e) {
       setPhase('error');
-      setStartError(e?.message ?? 'Erreur inconnue');
-      toast.error(`Erreur : ${e?.message ?? 'inconnue'}`);
+      setStartError(errorMessage(e) || 'Erreur inconnue');
+      toast.error(`Erreur : ${errorMessage(e) || 'inconnue'}`);
     }
   };
 

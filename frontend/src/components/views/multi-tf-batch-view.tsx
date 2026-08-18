@@ -13,7 +13,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatUSD, formatPct } from '@/lib/utils';
+import {cn, formatUSD, formatPct, errorMessage} from '@/lib/utils';
 import { toast } from 'sonner';
 import { useRunReplay, useCancelReplay } from '@/hooks/use-api';
 import {
@@ -226,8 +226,8 @@ export function MultiTfBatchView() {
       });
       setResult(r);
       toast.success(`Replay terminé · ${(r.timeframes_tested || []).length} TFs testés`);
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -235,8 +235,8 @@ export function MultiTfBatchView() {
     try {
       await cancelReplay.mutateAsync();
       toast.success('Replay annulé');
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -366,7 +366,7 @@ export function MultiTfBatchView() {
           {runReplay.isError && (
             <div className="flex items-center gap-3 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
               <AlertCircle className="w-4 h-4" />
-              <span>Erreur: {(runReplay.error as any)?.message || 'inconnue'}</span>
+              <span>Erreur: {errorMessage(runReplay.error)}</span>
             </div>
           )}
         </CardContent>

@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { normalizeMlInfo } from '@/lib/backend-normalizers';
 
 interface Props {
-  mlInfo: any;
+  mlInfo: unknown;
   strategy: string;
   nTrades: number;
 }

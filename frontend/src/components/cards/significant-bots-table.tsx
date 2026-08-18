@@ -15,12 +15,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatUSD, parseSlotKey, lifecycleStyle } from '@/lib/utils';
 import { useBots } from '@/hooks/use-api';
+import type { Bot } from '@/types';
 import { Bot as BotIcon } from 'lucide-react';
 
-export function SignificantBotsTable({ fallbackBots }: { fallbackBots?: any[] }) {
+export function SignificantBotsTable({ fallbackBots }: { fallbackBots?: Bot[] }) {
   const { data: botsData } = useBots();
   const bots = botsData?.bots || fallbackBots || [];
-  const significantBots = bots.filter((b: any) => b?.edge_significant);
+  const significantBots = bots.filter((b) => b.edge_significant);
 
   return (
     <Card>
@@ -48,11 +49,11 @@ export function SignificantBotsTable({ fallbackBots }: { fallbackBots?: any[] })
                 </tr>
               </thead>
               <tbody>
-                {significantBots.map((bot: any) => {
+                {significantBots.map((bot) => {
                   const { strategy, tf, symbol } = parseSlotKey(bot.slot_key);
                   const style = lifecycleStyle(bot.state);
-                  const edge = bot.edge || {};
-                  const budget = bot.budget || {};
+                  const edge = bot.edge;
+                  const budget = bot.budget;
                   return (
                     <tr key={bot.slot_key} className="border-b border-border/30 hover:bg-card-hover">
                       <td className="p-3">
@@ -74,14 +75,14 @@ export function SignificantBotsTable({ fallbackBots }: { fallbackBots?: any[] })
                           {style.label}
                         </Badge>
                       </td>
-                      <td className="p-3 text-right font-mono">{(budget.budget_pct ?? 0).toFixed(1)}%</td>
-                      <td className="p-3 text-right font-mono text-muted">{(budget.used_pct ?? 0).toFixed(1)}%</td>
-                      <td className={cn('p-3 text-right font-mono font-semibold', (edge.ci_low_pct ?? 0) > 0 ? 'text-emerald-400' : 'text-red-400')}>
-                        {(edge.ci_low_pct ?? 0).toFixed(2)}%
+                      <td className="p-3 text-right font-mono">{(budget?.budget_pct ?? 0).toFixed(1)}%</td>
+                      <td className="p-3 text-right font-mono text-muted">{(budget?.used_pct ?? 0).toFixed(1)}%</td>
+                      <td className={cn('p-3 text-right font-mono font-semibold', (edge?.ci_low_pct ?? 0) > 0 ? 'text-emerald-400' : 'text-red-400')}>
+                        {(edge?.ci_low_pct ?? 0).toFixed(2)}%
                       </td>
-                      <td className="p-3 text-right font-mono text-muted">{edge.n ?? 0}</td>
-                      <td className={cn('p-3 text-right font-mono', (budget.weekly_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-                        {(budget.weekly_pnl ?? 0) >= 0 ? '+' : ''}{formatUSD(budget.weekly_pnl ?? 0)}
+                      <td className="p-3 text-right font-mono text-muted">{edge?.n ?? 0}</td>
+                      <td className={cn('p-3 text-right font-mono', (budget?.weekly_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                        {(budget?.weekly_pnl ?? 0) >= 0 ? '+' : ''}{formatUSD(budget?.weekly_pnl ?? 0)}
                       </td>
                     </tr>
                   );

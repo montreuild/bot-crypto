@@ -19,10 +19,11 @@ import {
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TrendingUp } from 'lucide-react';
+import type { OptimizeTrial } from '@/types';
 
 interface Props {
   /** Trials du job (déjà présents dans `OptimizeJob.trials`). */
-  trials?: any[];
+  trials?: OptimizeTrial[];
   className?: string;
 }
 

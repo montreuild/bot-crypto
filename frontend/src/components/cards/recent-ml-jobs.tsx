@@ -27,7 +27,7 @@ import { toast } from 'sonner';
 import {
   Loader2, Trash2, ExternalLink, History,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import {cn, errorMessage} from '@/lib/utils';
 import type { MLJobStatus } from '@/types';
 
 const STATUS_VARIANT: Record<string, 'success' | 'warning' | 'danger' | 'muted' | 'info'> = {
@@ -90,8 +90,8 @@ export function RecentMlJobs({ limit = 20, initialStatus = '', className }: Prop
     try {
       await deleteJob.mutateAsync(jobId);
       toast.success('Job supprimé');
-    } catch (e: any) {
-      toast.error(`Erreur : ${e?.message ?? 'inconnue'}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e) || 'inconnue'}`);
     }
   };
 

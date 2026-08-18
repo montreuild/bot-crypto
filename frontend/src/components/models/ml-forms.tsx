@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import {cn, errorMessage} from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   useStartMLTrain, useMLTrainStatus, useStartMLSweep, useMLSweepStatus,
@@ -62,8 +62,8 @@ export function TrainForm() {
         as_of: asOf.trim() || null, publish,
       });
       setJobId(res.job_id);
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     }
   };
 
@@ -153,8 +153,8 @@ export function SweepForm() {
         windows, publish_best: publishBest, as_of: asOf.trim() || null,
       });
       setJobId(res.job_id);
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     }
   };
 

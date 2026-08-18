@@ -14,7 +14,8 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from 'sonner'
+import { errorMessage } from '@/lib/utils';
 import { Settings, Save, RotateCcw, Loader2 } from 'lucide-react';
 
 export function StrategyParamsEditor({
@@ -51,8 +52,8 @@ export function StrategyParamsEditor({
       toast.success(`Paramètres de ${strategyName} sauvegardés`);
       setHasChanges(false);
       qc.invalidateQueries({ queryKey: ['config'] });
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     } finally {
       setSaving(false);
     }

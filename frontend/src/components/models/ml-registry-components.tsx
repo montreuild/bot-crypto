@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { cn, formatDateTime } from '@/lib/utils';
+import {cn, formatDateTime, errorMessage} from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   useMLRegistryVersions, useMLRegistryDecisions,
@@ -40,8 +40,8 @@ export function VersionRow({ entry, version }: { entry: ModelRegistryEntry; vers
         await pin.mutateAsync({ tf: entry.tf, recipe: entry.recipe, versionId: version.version_id });
         toast.success('Version épinglée');
       }
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     }
   };
 
@@ -53,8 +53,8 @@ export function VersionRow({ entry, version }: { entry: ModelRegistryEntry; vers
     try {
       await promote.mutateAsync({ tf: entry.tf, recipe: entry.recipe, versionId: version.version_id, decision });
       toast.success('Décision mise à jour');
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     } finally {
       setConfirmState({ open: false, decision });
     }

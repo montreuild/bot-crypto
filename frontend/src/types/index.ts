@@ -41,7 +41,7 @@ export interface BotStatus {
   balance_detail?: BalanceDetail | null;
   bots?: BotIdentity[];
   lifecycle?: LifecycleSnapshot | null;
-  shadow_allocation?: Record<string, any>;
+  shadow_allocation?: Record<string, unknown>;
   last_scan_time?: string | null;
   last_symbols_scanned?: string[];
   git_commit?: string | null;
@@ -117,6 +117,7 @@ export interface StrategyStats {
   sharpe: number | null;
   max_drawdown: number;
   expectancy?: number;
+  total_borrow_cost?: number;
   best_trade?: number;
   worst_trade?: number;
   equity_curve?: { time: string; equity: number }[];
@@ -466,7 +467,7 @@ export interface SignalData {
 
 export interface RiskData {
   severity: 'info' | 'warning' | 'critical';
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface CycleUpdateData {
@@ -786,7 +787,7 @@ export interface OptimizeJob {
   started_at?: number;
   finished_at?: number;
   baseline?: Record<string, any>;
-  trials?: any[];
+  trials?: OptimizeTrial[];
   /** P0-3 — Walk-Forward consistency (%) calculée par auto_optimizer._wf_consistent.
    * Stockée sur le job côté backend (auto_optimizer.py:577). */
   wf_consistency?: number;
@@ -1197,15 +1198,103 @@ export interface VenueDef {
   provider?: string;
   data_provider?: string;
   exchange?: string;
+  max_leverage?: number;
+  margin_mode?: string;
+  allow_short?: boolean;
 }
 
 export interface AppConfig {
   all_strategies?: string[];
+  scanner?: { symbols?: string[] };
+  strategy_params?: Record<string, Record<string, unknown>>;
+  trading?: {
+    timeframes?: string[];
+    max_drawdown_global?: number;
+    daily_drawdown_limit?: number;
+    paper_mode?: boolean;
+    max_leverage?: number;
+  };
+  risk?: {
+    envelopes?: Record<string, { capital?: number }>;
+    profile?: string;
+    profiles?: Record<string, number>;
+  };
   venues?: {
     default?: string;
     defs?: Record<string, VenueDef>;
   };
+  notifications?: Record<string, boolean>;
+  exchange?: { api_key?: string; name?: string; margin?: boolean };
+  providers?: {
+    yfinance?: { suffix?: string; min_request_interval?: number; cache_ttl?: number };
+  };
+}
+
+export interface PortfolioSnapshot {
+  by_strategy?: Record<string, StrategyStats>;
+  total_pnl?: number;
+  lifecycle?: LifecycleSnapshot;
+  risk?: { kill_switch?: boolean };
+}
+
+export interface BacktestSettings {
+  strategies?: string[];
+  all_strategies?: string[];
+  strategies_enabled?: string[];
+  score_threshold?: number;
+}
+
+export interface RiskPresetRemote {
+  name?: string;
+  current?: string;
   [key: string]: unknown;
+}
+
+export interface NotificationItem {
+  id?: string | number;
+  level?: string;
+  title?: string;
+  message?: string;
+  ts?: string;
+  [key: string]: unknown;
+}
+
+export interface UniverseInfo {
+  id?: string;
+  label?: string;
+  count?: number;
+  venue?: string;
+  asset_class?: string;
+  quote_currency?: string;
+  n_symbols?: number;
+  verified?: boolean;
+}
+
+export interface UniverseMember {
+  symbol?: string;
+  name?: string;
+}
+
+export interface FeesBreakdown {
+  taker?: number | null;
+  maker?: number | null;
+  borrow?: number | null;
+  stop?: number | null;
+}
+
+export interface DailyStat {
+  date?: string;
+  pnl?: number | null;
+  equity?: number | null;
+}
+
+export interface MlRecipe {
+  recipe: string;
+  trainable?: boolean;
+  reason?: string | null;
+  features_catalog?: string | null;
+  label_scheme?: string | null;
+  heads?: string[];
 }
 
 export interface MlInfoEntry {

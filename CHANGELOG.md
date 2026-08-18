@@ -3,12 +3,20 @@
 Historique des versions du Crypto Bot.
 
 > X-07 : l'état **actuel** des constats d'audit est dans
-> [`audit/18-REVISION-2026-08-18.md`](audit/18-REVISION-2026-08-18.md),
+> [`audit/19-REVISION-2026-08-18.md`](audit/19-REVISION-2026-08-18.md),
 > pas dans ce fichier (narratif historique, parfois en retard).
 
 ---
 
 ## [Non publié]
+
+### 🐛 U-08 optimizer + U-05 contrats restants
+
+- **U-08** : formulaire → `optimizer-config-form.tsx` ; jobs →
+  `optimizer-jobs-panel.tsx`. `optimizer-view.tsx` ~88 L.
+- **U-05** : portfolio, presets, univers, AppConfig, recettes ML typés.
+  Plus de `catch (e: any)` métier.
+- Commentaires réduits aux contraintes non lisibles dans le code.
 
 ### 🐛 U-08 vues + U-05 types restants
 
