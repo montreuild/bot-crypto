@@ -24,7 +24,7 @@ import os
 import threading
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +182,7 @@ def _enforce_market_coherence(v: Venue) -> Venue:
     if v.market_type in _BORROWING_MARKETS:
         return v
 
-    fixes = {}
+    fixes: dict[str, Any] = {}
     if v.max_leverage > 1:
         fixes["max_leverage"] = 1.0
     if v.margin_mode:

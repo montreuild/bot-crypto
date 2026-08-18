@@ -10,6 +10,11 @@ logger = logging.getLogger(__name__)
 
 
 class OptimizerFreezeMixin:
+    cfg: Dict[str, Any]
+    strategy_name: str
+    param_space: Dict[str, List]
+    _param_space_backup: Optional[Dict[str, Any]]
+
     def _should_reduce_space(self, n_trials: int) -> bool:
         """True si ≥ 6 params et cardinalité > 200 × n_trials."""
         if len(self.param_space) < 6:

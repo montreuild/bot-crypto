@@ -170,9 +170,11 @@ if Base is not None:
 
 else:
     # Fallback si Base n'est pas disponible (ne devrait pas arriver en prod)
-    def audit_log(*_a, **_kw): pass
-    def get_audit_events(*_a, **_kw): return {"events": [], "total": 0}
-    def audit_action(_name):
+    def audit_log(*_a, **_kw):  # type: ignore[misc]
+        pass
+    def get_audit_events(*_a, **_kw):  # type: ignore[misc]
+        return {"events": [], "total": 0}
+    def audit_action(_name):  # type: ignore[misc]
         def deco(fn):
             @wraps(fn)
             async def w(*a, **k): return await fn(*a, **k)

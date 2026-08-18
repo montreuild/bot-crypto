@@ -37,11 +37,11 @@ try:                                     # stdlib depuis 3.9
     from zoneinfo import ZoneInfo
     _HAS_ZONEINFO = True
 except ImportError:                      # pragma: no cover — Python < 3.9
-    ZoneInfo = None                      # type: ignore[assignment]
+    ZoneInfo = None                      # type: ignore[misc, assignment]
     _HAS_ZONEINFO = False
 
 try:
-    import exchange_calendars as _xcals  # type: ignore[import-not-found]
+    import exchange_calendars as _xcals
     _HAS_XCALS = True
 except Exception:                         # pragma: no cover — dépendance optionnelle
     _xcals = None

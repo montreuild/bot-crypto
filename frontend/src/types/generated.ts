@@ -5,6 +5,83 @@
  * Ne pas recopier à la main dans index.ts — importer d'ici.
  */
 
+export interface TimeframeQuery {
+  timeframe: string;
+}
+
+export interface SymbolQuery {
+  symbol: string;
+}
+
+export interface StrategyParamsBody {
+  strategy: string;
+  params?: Record<string, unknown>;
+  timeframe?: string | null;
+  symbol?: string | null;
+}
+
+export interface StrategyTimeframeBody {
+  strategy: string;
+  timeframe: string;
+  enabled?: boolean;
+  symbol?: string | null;
+}
+
+export interface TradingParamsBody {
+  score_threshold?: number | null;
+  paper_mode?: boolean | null;
+  paper_slippage?: number | null;
+  daily_drawdown_limit?: number | null;
+}
+
+export interface MarginConfigBody {
+  margin?: boolean | null;
+  margin_mode?: string | null;
+  max_leverage?: number | null;
+}
+
+export interface RiskConfigBody {
+  consecutive_loss_limit?: number | null;
+  slot_daily_dd_limit?: number | null;
+  win_rate_floor?: number | null;
+  volatility_threshold?: number | null;
+  consecutive_pause_secs?: number | null;
+}
+
+export interface RiskEnvelopesBody {
+  [key: string]: unknown;
+}
+
+export interface StrategiesEnabledBody {
+  enabled?: Array<string>;
+}
+
+export interface TimeframesBody {
+  timeframes?: Array<string>;
+}
+
+export interface AutoOptimizerBody {
+  enabled?: boolean;
+  interval_h?: number;
+}
+
+export interface NotificationsConfigBody {
+  telegram_enabled?: boolean | null;
+  telegram_bot_token?: string | null;
+  telegram_chat_id?: string | null;
+  whatsapp_enabled?: boolean | null;
+  whatsapp_number?: string | null;
+  whatsapp_token?: string | null;
+  email_enabled?: boolean | null;
+  email_smtp?: string | null;
+  email_port?: number | null;
+  email_user?: string | null;
+  email_password?: string | null;
+  email_to?: string | null;
+  min_pnl_to_notify?: number | null;
+  position_loss_warn_pct?: number | null;
+}
+
 export interface BacktestResultModel {
   initial_capital: number;
   final_equity: number;

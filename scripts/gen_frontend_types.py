@@ -17,16 +17,6 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
-MODELS = (
-    "BacktestResultModel",
-    "BacktestRunResponse",
-    "PortfolioResponse",
-    "TradeRow",
-    "TradesListResponse",
-    "RiskOverviewResponse",
-    "OptimizeResultsResponse",
-)
-
 _HEADER = '''\
 /**
  * Contrats dérivés des `response_model` serveur (API-01 / FE-03).
@@ -87,14 +77,36 @@ def _iface(name: str, schema: Dict[str, Any], defs: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _public_models(mod) -> List[str]:
+    from pydantic import BaseModel
+    names = []
+    for name, obj in vars(mod).items():
+        if name.startswith("_"):
+            continue
+        if isinstance(obj, type) and issubclass(obj, BaseModel) and obj is not BaseModel:
+            names.append(name)
+    return names
+
+
 def render() -> str:
     from app.api import schemas as S
 
+    names = _public_models(S)
     chunks: List[str] = [_HEADER.rstrip(), ""]
-    for name in MODELS:
+    emitted_defs: set[str] = set()
+    for name in names:
         model = getattr(S, name)
         raw = model.model_json_schema()
         defs = raw.get("$defs") or raw.get("definitions") or {}
+        for dname, dschema in defs.items():
+            if dname in emitted_defs or dname in names:
+                continue
+            emitted_defs.add(dname)
+            chunks.append(_iface(dname, dschema, defs))
+            chunks.append("")
+        if name in emitted_defs:
+            continue
+        emitted_defs.add(name)
         chunks.append(_iface(name, raw, defs))
         chunks.append("")
     return "\n".join(chunks)

@@ -1,6 +1,6 @@
 /**
  * Contrats API consommés par l'UI.
- * Les routes chaudes : `types/generated.ts` (`python scripts/gen_frontend_types.py`).
+ * Contrats serveur : `types/generated.ts` (`python scripts/gen_frontend_types.py`).
  * Schéma brut : `python scripts/export_openapi.py` → `types/openapi.json`.
  * Zod (lib/schemas.ts) reste non bloquant.
  */
@@ -1464,12 +1464,4 @@ export interface BotThresholds {
   [key: string]: unknown;
 }
 
-export type {
-  BacktestResultModel,
-  BacktestRunResponse,
-  OptimizeResultsResponse,
-  PortfolioResponse,
-  RiskOverviewResponse,
-  TradeRow,
-  TradesListResponse,
-} from './generated';
+export type * from './generated';

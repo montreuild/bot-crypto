@@ -95,8 +95,8 @@ def scan_once(
             ohlcv_root = Path("data/ohlcv")
             if ohlcv_root.is_dir():
                 seen = set()
-                for p in ohlcv_root.rglob("*.parquet"):
-                    parent = p.parent.name
+                for pq in ohlcv_root.rglob("*.parquet"):
+                    parent = pq.parent.name
                     if parent and parent != "ohlcv":
                         if "." in parent:  # AIR.PA, etc.
                             seen.add(parent)
@@ -124,7 +124,6 @@ def scan_once(
                     except Exception:
                         pass
                     resolved = resolve_strategy_params(cfg, tf, symbol)
-                    p = strat._p(resolved)
                     plans = strat.trade_plans(df, resolved) or []
                     for plan in plans:
                         st = plan.get("signal_time")

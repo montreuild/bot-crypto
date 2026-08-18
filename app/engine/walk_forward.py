@@ -95,9 +95,10 @@ class WalkForwardAnalyzer:
                 eng_oos = Engine()
                 [eng_oos.register(s, silent=True) for s in fresh_strats_oos]
 
-                bt_is  = Backtester(eng_is,  self.cfg, ml_mode=self.ml_mode,
+                _ml = self.ml_mode or "frozen"
+                bt_is  = Backtester(eng_is,  self.cfg, ml_mode=_ml,
                                     realistic_risk=_rr)
-                bt_oos = Backtester(eng_oos, self.cfg, ml_mode=self.ml_mode,
+                bt_oos = Backtester(eng_oos, self.cfg, ml_mode=_ml,
                                     realistic_risk=_rr)
                 r_is   = bt_is.run(df_is,  symbol, timeframe=timeframe).to_dict()
                 r_oos  = bt_oos.run(df_oos, symbol, timeframe=timeframe).to_dict()

@@ -33,3 +33,17 @@ def test_openapi_expose_les_cinq_schemas():
         "RiskOverviewResponse", "OptimizeResultsResponse",
     ):
         assert name in schemas
+
+
+def test_generated_ts_couvre_tous_les_schemas_pydantic():
+    """FE-03 : generated.ts est dérivé, pas recopié."""
+    from pathlib import Path
+
+    from app.api import schemas as S
+    from scripts.gen_frontend_types import _public_models
+
+    text = Path("frontend/src/types/generated.ts").read_text(encoding="utf-8")
+    names = _public_models(S)
+    assert names, "aucun modèle public dans app.api.schemas"
+    for name in names:
+        assert text.count(f"export interface {name}") == 1, name
