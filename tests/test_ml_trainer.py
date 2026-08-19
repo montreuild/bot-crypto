@@ -177,6 +177,53 @@ def test_load_models_serves_a_model_whatever_symbol_it_was_trained_on(tmp_path):
     assert trainer._retrain_at["opus_omnibus_v11@1h"] > 0   # pas de retrain immédiat
 
 
+def test_loaded_auc_missing_attr_is_zero():
+    """smc_ml_edge (et tout BaseStrategyML hors mixin) n'a pas
+    ``_best_auc_per_tf`` — le log de chargement doit rester à 0."""
+    from app.engine.engine import BaseStrategyML
+
+    class _Bare(BaseStrategyML):
+        name = "bare"
+
+    assert MLStrategyTrainer._loaded_auc(_Bare(), "1h") == 0.0
+
+
+def test_loaded_auc_reads_map_and_ignores_junk():
+    class _WithMap:
+        _best_auc_per_tf = {"1h": 0.62, "4h": "n/a"}
+
+    assert MLStrategyTrainer._loaded_auc(_WithMap(), "1h") == pytest.approx(0.62)
+    assert MLStrategyTrainer._loaded_auc(_WithMap(), "4h") == 0.0
+    assert MLStrategyTrainer._loaded_auc(_WithMap(), "15m") == 0.0
+    assert MLStrategyTrainer._loaded_auc(object(), "1h") == 0.0
+
+
+def test_load_models_survives_strategy_without_auc_map(tmp_path, monkeypatch):
+    """Régression : un load_model réussi + stratégie sans ``_best_auc_per_tf``
+    ne doit plus planter LiveTrader à l'init."""
+    from app.engine.engine import BaseStrategyML
+
+    class _BareML(BaseStrategyML):
+        name = "bare_ml"
+        model_dir = str(tmp_path)
+        timeframes = ["1h"]
+        models = {"signal": "r"}
+
+        def load_model(self, path: str) -> bool:
+            return True
+
+    art = registry.ArtifactRef(
+        path_prefix="x", train_symbol="BTC/USDC", tf="1h",
+        recipe="r", version_id="v1", train_end="2020-01-01T00:00:00",
+    )
+    monkeypatch.setattr(registry, "resolve", lambda *a, **k: art)
+
+    trainer = MLStrategyTrainer({"strategy_params": {}})
+    trainer.load_models({"bare_ml": _BareML()}, ["1h"])
+
+    assert trainer._retrain_at["bare_ml@1h"] > __import__("time").time()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  _retrain_thread — bout en bout avec le gate
 # ─────────────────────────────────────────────────────────────────────────────

@@ -73,9 +73,10 @@ class MLStrategyTrainer:
                     logger.warning(f"[MLTrainer] {name}/{tf} : resolve() KO : {e}")
 
                 if art is not None and strat.load_model(art.path_prefix):
+                    auc = self._loaded_auc(strat, tf)
                     logger.info(
                         f"[MLTrainer] {name}/{tf} : modèle chargé "
-                        f"(version={art.version_id}, AUC={strat._best_auc_per_tf.get(tf, 0):.4f})"
+                        f"(version={art.version_id}, AUC={auc:.4f})"
                     )
                     warn = self._freshness_warning(art, interval_h)
                     if warn:
@@ -339,6 +340,23 @@ class MLStrategyTrainer:
             logger.warning(f"[MLTrainer] get_symbols() KO : {e}")
             return None
         return next((s for s in symbols if "BTC" in s), symbols[0] if symbols else None)
+
+    @staticmethod
+    def _loaded_auc(strat, tf: str) -> float:
+        """AUC à journaliser après ``load_model`` — jamais une exception.
+
+        ``_best_auc_per_tf`` n'existe que sur les stratégies MLBackendMixin
+        (et quelques presets historiques). ``smc_ml_edge`` et tout
+        ``BaseStrategyML`` autonome n'ont pas cet attribut : y accéder
+        cassait l'init de LiveTrader (serveur web seul, ``trader: false``).
+        """
+        auc_map = getattr(strat, "_best_auc_per_tf", None)
+        if not isinstance(auc_map, dict):
+            return 0.0
+        try:
+            return float(auc_map.get(tf, 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
 
     @staticmethod
     def _freshness_warning(art, interval_h: float, stale_factor: float = _STALE_FACTOR) -> Optional[str]:
