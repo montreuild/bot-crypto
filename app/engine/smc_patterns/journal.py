@@ -161,7 +161,7 @@ def _contexte_htf(df_ltf: pl.DataFrame, df_htf: pl.DataFrame,
     dessus serait spectaculaire et fausse.
     """
     n = len(df_ltf)
-    vide = {
+    vide: Dict[str, np.ndarray] = {
         "htf_state": np.zeros(n, dtype=np.int8),
         "htf_trend": np.zeros(n, dtype=np.int8),
         "htf_bar": np.full(n, -1, dtype=np.int64),
@@ -181,7 +181,7 @@ def _contexte_htf(df_ltf: pl.DataFrame, df_htf: pl.DataFrame,
 
     # Position de chaque barre LTF dans la série HTF, par bornes d'horloge.
     idx = _index_htf_causal(df_ltf, df_htf, tf_htf)
-    out = dict(vide)
+    out: Dict[str, np.ndarray] = dict(vide)
     valides = idx >= 0
     if not valides.any():
         return out

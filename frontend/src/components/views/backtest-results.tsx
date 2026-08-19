@@ -176,7 +176,12 @@ export function BacktestResults({
   const comparisonStrategies: Array<Partial<BacktestResult> & { strategy: string }> =
     strategies.length > 1
       ? strategies.map(([name, stats]) => {
-          const { trades: _count, ...kpis } = stats ?? {};
+          const {
+            trades: _count,
+            monte_carlo: _mc,
+            recommendations_summary: _rs,
+            ...kpis
+          } = stats ?? {};
           return {
             ...kpis,
             strategy: name,
@@ -326,7 +331,7 @@ export function BacktestResults({
           key={`reco-${name}`}
           strategy={name}
           recommendations={stats?.recommendations}
-          summary={stats?.recommendations_summary}
+          summary={stats?.recommendations_summary ?? undefined}
         />
       ))}
 

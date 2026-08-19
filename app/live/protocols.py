@@ -55,14 +55,47 @@ class OptimizerHost:
     param_space: dict
     strategy_name: str
     cfg: dict
+    results: list
+    progress_callback: Any
+    _cancel_event: Any
+    _fixed_ml_hp: Any
+    _MIN_SCREEN_PER_PARAM: int
+    _impact_scores: Any
+    _restore_param_space: Any
+    _with_hp: Any
+    _should_reduce_space: Any
+    _safe_worker_count: Any
+    _best_result: Any
+    _freeze_params: Any
+    _eval: Any
+    _penalized_score: Any
+    _should_early_stop: Any
+    _serialize_pool_inputs: Any
+    _worker_args: Any
+    _open_pool: Any
+    _run_parallel: Any
+    _freeze_from_results: Any
+    _perturb: Any
 
 
 class LifecycleHost:
     """Attributs de ``Backtester`` pour ``PositionLifecycleMixin``."""
     spread_pct: float
     taker_fee: float
+    maker_fee: float
+    borrow_rate: float
+    borrow_periods: int
     partial_fill: float
     exit_mode: str
     exit_mode_params: dict
     _venue: Any
     rejections: Any
+    cfg: dict
+    _impact_cost: Any
+    _funding_cost: Any
+    _find_strategy: Any
+    _min_notional: Any
+    _sizing_base: Any
+    _leverage: Any
+    _fees: Any
+    _make_trailing: Any

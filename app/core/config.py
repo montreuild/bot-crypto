@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any, Tuple
 
-import yaml
+import yaml  # type: ignore[import-untyped,unused-ignore]
 from dotenv import load_dotenv
 
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
@@ -66,7 +66,7 @@ DEFAULT_MAKER_FEE = 0.0004
 # leurs répertoires par défaut (data/ohlcv, data/features, data/derivatives).
 DATA_ROOT = "data"
 
-DEFAULTS = {
+DEFAULTS: dict[str, dict[str, Any]] = {
     "trading": {
         "paper_mode": True,
         "scan_interval": 60, "score_threshold": 0.55, "daily_drawdown_limit": 0.05,

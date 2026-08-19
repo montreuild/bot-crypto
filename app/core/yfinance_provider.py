@@ -416,8 +416,9 @@ class YFinanceProvider:
         # justement `min_since_ms` à 0 (une action cote avant 2017), donc la
         # valeur 0 circule réellement.
         bounded = since is not None
-        if bounded:
-            rows = [r for r in rows if r[0] >= int(since)]
+        if since is not None:
+            since_ms = int(since)
+            rows = [r for r in rows if r[0] >= since_ms]
         if not limit or len(rows) <= int(limit):
             return rows
         return rows[:int(limit)] if bounded else rows[-int(limit):]
@@ -527,8 +528,10 @@ class YFinanceProvider:
         erreurs ordinaires donnent une trame vide (le retry s'en charge),
         ``YFRateLimitError`` est relancée pour nourrir le disjoncteur.
         """
-        bounds = ({"period": "max"} if period1 is None
-                  else {"start": period1, "end": period2})
+        bounds: dict[str, object] = (
+            {"period": "max"} if period1 is None
+            else {"start": period1, "end": period2}
+        )
         hist = self._ticker(ticker).history(
             interval=interval, auto_adjust=False, actions=False,
             timeout=self._timeout, **bounds,

@@ -22,6 +22,10 @@ class BaseStrategy:
     # features dérivés (funding/OI/long-short/taker — crypto perpetuals
     # uniquement) surchargent avec frozenset({"crypto"}).
     asset_classes: frozenset = frozenset({"crypto", "equity"})
+    _bt_params: Any
+    _bt_symbol: str
+    _bt_tf: str
+    _bt_full_df: Any
 
     def min_bars_required(self, params: dict | None = None) -> int:
         """Nombre minimum de bougies requis pour calculer les indicateurs."""
@@ -85,6 +89,8 @@ class BaseStrategyML(BaseStrategy):
     """
     retrain_interval_h: int = 6
     model_dir: str = "models"
+    _cancel_event: Any
+    managed_externally: bool = False
 
     # ── Contrat de gate (ML-02) ────────────────────────────────────────────
     # Déclaratif : conventions de labels/métrique de CETTE recette, quand elle

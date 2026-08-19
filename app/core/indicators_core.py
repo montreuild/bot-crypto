@@ -150,7 +150,8 @@ def bb_squeeze(close: pl.Series, lookback: int = 15,
     if cur_w is None:
         return False
     past = width[-(lookback + 1):-1].drop_nulls()
-    return len(past) >= 5 and float(cur_w) <= float(past.quantile(quantile))
+    q = past.quantile(quantile)
+    return len(past) >= 5 and q is not None and float(cur_w) <= float(q)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

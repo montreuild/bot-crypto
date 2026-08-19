@@ -208,7 +208,7 @@ class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
                  param_space: Dict | None = None,
                  progress_callback: Optional[Callable] = None,
                  symbol: str = DEFAULT_CONFIG_SYMBOL,
-                 df_full: pl.DataFrame = None,
+                 df_full: pl.DataFrame | None = None,
                  split: int | None = None,
                  timeframe: str | None = None,
                  cancel_event: Optional[threading.Event] = None,
@@ -509,7 +509,7 @@ class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
     def _serialize_pool_inputs(self):
         """Sérialise (une fois) cfg + DataFrames IS/OOS pour les workers spawn.
         Retourne ``(cfg_yaml, df_is_ipc, df_oos_ipc, init_args)``."""
-        import yaml as _yaml
+        import yaml as _yaml  # type: ignore[import-untyped,unused-ignore]
         _buf_is = io.BytesIO()
         self.df_is.write_ipc(_buf_is)
         df_is_ipc  = _buf_is.getvalue()

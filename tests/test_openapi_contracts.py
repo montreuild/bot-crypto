@@ -46,4 +46,4 @@ def test_generated_ts_couvre_tous_les_schemas_pydantic():
     names = _public_models(S)
     assert names, "aucun modèle public dans app.api.schemas"
     for name in names:
-        assert text.count(f"export interface {name}") == 1, name
+        assert text.count(f"export interface {name} {{") == 1, name

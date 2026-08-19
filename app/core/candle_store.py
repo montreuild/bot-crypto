@@ -224,7 +224,7 @@ class CandleStore:
             # Fetch incrémental ou complet
             bootstrapped_deep = False
             if len(df_cached) > 0:
-                last_ms  = epoch_ms(df_cached["time"].max())
+                last_ms  = epoch_ms(df_cached["time"].max()) or 0
                 new_raw  = self._fetch_incremental(exchange, symbol, tf, last_ms + 1)
             else:
                 logger.info(f"[CandleStore] {symbol}/{tf} — premier fetch ({total} bougies)")
@@ -261,7 +261,7 @@ class CandleStore:
                         f"bougies : c'est tout l'historique publié par la source "
                         f"pour cette granularité"
                     )
-                    old_raw = []
+                    old_raw: list = []
                 elif self._history_exhausted(symbol, tf, first_ms):
                     logger.debug(
                         f"[CandleStore] {symbol}/{tf} — backfill historique ignoré "
@@ -347,7 +347,7 @@ class CandleStore:
         """
         path = self._path(symbol, tf)
         if not path.exists():
-            return pl.DataFrame(schema=_OHLCV_SCHEMA)
+            return pl.DataFrame(schema=_OHLCV_SCHEMA)  # type: ignore[arg-type]
         try:
             lf = pl.scan_parquet(path)
             if start is not None:
@@ -363,7 +363,7 @@ class CandleStore:
             return df
         except Exception as e:
             logger.warning(f"[CandleStore] load_range {symbol}/{tf} KO : {e}")
-            return pl.DataFrame(schema=_OHLCV_SCHEMA)
+            return pl.DataFrame(schema=_OHLCV_SCHEMA)  # type: ignore[arg-type]
 
     def count_bars(self, symbol: str, tf: str) -> int:
         """Nombre de bougies en cache sans charger le DataFrame complet.
@@ -614,7 +614,7 @@ class CandleStore:
         else:
             since = max(floor_ms, int(exchange.milliseconds()) - span_ms)
 
-        all_raw = []
+        all_raw: list = []
         seen_ts = set()
 
         while len(all_raw) < needed:
@@ -697,7 +697,7 @@ class CandleStore:
         since   = max(_min_since(exchange, symbol),
                       exchange.milliseconds()
                       - _bars_span_ms(exchange, symbol, tf, total, tf_ms))
-        all_raw = []
+        all_raw: list = []
         seen_ts = set()
 
         while len(all_raw) < total:
@@ -759,7 +759,7 @@ class CandleStore:
                 return df
             except Exception as e:
                 logger.warning(f"[CandleStore] Fichier corrompu {path} — re-fetch : {e}")
-        return pl.DataFrame(schema=_OHLCV_SCHEMA)
+        return pl.DataFrame(schema=_OHLCV_SCHEMA)  # type: ignore[arg-type]
 
     def _save(self, path: Path, df: pl.DataFrame) -> None:
         """Écriture ATOMIQUE : Parquet écrit dans un .tmp puis os.replace

@@ -10,13 +10,15 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
-### 🐛 ARCH-04 + FE-03
+### 🐛 ARCH-04 + FE-03 (terminé)
 
-- **ARCH-04** : 9 modules de plus hors `ignore_errors` (yaml_io, smc.quality,
-  opt_freeze, opt_persistence, smc_signals_scan, audit_log, bot_identity,
-  market_calendar, walk_forward). **24** restants.
-- **FE-03** : `gen_frontend_types.py` émet tous les modèles publics de
-  `app.api.schemas` (corps POST inclus). `index.ts` réexporte `generated.ts`.
+- **ARCH-04** : mypy bloquant sur `app/core` + `app/engine` **sans**
+  `ignore_errors`. Shims ARCH-03 en import statique + `copy_privates`.
+  Mixins annotés (`LifecycleHost`, `OptimizerHost`, `RiskNotifier`,
+  `BacktestResult`, `BaseStrategy`).
+- **FE-03** : contrats API (BotStatus, Position, CostModel, Risk*, Trade,
+  StrategyStats, recos) générés depuis `app.api.schemas`. `index.ts`
+  réexporte `generated.ts` ; WS + chart SMC dans `types/ui.ts`.
 
 ### 🐛 TEST-05 / PERF-03 / FE-01 / ML-04
 

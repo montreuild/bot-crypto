@@ -35,7 +35,7 @@ def available_memory_bytes() -> Optional[int]:
     désactivé sur Windows — là où il est justement le plus utile (pas d'OOM-killer
     noyau : un std::bad_alloc LightGBM tue tout le process sans traceback)."""
     try:
-        import psutil  # type: ignore
+        import psutil
         return int(psutil.virtual_memory().available)
     except Exception:
         pass
@@ -66,7 +66,8 @@ def available_memory_bytes() -> Optional[int]:
 
             stat = _MEMORYSTATUSEX()
             stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
-            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+            windll = getattr(ctypes, "windll", None)
+            if windll and windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
                 return int(stat.ullAvailPhys)
     except Exception:
         pass
@@ -115,7 +116,7 @@ def _worker_init(strategy_name: str, cfg_yaml: str,
     import importlib as _imp
 
     import polars as _pl
-    import yaml as _yaml
+    import yaml as _yaml  # type: ignore[import-untyped,unused-ignore]
 
     _W["strategy_name"] = strategy_name
     _W["cfg"]           = _yaml.safe_load(cfg_yaml)
@@ -244,7 +245,7 @@ def _install_features_cache(strat) -> None:
             _orig(df)
 
     try:
-        strat.prepare_for_backtest = _cached_prepare  # type: ignore[assignment]
+        strat.prepare_for_backtest = _cached_prepare
     except Exception:
         pass
 
