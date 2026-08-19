@@ -178,9 +178,9 @@ si une refonte modulaire du backend est décidée par ailleurs.
 - **Suivre les `move` littéralement.** Déplacer du code de production dans la
   communauté des tests n'a pas de sens.
 - **Traiter ce plan avant la dette frontend.** Le backend est vert
-  (pytest `not slow`) ; le typage des réponses chaudes est en place
-  (`app/api/schemas.py` → `frontend/src/types/generated.ts`, FE-03).
-  Il reste `index.ts` pour les contrats UI plus riches.
+  (pytest `not slow`) ; le typage des réponses API est généré
+  (`app/api/schemas.py` → `frontend/src/types/generated.ts`, FE-03, PR #256).
+  `index.ts` ne garde que les vues riches (BacktestResult, OptimizeJob, ML).
 
 ---
 

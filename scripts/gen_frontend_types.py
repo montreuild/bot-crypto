@@ -3,8 +3,9 @@
 Usage (racine du dépôt) :
     python scripts/gen_frontend_types.py
 
-Ne remplace pas ``types/index.ts`` (contrats UI plus riches). Les 5 routes
-chaudes + TradeRow y sont réexportés.
+``types/index.ts`` réexporte ce fichier. Contrats UI-only (WS, chart SMC) :
+``types/ui.ts``. Vues riches (BacktestResult, OptimizeJob, ML) restent
+manuscrites dans ``index.ts``.
 """
 from __future__ import annotations
 
