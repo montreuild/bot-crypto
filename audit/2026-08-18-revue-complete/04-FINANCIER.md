@@ -415,7 +415,12 @@ side, max_leverage=1.0)`.
 
 ## FIN-11 — La courbe de dé-risquage est une marche d'escalier
 
-**Sévérité P3 · Observation de conception**
+**Sévérité P3 · MESURÉ puis corrigé** — `risk_multiplier` est une rampe
+linéaire 5 %→15 % (×1→×0,5). L'escalier (`risk_multiplier_steps`) reste
+disponible pour comparaison. Saut max mesuré : 0,25 → < 0,01. Bornes
+inchangées. Voir `tests/test_risk_curve.py`.
+
+**Constat d'origine** (escalier encore en vigueur à l'audit) :
 
 `app/core/risk_curve.py:17-20` : ×0,5 au-delà de 10 %, ×0,75 au-delà de 5 %, ×1 sinon.
 
@@ -469,4 +474,4 @@ trancher par une mesure, pas par un principe.
 | FIN-08 | P2 | PLAUSIBLE | Point mort hors modèle de venue | 1 h |
 | FIN-09 | P2 | PLAUSIBLE | Frais de sortie estimés au prix d'entrée | 15 min |
 | FIN-10 | P3 | CONFIRMÉ | Repli `venue=None` facture tout le notionnel | 15 min |
-| FIN-11 | P3 | — | Courbe de risque en marches | à mesurer |
+| FIN-11 | P3 | MESURÉ | Rampe 5–15 % (saut max < 0,01) | fait |

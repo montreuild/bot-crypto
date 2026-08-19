@@ -35,8 +35,10 @@ L'onglet actif se pilote par `?tab=` : `/market?tab=smartgraph` est un lien
 profond partageable, et c'est la cible des redirections ci-dessous.
 
 Les contrats API serveur vivent dans `src/types/generated.ts`
-(`python scripts/gen_frontend_types.py` depuis la racine). `index.ts`
-réexporte ce fichier et les vues encore manuscrites. WS + chart SMC :
+(`python scripts/gen_frontend_types.py` depuis la racine). Les vues
+riches (`BacktestResult`, `OptimizeJob`, types ML) sont dans
+`src/types/views.ts` — trop hétérogènes pour un miroir Pydantic.
+`index.ts` réexporte `generated` + `ui` + `views`. WS + chart SMC :
 `src/types/ui.ts`. Zod (`lib/schemas.ts`) valide sans bloquer.
 Schéma FastAPI : `python scripts/export_openapi.py` → `src/types/openapi.json`.
 

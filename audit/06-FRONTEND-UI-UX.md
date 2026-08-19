@@ -205,11 +205,12 @@ un écart est journalisé et la donnée brute passe. C'est le bon arbitrage pour
 un tableau de bord. Il faudrait toutefois que ces écarts soient **visibles**
 (compteur dans le bandeau de statut) et non seulement en console.
 
-**Correction (livrée #244–#246)** : contrats maintenus dans `types/index.ts`.
-Les `as any` métier (bots, Verdict, session, OOS, audit, enveloppes,
-optimize start) sont retirés. Zod reste non bloquant. Les `as any` de
-graphiques (lightweight-charts) et payloads SMC/replay hétérogènes restent
-hors scope.
+**Correction (livrée #244–#246, FE-03 #256)** : contrats API dans
+`types/generated.ts`. Vues riches dans `types/views.ts`. `index.ts` est
+un barrel. Les `as any` métier (bots, Verdict, session, OOS, audit,
+enveloppes, optimize start) sont retirés. Zod reste non bloquant. Les
+`as any` de graphiques (lightweight-charts) et payloads SMC/replay
+hétérogènes restent hors scope (U-05).
 
 ---
 

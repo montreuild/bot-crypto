@@ -57,7 +57,7 @@ O(n²) : le débit doit être divisé par ≈ 3,29.
 | `trend` | 84 b/s | 22 b/s | **3,83** | 3,29 | **quadratique** |
 | `supertrend_macd` | 81 b/s | 27 b/s | **3,02** | 3,29 | **quadratique** |
 | `volatility_squeeze` | 3 255 b/s | 3 118 b/s | **1,04** | — | **linéaire** |
-| `smart_money` | 4 291 b/s | 842 b/s | 5,10 | — | *voir PERF-05* |
+| `smart_money` | 4 291 b/s | 842 b/s | 5,10 | — | *PERF-05 corrigé (index + searchsorted)* |
 
 Les deux stratégies qui appellent `htf_trend` se comportent exactement comme le prédit un
 O(n², et celle qui ne l'appelle pas garde un débit plat. La cause est établie sans

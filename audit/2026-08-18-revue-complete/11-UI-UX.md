@@ -66,7 +66,12 @@ temps de la migration.
 
 ## UX-02 — Interface en français, nombres au format anglo-saxon
 
-**Sévérité P2 · CONFIRMÉ (lecture)**
+**Sévérité P2 · corrigé** — `formatMoney` / `formatNumber` / `formatCompact`
+/ `formatPct` utilisent `fr-FR` (`1 234,56`, `12,50 %`). Masques
+Playwright étendus aux montants français (baselines Linux CI, pas
+`--update-snapshots`).
+
+**Constat d'origine** :
 
 `src/app/layout.tsx:73` : `<html lang="fr">`. Les quatre fonctions de formatage
 (`src/lib/utils.ts`) utilisent `Intl.NumberFormat('en-US')`.
@@ -166,6 +171,6 @@ fenêtre auditée pour l'optimiseur. Le motif existe, il n'est pas généralisé
 | ID | Sévérité | Preuve | Constat | Effort |
 |---|---|---|---|---|
 | UX-01 | **P1** | CONFIRMÉ | Tout est affiché en `$` malgré `quote_currency` par venue | 1 j |
-| UX-02 | P2 | CONFIRMÉ | `lang="fr"` mais nombres en `en-US` | 2 h |
+| UX-02 | P2 | CONFIRMÉ | `Intl.NumberFormat('fr-FR')` + masques visuels | fait |
 | UX-03 | P2 | CONFIRMÉ | La vue de configuration n'affiche aucune erreur | 2 h |
 | UX-04 | P2 | PLAUSIBLE | Pas d'indicateur sur les vues de calcul long | 4 h |

@@ -98,7 +98,13 @@ l'exception complète côté serveur, ne renvoyer que l'identifiant.
 
 ## API-03 — 41 routes mutantes pour 12 modèles de validation d'entrée
 
-**Sévérité P2 · CONFIRMÉ (mesure)**
+**Sévérité P2 · partiellement corrigé** — les corps qui écrivent le risque
+sont bornés : `VenueEnvelopeBody` (`capital > 0`, expositions (0, 1] /
+(0, 0,10] / (0, 0,20]), `RiskConfigBody.min_slot_weight`,
+`TradingParamsBody.max_drawdown_global`. Les actions sans corps
+(`/bot/start`, `/optimize/cancel`) restent hors périmètre.
+
+**Constat d'origine** :
 
 `app/api/schemas.py` compte 228 lignes et 12 classes. Les 41 routes `POST`/`PUT`/`DELETE`
 ne peuvent donc pas être toutes couvertes par un corps typé : le reste lit des paramètres
@@ -182,6 +188,6 @@ aux passes de nettoyage.
 |---|---|---|---|---|
 | API-01 | **P1** | CONFIRMÉ | 0 `response_model` sur 99 routes | ½ j (top 5) → 3 j |
 | API-02 | P2 | CONFIRMÉ | 8 sites renvoient l'exception interne | 20 min |
-| API-03 | P2 | CONFIRMÉ | 41 routes mutantes, 12 modèles d'entrée | 1 j |
+| API-03 | P2 | CONFIRMÉ | Enveloppes + DD global bornés (`VenueEnvelopeBody`) | fait |
 | API-04 | P2 | CONFIRMÉ | `scanner_service.py` à 4 % de couverture | 2 j |
 | API-05 | P3 | — | `ml.py` / `optimizer.py` trop gros | 1 j |

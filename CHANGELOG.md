@@ -10,6 +10,11 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📚 Docs
+
+- Tracker `20-REVISION` : FIN-11, vues FE-03, API-03, UX-02, PERF-05
+  passés en livré. Constats sources de la revue-complete annotés.
+
 ### 🐛 PERF-05
 
 - `smart_money` 1 h : `prepare_for_backtest` indexe sweeps/OB/breakers
