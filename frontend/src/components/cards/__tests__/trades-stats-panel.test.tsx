@@ -105,9 +105,10 @@ describe('Répartition du PnL par jambe de sortie (§5)', () => {
        invisible : il part avec la clôture du trade et n'est jamais journalisé
        comme une jambe. */
     render(<TradesStatsPanel trades={FRACTIONNE} />);
-    expect(screen.getByText(/30,00/)).toBeInTheDocument();
-    expect(screen.getByText(/8,00/)).toBeInTheDocument();
-    expect(screen.getByText(/12,00/)).toBeInTheDocument();
+    // Le panneau formate au ``toFixed(2)`` (pas Intl) : 30.00, pas 30,00.
+    expect(screen.getByText(/30\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/8\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/12\.00/)).toBeInTheDocument();
   });
 
   it('classe les trades non fractionnés dans un poste « complet »', () => {
@@ -144,7 +145,7 @@ describe('Répartition du PnL par jambe de sortie (§5)', () => {
     const cellule = screen.getByText('complet · stop_loss');
     const ligne = cellule.closest('tr');
     expect(ligne).not.toBeNull();
-    expect(ligne).toHaveTextContent(/50,00/);
+    expect(ligne).toHaveTextContent(/50\.00/);
     expect(ligne).toHaveTextContent('2');           // les deux trades stoppés
   });
 });

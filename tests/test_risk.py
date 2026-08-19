@@ -81,15 +81,21 @@ class TestRiskManager:
 
     def test_compute_risk_reduced_above_5pct_dd(self):
         rm = RiskManager(_cfg(capital=1000))
-        rm.equity = 940      # 6% de drawdown
+        rm.equity = 940      # 6 % de drawdown → rampe FIN-11 : ×0,95
         rm.peak_equity = 1000
-        assert rm.compute_risk() == pytest.approx(0.0075)  # 0.01 * 0.75
+        assert rm.compute_risk() == pytest.approx(0.0095)
 
     def test_compute_risk_halved_above_10pct_dd(self):
         rm = RiskManager(_cfg(capital=1000))
-        rm.equity = 880      # 12% de drawdown
+        rm.equity = 880      # 12 % de drawdown → rampe : ×0,65
         rm.peak_equity = 1000
-        assert rm.compute_risk() == pytest.approx(0.005)  # 0.01 * 0.5
+        assert rm.compute_risk() == pytest.approx(0.0065)
+
+    def test_compute_risk_floor_at_15pct_dd(self):
+        rm = RiskManager(_cfg(capital=1000))
+        rm.equity = 850      # 15 % → plancher ×0,5
+        rm.peak_equity = 1000
+        assert rm.compute_risk() == pytest.approx(0.005)
 
     def test_circuit_breaker_daily(self):
         rm = RiskManager(_cfg(dd_daily=0.05))

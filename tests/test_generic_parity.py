@@ -149,9 +149,11 @@ def test_trend_rider_backtest_parity_on_synthetic_btc_data():
 
 def test_pullback_trend_backtest_parity_on_synthetic_btc_data():
     result = _run("pullback_trend")
+    # FIN-11 : rampe 5–15 % réduit le sizing plus tôt que l'escalier
+    # (à 6–12 % DD le facteur est > 0,5). PnL/équité recalés sur la rampe.
     assert result == {
         "total_trades": 8,
         "win_rate": 0.0,
-        "total_pnl": -63.2037,
-        "final_equity": 936.7963,
+        "total_pnl": -64.2158,
+        "final_equity": 935.7842,
     }
