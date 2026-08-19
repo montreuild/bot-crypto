@@ -129,7 +129,8 @@ src/
 └── types/
     ├── generated.ts              # Contrats Pydantic (FE-03)
     ├── ui.ts                     # WS + chart SMC
-    └── index.ts                  # Réexport generated + vues manuscrites
+    ├── views.ts                  # Backtest / optimize / ML (encore manuscrits)
+    └── index.ts                  # Réexport generated + ui + views
 ```
 
 ## WebSocket temps réel

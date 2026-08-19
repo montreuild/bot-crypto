@@ -10,6 +10,12 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 FE-03 vues
+
+- `BacktestResult`, `OptimizeJob` et les types ML sortent de `index.ts`
+  vers `frontend/src/types/views.ts` (trop hétérogènes pour un miroir
+  Pydantic strict). `index.ts` reste un barrel.
+
 ### 🐛 FIN-11
 
 - Courbe de dé-risquage : rampe linéaire 5 % → 15 % (×1 → ×0,5) à la
