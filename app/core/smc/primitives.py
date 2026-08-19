@@ -49,6 +49,22 @@ def _wilder_atr(df: pl.DataFrame, n: int) -> np.ndarray:
     return _atr_wilder_series(df, n).fill_null(0.0).to_numpy().astype(float)
 
 
+def _group_by_int(items: List[dict], field: str) -> Dict[int, List[dict]]:
+    """Indexe une liste d'entités par un champ entier (``None`` ignoré).
+
+    PERF-05 : les checkers de ``prepare_for_backtest`` regardent les
+    entités d'**une** barre ; sans cet index ils re-scannent toute la
+    liste à chaque événement (O(events × entités)).
+    """
+    out: Dict[int, List[dict]] = {}
+    for it in items:
+        k = it.get(field)
+        if k is None:
+            continue
+        out.setdefault(int(k), []).append(it)
+    return out
+
+
 def _empty_result(n: int) -> Dict[str, Any]:
     return {
         "n_bars": n, "swings": [], "structure_events": [], "liquidity_pools": [],
@@ -62,6 +78,9 @@ def _empty_result(n: int) -> Dict[str, Any]:
         "_all_pools": [], "_all_swings": [], "_all_obs": [], "_all_fvgs": [],
         "_all_sweeps": [], "_all_struct_events": [], "_all_voids": [],
         "_all_breakers": [], "_all_rejections": [],
+        "_sweeps_at": {}, "_obs_at": {}, "_breakers_at": {},
+        "_rejections_at": {},
+        "_swing_confirmed_at": np.zeros(0, dtype=np.int64),
     }
 
 

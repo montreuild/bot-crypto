@@ -7,6 +7,14 @@ import numpy as np
 from app.core import ict, smc
 
 
+def _at_bar(res: dict, index_key: str, items: list, field: str, i: int):
+    """Entités de la barre ``i``. Index PERF-05 si présent, sinon scan."""
+    idx = res.get(index_key)
+    if isinstance(idx, dict):
+        return idx.get(i, ())
+    return [e for e in items if e.get(field) == i]
+
+
 @dataclass
 class _SignalCtx:
     res: dict
@@ -97,8 +105,8 @@ def _check_sweep_reversal(self, ctx: _SignalCtx) -> List[dict]:
     """Setup A : Sweep rejeté (sell_side → long, buy_side → short)."""
     p, res, i = ctx.p, ctx.res, ctx.i
     out: List[dict] = []
-    for ev in res["_all_sweeps"]:
-        if ev["index"] != i or not ev["rejected"]:
+    for ev in _at_bar(res, "_sweeps_at", res["_all_sweeps"], "index", i):
+        if not ev["rejected"]:
             continue
         if ev["kind"] == "sell_side" and not ctx.recent_choch_down:
             if (ctx.trend != 1 and not ctx.allow_ct) or ctx.zone == "discount" \
@@ -255,8 +263,10 @@ def _check_ob_retest(self, ctx: _SignalCtx) -> List[dict]:
     if not zone_sources:
         return out
     for setup_name, zone_list in zone_sources:
-        for ob in zone_list:
-            if ob["touched_at"] != i or i - ob["created_at"] > ctx.max_ob_age:
+        idx_key = "_obs_at" if setup_name == "OB_RETEST" else "_rejections_at"
+        field = "touched_at"
+        for ob in _at_bar(res, idx_key, zone_list, field, i):
+            if i - ob["created_at"] > ctx.max_ob_age:
                 continue
             if ob["invalidated_at"] is not None and ob["invalidated_at"] <= i:
                 continue
@@ -345,8 +355,8 @@ def _check_breaker_retest(self, ctx: _SignalCtx) -> List[dict]:
     # le setup même hors YAML.
     if not bool(p.get("use_breakers", False)):
         return out
-    for brk in res["_all_breakers"]:
-        if brk["touched_at"] != i or i - brk["created_at"] > ctx.max_ob_age:
+    for brk in _at_bar(res, "_breakers_at", res["_all_breakers"], "touched_at", i):
+        if i - brk["created_at"] > ctx.max_ob_age:
             continue
         if brk["invalidated_at"] is not None and brk["invalidated_at"] <= i:
             continue

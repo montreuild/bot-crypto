@@ -226,33 +226,38 @@ PERF-01, puisque la correction est la même.
 
 ## PERF-05 — `smart_money` dégrade 5,1× là où la linéarité en prédit 3,3, sans appeler `htf_trend`
 
-**Sévérité P2 · CONFIRMÉ (mesure) — cause non identifiée**
+**Sévérité P2 · CONFIRMÉ (cProfile) — corrigé**
 
-`smart_money` ne figure **pas** parmi les 8 stratégies qui appellent `htf_trend`. Son débit
-devrait donc rester plat comme celui de `volatility_squeeze`. Il ne l'est pas :
+`smart_money` n'appelle pas `indicators_market.htf_trend`. Le débit 1 h / 4 h
+(842 vs 4 291 b/s, rapport 5,10) n'est **pas** le volume de trades
+(557 vs 42) : `score` / `check_early_exit` sont O(1) dès que le cache
+`_bt_signals` est valide (`choch_exit` est off par défaut).
+
+cProfile BTC 1 h, 8 000 barres (1,16 s) : `prepare_for_backtest` 0,85 s
+(**73 %**), `_signal_at` × 1 370 événements 0,50 s, `trendline_value_at`
+0,13 s, `_check_sweep_reversal` 0,12 s, `_premium_discount_at` 0,09 s.
+La boucle `best_signal` : 0,14 s. `prepare` 4 k → 32 k : 0,20 s → 11,8 s
+(×58, n² ≈ ×64). Chaque `_signal_at` relisait `_all_sweeps` / `_all_obs`
+/ `_all_swings` (ce dernier depuis la fin, donc O(n − i) sur les barres
+précoces).
+
+**Correctif** : `analyze` pose `_sweeps_at` / `_obs_at` / `_breakers_at` /
+`_rejections_at` et `_swing_confirmed_at` ; checkers et `_stamp_l6`
+indexent par barre ; `premium_discount_at` / `trendline_value_at` partent
+du dernier swing confirmé (`searchsorted`). Identité : `tests/test_perf05_smart_money.py`.
+
+Contexte historique (débit d'audit, avant correctif) :
 
 | Stratégie | 4 h | 1 h | Rapport |
 |---|---:|---:|---:|
 | `volatility_squeeze` | 3 255 b/s | 3 118 b/s | 1,04 |
 | **`smart_money`** | **4 291 b/s** | **842 b/s** | **5,10** |
 
-Un rapport de 5,10 dépasse même celui d'un O(n²) pur (3,29), ce qui interdit de conclure
-à la même cause.
-
-Deux pistes, non départagées :
-
-1. **Le volume de trades** — 42 trades à 4 h contre **557** à 1 h. `_manage_open_position`
-   est appelé une fois par barre **par position ouverte** ; plus de trades signifie plus de
-   barres passées en position, et donc plus d'appels à `check_early_exit` et
-   `check_scale_in` sur `ctx.window`. Si l'un de ces hooks est O(n), le coût total devient
-   superlinéaire — ce serait une **troisième** instance du même motif.
-2. **Un coût propre à la stratégie** dans son analyse SMC (`smart_money_signals`,
-   `smart_money_setups`, `smart_money_plans`).
-
-**À faire** : un `cProfile` sur `smart_money` 1 h, comme celui qui a tranché PERF-01. Je ne
-conclus pas sans cette mesure — c'est le même genre de piège que celui où ma première
-hypothèse sur PERF-01 (l'ordre `prepare_for_backtest` / `precompute_df`) s'est révélée
-fausse à l'épreuve du test.
+Le rapport 5,10 dépassait un O(n²) pur (3,29) parce que le coût est
+`events × entités` (les deux linéaires en n) **plus** le parcours
+`reversed(_all_swings)` depuis la fin — pire que n² sur les barres
+précoces. La piste « plus de trades » est écartée : `best_signal` reste
+une fraction du temps.
 
 ---
 
@@ -313,5 +318,5 @@ Le garde-fou mémoire (`_PRECOMPUTE_MAXSIZE`, éviction LRU) est présent.
 |---|---|---|---|---|
 | PERF-01 | **P1** | CONFIRMÉ | Repli `htf_trend` non mémoïsé : O(n²) prouvé par l'échelle, ×145 en 1 h, 4 jours par campagne | 30 lignes |
 | PERF-02 | **P1** | PLAUSIBLE | Même motif pour `bb_squeeze_series` (×80 annoncé) | avec PERF-01 |
-| PERF-05 | P2 | CONFIRMÉ | `smart_money` dégrade 5,1× sans appeler `htf_trend` — cause à profiler | ½ j |
+| PERF-05 | P2 | CONFIRMÉ | `prepare_for_backtest` O(events × entités) — index + searchsorted | fait |
 | PERF-03 | P2 | CONFIRMÉ | Aucun garde de débit, alors que 5 gains ont été annoncés | 1 h |

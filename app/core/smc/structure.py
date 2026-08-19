@@ -18,6 +18,7 @@ from app.core.smc.primitives import (
     _MAX_KEEP,
     _empty_result,
     _flag_ob_structure,
+    _group_by_int,
     _last_opposite_candle,
     _params,
     _try_cluster_pool,
@@ -445,5 +446,12 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
         "_all_voids": voids,
         "_all_breakers": breakers,
         "_all_rejections": rejections,
+        # PERF-05 — index par barre (listes déjà chronologiques).
+        "_sweeps_at": _group_by_int(sweeps, "index"),
+        "_obs_at": _group_by_int(obs, "touched_at"),
+        "_breakers_at": _group_by_int(breakers, "touched_at"),
+        "_rejections_at": _group_by_int(rejections, "touched_at"),
+        "_swing_confirmed_at": np.array(
+            [int(s["confirmed_at"]) for s in swings], dtype=np.int64),
     }
     return result

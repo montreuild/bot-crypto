@@ -374,7 +374,12 @@ def _stamp_l6(sig: dict, ctx: _SignalCtx, p: Dict[str, Any]) -> None:
                                 casse_structure=ctx.struct_seq != "NONE")
     balayage = 0.0
     barre_evenement = i
-    for ev in ctx.res.get("_all_sweeps") or ():
+    sweeps_i = ctx.res.get("_sweeps_at")
+    if isinstance(sweeps_i, dict):
+        sweep_iter = sweeps_i.get(i, ())
+    else:
+        sweep_iter = ctx.res.get("_all_sweeps") or ()
+    for ev in sweep_iter:
         if ev.get("index") == i:
             balayage = qualite_balayage(ev, ctx.high, ctx.low, ctx.close,
                                         ctx.open_, atr)

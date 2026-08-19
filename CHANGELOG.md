@@ -10,6 +10,13 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 PERF-05
+
+- `smart_money` 1 h : `prepare_for_backtest` indexe sweeps/OB/breakers
+  par barre et résout premium/discount + trendlines par `searchsorted`
+  (plus de scan O(n) à chaque événement). Cause mesurée : 73 % du
+  backtest 8 k barres était ce prepare, pas `_manage_open_position`.
+
 ### 🐛 UX-02
 
 - Nombres et devises en `fr-FR` (`1 234,56`, `12,50 %`). Masques Playwright
