@@ -10,7 +10,7 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
-### 🐛 ARCH-04 + FE-03 (terminé)
+### 🐛 ARCH-04 + FE-03 (PR #256)
 
 - **ARCH-04** : mypy bloquant sur `app/core` + `app/engine` **sans**
   `ignore_errors`. Shims ARCH-03 en import statique + `copy_privates`.

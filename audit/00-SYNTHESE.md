@@ -9,7 +9,7 @@
 >
 > Les dix corrections du §3 sont **faites**, y compris **B-02**.
 > N-01 à N-04 sont traités. O-05 sans retour de scikit-learn.
-> Revue-complete : PR **#249**–**#254**. Reste : [`20-REVISION` §2](20-REVISION-2026-08-18.md).
+> Revue-complete : PR **#249**–**#256**. Reste : [`20-REVISION` §2](20-REVISION-2026-08-18.md).
 
 **Dépôt** : `bot-crypto` — bot de trading algorithmique multi-stratégies
 (Python 3.14 / FastAPI / polars / LightGBM + Next.js 15 / React 19)

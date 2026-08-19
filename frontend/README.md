@@ -34,9 +34,11 @@ L'UI tient en **5 pages méta** à onglets, plus quelques pages dédiées.
 L'onglet actif se pilote par `?tab=` : `/market?tab=smartgraph` est un lien
 profond partageable, et c'est la cible des redirections ci-dessous.
 
-Les contrats API vivent dans `src/types/index.ts`. Zod (`lib/schemas.ts`)
-valide sans bloquer. Schéma FastAPI : `python scripts/export_openapi.py`
-depuis la racine (écrit `src/types/openapi.json`).
+Les contrats API serveur vivent dans `src/types/generated.ts`
+(`python scripts/gen_frontend_types.py` depuis la racine). `index.ts`
+réexporte ce fichier et les vues encore manuscrites. WS + chart SMC :
+`src/types/ui.ts`. Zod (`lib/schemas.ts`) valide sans bloquer.
+Schéma FastAPI : `python scripts/export_openapi.py` → `src/types/openapi.json`.
 
 ### Routes héritées
 
@@ -125,7 +127,9 @@ src/
 │   ├── schemas.ts
 │   └── ws-provider.tsx
 └── types/
-    └── index.ts                  # Contrats API (U-05). Schéma : scripts/export_openapi.py
+    ├── generated.ts              # Contrats Pydantic (FE-03)
+    ├── ui.ts                     # WS + chart SMC
+    └── index.ts                  # Réexport generated + vues manuscrites
 ```
 
 ## WebSocket temps réel
