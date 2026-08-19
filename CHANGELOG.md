@@ -10,6 +10,11 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 FIN-11
+
+- Courbe de dé-risquage : rampe linéaire 5 % → 15 % (×1 → ×0,5) à la
+  place de l'escalier ×1 / ×0,75 / ×0,5. Mesure : saut max 0,25 → < 0,01.
+
 ### 🐛 ARCH-04 + FE-03 (PR #256)
 
 - **ARCH-04** : mypy bloquant sur `app/core` + `app/engine` **sans**
