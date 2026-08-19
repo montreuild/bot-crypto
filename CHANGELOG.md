@@ -10,6 +10,12 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔧 CI
+
+- Actions GitHub sur runtime Node 24 : `checkout@v5`, `setup-python@v6`,
+  `setup-node@v6`, `upload-artifact@v6` (plus d'avertissement Node 20).
+- `eslint.config.mjs` : tableau nommé avant `export default`.
+
 ### 📚 Docs
 
 - Tracker `20-REVISION` : FIN-11, vues FE-03, API-03, UX-02, PERF-05

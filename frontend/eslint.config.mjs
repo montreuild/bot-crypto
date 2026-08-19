@@ -9,7 +9,9 @@ const compat = new FlatCompat({
   baseDirectory: __dirname,
 });
 
-export default [
+const eslintConfig = [
   { ignores: ['coverage/**', '.next/**'] },
   ...compat.extends('next/core-web-vitals'),
 ];
+
+export default eslintConfig;
