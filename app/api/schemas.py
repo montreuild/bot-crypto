@@ -132,6 +132,7 @@ class TradingParamsBody(BaseModel):
     paper_mode: Optional[bool] = None
     paper_slippage: Optional[float] = Field(None, ge=0.0, le=0.05)
     daily_drawdown_limit: Optional[float] = Field(None, gt=0.0, le=0.5)
+    max_drawdown_global: Optional[float] = Field(None, gt=0.0, le=0.8)
 
 
 class MarginConfigBody(BaseModel):
@@ -154,13 +155,25 @@ class RiskConfigBody(BaseModel):
     win_rate_floor: Optional[float] = Field(None, ge=0.0, le=1.0)
     volatility_threshold: Optional[float] = Field(None, gt=0.0, le=1.0)
     consecutive_pause_secs: Optional[int] = Field(None, ge=60, le=86400)
+    min_slot_weight: Optional[float] = Field(None, gt=0.0, le=1.0)
+
+
+class VenueEnvelopeBody(BaseModel):
+    """Une enveloppe venue — bornes alignées sur ``risk.py`` / ``_validate_risk_envelopes``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    capital: Optional[float] = Field(None, gt=0)
+    max_symbol_exposure_pct: Optional[float] = Field(None, gt=0.0, le=1.0)
+    symbol_risk_pct: Optional[float] = Field(None, gt=0.0, le=0.10)
+    venue_risk_pct: Optional[float] = Field(None, gt=0.0, le=0.20)
 
 
 class RiskEnvelopesBody(BaseModel):
     """Payload racine de ``POST /api/risk/envelopes`` : ``{venue: {…}}``.
 
-    Utilise ``extra="allow"`` car les clés sont dynamiques (noms de venues).
-    La validation métier (bornes, venues connues) reste dans la route.
+    Clés dynamiques (noms de venues) ; chaque valeur est validée par
+    ``VenueEnvelopeBody`` (API-03).
     """
 
     model_config = ConfigDict(extra="allow")
@@ -169,7 +182,12 @@ class RiskEnvelopesBody(BaseModel):
         data = self.model_dump()
         if len(data) > 64:
             raise ValueError("Trop d'enveloppes (max 64)")
-        return data
+        out: Dict[str, Any] = {}
+        for venue, env in data.items():
+            if not isinstance(env, dict):
+                raise ValueError(f"risk.envelopes.{venue} doit être un objet")
+            out[venue] = VenueEnvelopeBody.model_validate(env).model_dump(exclude_none=True)
+        return out
 
 
 class StrategiesEnabledBody(BaseModel):

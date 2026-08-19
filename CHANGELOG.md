@@ -10,6 +10,12 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 API-03
+
+- `POST /api/risk/envelopes` : chaque venue validée par `VenueEnvelopeBody`
+  (`capital > 0`, pct dans les bornes disque). `min_slot_weight` et
+  `max_drawdown_global` bornés.
+
 ### 🐛 FE-03 vues
 
 - `BacktestResult`, `OptimizeJob` et les types ML sortent de `index.ts`
