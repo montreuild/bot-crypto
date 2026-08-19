@@ -66,7 +66,8 @@ def available_memory_bytes() -> Optional[int]:
 
             stat = _MEMORYSTATUSEX()
             stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
-            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+            windll = getattr(ctypes, "windll", None)
+            if windll and windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
                 return int(stat.ullAvailPhys)
     except Exception:
         pass
