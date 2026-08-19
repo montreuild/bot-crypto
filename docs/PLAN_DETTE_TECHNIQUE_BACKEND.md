@@ -180,7 +180,8 @@ si une refonte modulaire du backend est décidée par ailleurs.
 - **Traiter ce plan avant la dette frontend.** Le backend est vert
   (pytest `not slow`) ; le typage des réponses API est généré
   (`app/api/schemas.py` → `frontend/src/types/generated.ts`, FE-03, PR #256).
-  `index.ts` ne garde que les vues riches (BacktestResult, OptimizeJob, ML).
+  Vues riches (`BacktestResult`, `OptimizeJob`, ML) : `types/views.ts`.
+  `index.ts` est un barrel (`generated` + `ui` + `views`).
 
 ---
 

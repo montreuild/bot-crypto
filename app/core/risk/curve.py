@@ -8,14 +8,24 @@ non représentatifs du comportement réel du bot).
 """
 
 
-def risk_multiplier(drawdown_frac: float) -> float:
-    """Facteur de risque selon le drawdown courant (fraction, ex. 0.07 = 7 %).
-
-    ×0.5 au-delà de 10 % de drawdown, ×0.75 au-delà de 5 %, ×1 sinon —
-    identique à ``RiskGate.compute_risk`` (app/core/risk_sizer.py — ARCH-011).
-    """
+def risk_multiplier_steps(drawdown_frac: float) -> float:
+    """Ancienne marche (FIN-11) : ×1 / ×0,75 / ×0,5 aux seuils 5 % et 10 %."""
     if drawdown_frac > 0.10:
         return 0.5
     if drawdown_frac > 0.05:
         return 0.75
     return 1.0
+
+
+def risk_multiplier(drawdown_frac: float) -> float:
+    """Facteur de risque selon le drawdown (fraction, ex. 0.07 = 7 %).
+
+    Rampe linéaire 5 % → 15 % de ×1 à ×0,5 (FIN-11). Aux bornes : même
+    politique que l'escalier historique (plein sous 5 %, moitié à 15 %+).
+    À 10 % le facteur vaut encore 0,75 — sans le saut 0,75 → 0,50.
+    """
+    if drawdown_frac <= 0.05:
+        return 1.0
+    if drawdown_frac >= 0.15:
+        return 0.5
+    return 1.0 - 0.5 * (drawdown_frac - 0.05) / 0.10

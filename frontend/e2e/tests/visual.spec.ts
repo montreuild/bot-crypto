@@ -51,7 +51,9 @@ const PAGES = [
 const VOLATILE = [
   '.recharts-surface',                 // courbes et donuts
   '[data-testid="live-value"]',
-  'text=/\\$[0-9]/',                   // montants
+  'text=/\\$[0-9]/',                   // montants en-US
+  'text=/[0-9][\\s\\u00a0]?[0-9]{3},[0-9]{2}/', // montants fr-FR
+  'text=/[0-9]+,[0-9]{2}\\s*%/',       // pourcentages fr-FR
   'text=/[0-9]{2}:[0-9]{2}/',          // horodatages
 ];
 

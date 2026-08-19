@@ -10,6 +10,40 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📚 Docs
+
+- Tracker `20-REVISION` : FIN-11, vues FE-03, API-03, UX-02, PERF-05
+  passés en livré. Constats sources de la revue-complete annotés.
+
+### 🐛 PERF-05
+
+- `smart_money` 1 h : `prepare_for_backtest` indexe sweeps/OB/breakers
+  par barre et résout premium/discount + trendlines par `searchsorted`
+  (plus de scan O(n) à chaque événement). Cause mesurée : 73 % du
+  backtest 8 k barres était ce prepare, pas `_manage_open_position`.
+
+### 🐛 UX-02
+
+- Nombres et devises en `fr-FR` (`1 234,56`, `12,50 %`). Masques Playwright
+  élargis aux montants français.
+
+### 🐛 API-03
+
+- `POST /api/risk/envelopes` : chaque venue validée par `VenueEnvelopeBody`
+  (`capital > 0`, pct dans les bornes disque). `min_slot_weight` et
+  `max_drawdown_global` bornés.
+
+### 🐛 FE-03 vues
+
+- `BacktestResult`, `OptimizeJob` et les types ML sortent de `index.ts`
+  vers `frontend/src/types/views.ts` (trop hétérogènes pour un miroir
+  Pydantic strict). `index.ts` reste un barrel.
+
+### 🐛 FIN-11
+
+- Courbe de dé-risquage : rampe linéaire 5 % → 15 % (×1 → ×0,5) à la
+  place de l'escalier ×1 / ×0,75 / ×0,5. Mesure : saut max 0,25 → < 0,01.
+
 ### 🐛 ARCH-04 + FE-03 (PR #256)
 
 - **ARCH-04** : mypy bloquant sur `app/core` + `app/engine` **sans**

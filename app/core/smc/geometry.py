@@ -32,16 +32,36 @@ def _pd_from_range(range_high: float, range_low: float, trend: int,
     }
 
 
+def _last_confirmed_idx(swings: List[dict], i: int,
+                        confirmed_at: Optional[np.ndarray] = None) -> int:
+    """Dernier swing dont ``confirmed_at ≤ i`` (liste triée par confirmation).
+
+    PERF-05 : un ``reversed(swings)`` depuis la fin de la série saute
+    O(n − i) swings trop récents — O(n²) si on l'appelle à chaque
+    barre d'événement. ``searchsorted`` est O(log n), puis on marche
+    à rebours uniquement parmi les swings déjà confirmés.
+    """
+    if not swings:
+        return -1
+    if confirmed_at is not None and len(confirmed_at) == len(swings):
+        return int(np.searchsorted(confirmed_at, i, side="right") - 1)
+    for k in range(len(swings) - 1, -1, -1):
+        if swings[k]["confirmed_at"] <= i:
+            return k
+    return -1
+
+
 def _premium_discount_at(all_swings: List[dict], trend_arr: np.ndarray,
                          h: np.ndarray, lo: np.ndarray, c: np.ndarray,
-                         i: int) -> Optional[dict]:
+                         i: int,
+                         confirmed_at: Optional[np.ndarray] = None) -> Optional[dict]:
     """Range de travail à la barre ``i`` (causal) : dernier swing high ↔ dernier
     swing low confirmés ≤ i, élargi au max/min des 100 dernières barres,
     équilibre à 50 % et zone OTE (retracement 62–79 %)."""
     sh = sl = None
-    for sw in reversed(all_swings):
-        if sw["confirmed_at"] > i:
-            continue
+    last = _last_confirmed_idx(all_swings, i, confirmed_at)
+    for k in range(last, -1, -1):
+        sw = all_swings[k]
         if sw["kind"] == "high" and sh is None:
             sh = sw["price"]
         elif sw["kind"] == "low" and sl is None:
@@ -71,8 +91,9 @@ def premium_discount_at(result: Dict[str, Any], h: np.ndarray, lo: np.ndarray,
         return _pd_from_range(float(h[lo_w:i + 1].max()),
                               float(lo[lo_w:i + 1].min()),
                               int(result["_trend_arr"][i]), float(c[i]))
-    return _premium_discount_at(result["_all_swings"], result["_trend_arr"],
-                                h, lo, c, i)
+    return _premium_discount_at(
+        result["_all_swings"], result["_trend_arr"], h, lo, c, i,
+        confirmed_at=result.get("_swing_confirmed_at"))
 
 
 def _trendlines(swing_highs: List[dict], swing_lows: List[dict],
@@ -156,8 +177,11 @@ def trendline_value_at(result: Dict[str, Any], i: int,
     Retourne None si moins de deux swings disponibles."""
     want = "low" if kind == "support" else "high"
     a = b = None
-    for sw in reversed(result["_all_swings"]):
-        if sw["kind"] != want or sw["confirmed_at"] > i:
+    swings = result["_all_swings"]
+    last = _last_confirmed_idx(swings, i, result.get("_swing_confirmed_at"))
+    for k in range(last, -1, -1):
+        sw = swings[k]
+        if sw["kind"] != want:
             continue
         if b is None:
             b = sw
@@ -179,6 +203,14 @@ def recent_sweep(result: Dict[str, Any], created_at: int, want: str,
     move institutionnel (les stops ont été consommés avant l'impulsion).
     Primitive partagée vizion (``require_sweep``) / smart_money
     (``require_inducement``)."""
+    by = result.get("_sweeps_at")
+    if isinstance(by, dict):
+        lo = created_at - lookback
+        for j in range(lo, created_at + 1):
+            for sw in by.get(j, ()):
+                if sw["rejected"] and sw["kind"] == want:
+                    return True
+        return False
     for sw in result["_all_sweeps"]:
         if not sw["rejected"] or sw["kind"] != want:
             continue

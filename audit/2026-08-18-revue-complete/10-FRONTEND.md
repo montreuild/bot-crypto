@@ -107,7 +107,12 @@ squelette de chargement déjà utilisé par les autres vues. ~2 h par vue.
 
 ## FE-03 — 1 462 lignes de types écrites à la main contre une API sans contrat
 
-**Sévérité P1 · Dérivé d'API-01**
+**Sévérité P1 · corrigé pour les contrats API** (PR #256) : `generated.ts`
+depuis `app.api.schemas`. Vues riches (`BacktestResult`, `OptimizeJob`,
+ML) extraites dans `types/views.ts` — trop hétérogènes pour un miroir
+Pydantic strict. `index.ts` est un barrel.
+
+**Constat d'origine** :
 
 `src/types/index.ts` (1 462 lignes) et `src/lib/schemas.ts` (585 lignes de Zod) décrivent
 la forme des réponses du serveur. Côté serveur, **zéro `response_model`** (cf. API-01).
@@ -164,8 +169,9 @@ directive sur tout module qui appelle un hook rend la contrainte locale et véri
   l'explique correctement.
 - **Découpage récent** — la fenêtre auditée a séparé `backtest-view` / `backtest-results`,
   `smart-graph-view` / `smart-graph-tables` / `smart-graph-helpers`, et extrait quatre
-  composants d'optimiseur. Le plus gros fichier restant est `types/index.ts`, un fichier
-  de déclarations — c'est le bon endroit pour de la taille.
+  composants d'optimiseur. Les contrats API sont dans `types/generated.ts`
+  (FE-03) ; les vues riches (`BacktestResult`, `OptimizeJob`, ML) dans
+  `types/views.ts` ; `index.ts` n'est plus qu'un barrel.
 - **`vitest` : 126 tests, 10 fichiers, tous passés.** Les tests qui existent sont bons ;
   ils ne sont simplement pas là où le risque est.
 
@@ -176,6 +182,6 @@ directive sur tout module qui appelle un hook rend la contrainte locale et véri
 | ID | Sévérité | Preuve | Constat | Effort |
 |---|---|---|---|---|
 | FE-01 | **P1** | CONFIRMÉ | 4,84 % de couverture, API et vues à 0 % | 3-4 j |
-| FE-03 | **P1** | Dérivé | 2 000 lignes de contrat recopié à la main | avec API-01 |
+| FE-03 | **P1** | Dérivé | Contrats API générés ; vues riches dans `views.ts` | fait (hors vues hétérogènes) |
 | FE-02 | P2 | CONFIRMÉ | 4 vues sans état d'erreur, dont celle qui écrit la config | 1 j |
 | FE-04 | P3 | CONFIRMÉ | Hooks sans `'use client'` — fragilité de build | 15 min |

@@ -32,6 +32,7 @@ export interface TradingParamsBody {
   paper_mode?: boolean | null;
   paper_slippage?: number | null;
   daily_drawdown_limit?: number | null;
+  max_drawdown_global?: number | null;
 }
 
 export interface MarginConfigBody {
@@ -46,6 +47,14 @@ export interface RiskConfigBody {
   win_rate_floor?: number | null;
   volatility_threshold?: number | null;
   consecutive_pause_secs?: number | null;
+  min_slot_weight?: number | null;
+}
+
+export interface VenueEnvelopeBody {
+  capital?: number | null;
+  max_symbol_exposure_pct?: number | null;
+  symbol_risk_pct?: number | null;
+  venue_risk_pct?: number | null;
 }
 
 export interface RiskEnvelopesBody {
