@@ -40,3 +40,25 @@ def test_data_status_shape():
     resp = droute.data_status()
     assert resp.status_code == 200
     assert "datasets" in json.loads(resp.body)
+
+
+def test_all_stats_skips_nested_ohlcv_copy(tmp_path):
+    """Régression UI /data : un rglob listait aussi ``ohlcv/data/<SYMBOL>/``,
+    donc deux lignes (symbole, tf) et des clés React dupliquées."""
+    from datetime import datetime, timezone
+
+    store = cs.CandleStore(base_dir=str(tmp_path))
+    df = pl.DataFrame({
+        "time": [datetime(2024, 1, 1, tzinfo=timezone.utc).replace(tzinfo=None)],
+        "open": [1.0], "high": [1.1], "low": [0.9], "close": [1.05], "volume": [10.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    canon = tmp_path / "BTC_USDC" / "1h.parquet"
+    nested = tmp_path / "data" / "BTC_USDC" / "1h.parquet"
+    canon.parent.mkdir(parents=True)
+    nested.parent.mkdir(parents=True)
+    df.write_parquet(canon)
+    df.write_parquet(nested)
+    rows = store.all_stats()
+    keys = [(r["symbol"], r["tf"]) for r in rows]
+    assert keys.count(("BTC/USDC", "1h")) == 1
+    assert len(rows) == 1

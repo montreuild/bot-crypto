@@ -141,14 +141,9 @@ def _pass_summary(res) -> dict:
 
 
 def _envelope_payload(env) -> dict | None:
-    if env is None:
-        return None
-    return {"venue": env.venue, "symbol": env.symbol, "currency": env.currency,
-            "slot_envelope": round(env.slot_envelope, 4),
-            "weight": round(env.weight, 4),
-            "trade_risk_pct": env.trade_risk_pct,
-            "risk_amount": round(env.slot_risk_amount, 4),
-            "min_notional": env.min_notional}
+    # Une seule définition : le dual-pass UI passe par compute_jobs.
+    from app.engine.compute_jobs import _envelope_payload as _payload
+    return _payload(env)
 
 
 def _parse_ohlcv_bound(raw: str, end_of_day: bool):

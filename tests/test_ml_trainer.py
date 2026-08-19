@@ -111,6 +111,36 @@ def test_freshness_warning_flags_stale_model():
     assert "vieux" in warn
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  cadence TF (pas un timer 6 h unique, pas les recettes)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_scaled_interval_15m_is_much_longer_than_legacy_6h():
+    h = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "15m")
+    assert h > 6.0
+    assert h >= 24.0
+
+
+def test_scaled_interval_grows_with_tf_then_caps():
+    h15 = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "15m")
+    h1h = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "1h")
+    h4h = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "4h")
+    h1d = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "1d")
+    assert h15 < h1h
+    assert h1h <= h4h
+    assert h4h <= 14 * 24
+    assert h1d == h4h  # les deux tapent le plafond 14 j
+
+
+def test_scaled_interval_base_multiplier():
+    a = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "1h")
+    b = MLStrategyTrainer._scaled_retrain_interval_h(12.0, "1h")
+    assert b > a
+
+
+def test_scaled_interval_zero_base_disables():
+    assert MLStrategyTrainer._scaled_retrain_interval_h(0.0, "1h") == 0.0
+
+
 def test_freshness_warning_undated_artifact_is_non_measurable():
     """Sans ``train_end``, la fraîcheur n'est pas mesurable — il faut le DIRE,
     pas retourner None (qui signifierait « modèle frais »)."""

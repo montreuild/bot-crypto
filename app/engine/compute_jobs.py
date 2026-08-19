@@ -16,13 +16,37 @@ logger = logging.getLogger(__name__)
 
 
 def _envelope_payload(env) -> Optional[dict]:
+    """Sérialise l'enveloppe pour l'UI « Étude vs Réel ».
+
+    La carte lit ``risk_amount`` et ``min_notional`` : les omettre faisait
+    planter le Laboratoire (``undefined.toFixed``) dès qu'un backtest
+    dual-pass renvoyait un slot. Aligné sur ``app.api.routes.backtest``.
+    """
     if env is None:
         return None
+    if isinstance(env, dict):
+        slot = float(env.get("slot_envelope") or 0.0)
+        pct = float(env.get("trade_risk_pct") or 0.0)
+        risk = env.get("risk_amount", env.get("slot_risk_amount"))
+        if risk is None:
+            risk = slot * pct
+        return {
+            "venue": env.get("venue", ""),
+            "symbol": env.get("symbol", ""),
+            "currency": env.get("currency", ""),
+            "slot_envelope": round(slot, 4),
+            "weight": round(float(env.get("weight") or 0.0), 4),
+            "trade_risk_pct": pct,
+            "risk_amount": round(float(risk or 0.0), 4),
+            "min_notional": float(env.get("min_notional") or 0.0),
+        }
     return {
         "venue": env.venue, "symbol": env.symbol, "currency": env.currency,
         "slot_envelope": round(env.slot_envelope, 4),
         "weight": round(env.weight, 4),
         "trade_risk_pct": env.trade_risk_pct,
+        "risk_amount": round(env.slot_risk_amount, 4),
+        "min_notional": env.min_notional,
     }
 
 

@@ -554,6 +554,83 @@ class TestInteriorGaps:
             cached = store.load_cached("FULL/EUR", "15m")
         assert len(cached) == ex.depth
 
+    def test_interior_gap_filled_even_when_cache_already_longer_than_total(self):
+        """Cas UI / live : 58 k barres en cache, refetch à 6 000 — sans ce
+        passage les trous au milieu n'étaient jamais visés."""
+        ex = _FakeExchange(depth=400)
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            kept, total = self._holed_cache(store, ex, symbol="BTC/USDC")
+            assert kept == total - 30
+            store.fetch(ex, "BTC/USDC", "15m", total=50)
+            cached = store.load_cached("BTC/USDC", "15m")
+        assert len(cached) == total, (
+            f"{total - len(cached)} barre(s) toujours manquante(s) alors que "
+            f"le cache dépassait déjà `total`")
+        stamps = [epoch_ms(t) for t in cached["time"].to_list()]
+        gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b - a != ex.tf_ms]
+        assert gaps == [], f"trou(s) résiduel(s) : {gaps}"
+
+    def test_prefer_cache_does_not_hit_exchange_to_fill_gaps(self):
+        """Un backtest (prefer_cache) ne doit pas muter la série."""
+        ex = _FakeExchange(depth=400)
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            kept, _total = self._holed_cache(store, ex, symbol="BTC/USDC")
+            n_calls = len(ex.calls)
+            store.fetch(ex, "BTC/USDC", "15m", total=50, prefer_cache=True)
+            cached = store.load_cached("BTC/USDC", "15m")
+        assert len(cached) == kept
+        assert len(ex.calls) == n_calls
+
+    def test_unfillable_gap_is_not_refetched_every_cycle(self):
+        """Maintenance exchange : le trou n'existe pas chez le provider.
+        Un mémo 6 h évite de rejouer la plage à chaque cycle live."""
+
+        class _HoledSource(_FakeExchange):
+            def _all(self):
+                rows = super()._all()
+                return rows[:50] + rows[80:]
+
+        ex = _HoledSource(depth=200)
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store._save(store._path("BTC/USDC", "15m"),
+                        store._raw_to_df(ex._all()))
+            store.fetch(ex, "BTC/USDC", "15m", total=50)
+            after_first = len(ex.calls)
+            store.fetch(ex, "BTC/USDC", "15m", total=50)
+            after_second = len(ex.calls)
+        # 2e fetch : incrémental (1 appel) mais pas de re-pagination du trou.
+        assert after_second - after_first <= 1, (
+            f"le trou incombable a été redemandé "
+            f"({after_second - after_first} appels)")
+
+    def test_scattered_holes_filled_in_one_span(self):
+        """Des trous dispersés se recousent en UNE pagination de plage,
+        pas un fetch par trou."""
+        ex = _FakeExchange(depth=400)
+        rows = ex._all()
+        kept = []
+        drop = set()
+        for start in range(40, 360, 20):
+            drop.update(range(start, start + 3))
+        kept = [r for i, r in enumerate(rows) if i not in drop]
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store._save(store._path("BTC/USDC", "15m"),
+                        store._raw_to_df(kept))
+            assert len(store.load_cached("BTC/USDC", "15m")) < 400
+            n_before = len(ex.calls)
+            store.fetch(ex, "BTC/USDC", "15m", total=50)
+            cached = store.load_cached("BTC/USDC", "15m")
+            n_span = len(ex.calls) - n_before
+        assert len(cached) == 400
+        # Une pagination de la plage : largement moins d'appels que de trous.
+        n_holes = len(range(40, 360, 20))
+        assert n_span < n_holes, (
+            f"{n_span} appels pour {n_holes} trous — le fetch par trou est revenu")
+
 
 def test_unique_keep_last_on_incremental_overlap():
     """D-02 : la barre de recouvrement prend la version fraîche (close à jour)."""

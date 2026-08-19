@@ -64,22 +64,27 @@ function flattenDatasets(data?: DataStatusPayload | DatasetInfo[] | null): Datas
       ? Number(d.size_bytes)
       : Math.round(Number(d.size_kb ?? 0) * 1024),
   });
+  let rows: DatasetRow[] = [];
   if (!Array.isArray(data) && Array.isArray(data.datasets)) {
-    return data.datasets.map(mapRow);
-  }
-  if (!Array.isArray(data) && data.store && typeof data.store === 'object') {
-    const rows: DatasetRow[] = [];
+    rows = data.datasets.map(mapRow);
+  } else if (!Array.isArray(data) && data.store && typeof data.store === 'object') {
     for (const [symbol, tfs] of Object.entries(data.store)) {
       for (const [tf, info] of Object.entries(tfs)) {
         rows.push(mapRow({ symbol, tf, ...info }));
       }
     }
-    return rows;
+  } else if (Array.isArray(data)) {
+    rows = data.map(mapRow);
   }
-  if (Array.isArray(data)) {
-    return data.map(mapRow);
+  const seen = new Set<string>();
+  const unique: DatasetRow[] = [];
+  for (const row of rows) {
+    const k = `${row.symbol}|${row.tf}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    unique.push(row);
   }
-  return [];
+  return unique;
 }
 
 // ── Main page ───────────────────────────────────────────────────────────────

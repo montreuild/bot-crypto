@@ -22,3 +22,5 @@ export * from './skeleton';
 export * from './switch';
 export * from './tabs';
 export * from './toaster';
+export * from './tooltip';
+export * from './symbol-search';

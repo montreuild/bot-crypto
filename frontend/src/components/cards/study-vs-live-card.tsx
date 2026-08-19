@@ -34,10 +34,15 @@ interface Props {
     ecart_pnl_pct?: number;
   } | null;
   envelope?: {
-    venue: string; symbol: string; currency: string;
-    slot_envelope: number; weight: number;
-    trade_risk_pct: number; risk_amount: number; min_notional: number;
+    venue?: string; symbol?: string; currency?: string;
+    slot_envelope?: number; weight?: number;
+    trade_risk_pct?: number; risk_amount?: number; min_notional?: number;
   } | null;
+}
+
+function fmt(n: number | null | undefined, digits: number): string {
+  if (n == null || Number.isNaN(Number(n))) return '—';
+  return Number(n).toFixed(digits);
 }
 
 /** Un écart nul (au bruit d'arrondi près) signifie qu'aucune contrainte
@@ -119,12 +124,17 @@ export function StudyVsLiveCard({ runs, envelope }: Props) {
 
         {envelope && (
           <div className="text-[10px] text-muted border-t border-border pt-2 tabular-nums">
-            {envelope.venue} · {envelope.symbol} — enveloppe{' '}
-            {envelope.slot_envelope.toFixed(2)} {envelope.currency} (poids{' '}
-            {(envelope.weight * 100).toFixed(1)}%), risque par trade{' '}
-            {envelope.risk_amount.toFixed(2)} {envelope.currency}
-            {envelope.min_notional > 0 &&
-              ` · notionnel minimum ${envelope.min_notional.toFixed(0)} ${envelope.currency}`}
+            {envelope.venue ?? '—'} · {envelope.symbol ?? '—'} — enveloppe{' '}
+            {fmt(envelope.slot_envelope, 2)} {envelope.currency ?? ''} (poids{' '}
+            {fmt((envelope.weight ?? 0) * 100, 1)}%), risque par trade{' '}
+            {fmt(
+              envelope.risk_amount
+                ?? ((envelope.slot_envelope ?? 0) * (envelope.trade_risk_pct ?? 0)),
+              2,
+            )}{' '}
+            {envelope.currency ?? ''}
+            {(envelope.min_notional ?? 0) > 0 &&
+              ` · notionnel minimum ${fmt(envelope.min_notional, 0)} ${envelope.currency ?? ''}`}
           </div>
         )}
 

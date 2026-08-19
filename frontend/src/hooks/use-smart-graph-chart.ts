@@ -13,7 +13,7 @@ import {
 } from '@/lib/smc-zones';
 import { cleanOhlcv } from '@/lib/ohlcv';
 import {
-  normalizePd, type OverlayToggles, type ChartIndicators, type SeriesPoint,
+  normalizePd, resolveSignalTimestamp, type OverlayToggles, type ChartIndicators, type SeriesPoint,
 } from '@/components/views/smart-graph-helpers';
 import type { TradePlan } from '@/components/cards/trade-plans-table';
 import type { SmcChartData } from '@/types';
@@ -498,7 +498,7 @@ useEffect(() => {
   candleSeries.setMarkers(markers);
 }, [data, toggles]);
 
-// Plan sélectionné → SL / TP (traits pleins) + Entry depuis la bougie signal
+// Plan sélectionné → Entry / SL / TP depuis la bougie signal (pas de price line pleine largeur)
 useEffect(() => {
   const chart = chartRef.current;
   const candleSeries = candleSeriesRef.current;
@@ -522,71 +522,41 @@ useEffect(() => {
   const isLong = selectedPlan.side === 'long';
   const times: number[] = data?.ohlcv?.time || [];
   const lastTime = times.length ? (times[times.length - 1] as UTCTimestamp) : null;
+  const signalTs = resolveSignalTimestamp(times, selectedPlan.signal_time) as UTCTimestamp | null;
 
-  // Bougie de signal : exacte, sinon 1re bougie ≥ signal_time, sinon dernière.
-  let signalTs: UTCTimestamp | null = null;
-  const rawSig = Number(selectedPlan.signal_time);
-  if (times.length > 0) {
-    if (Number.isFinite(rawSig) && rawSig > 0) {
-      if (times.includes(rawSig)) {
-        signalTs = rawSig as UTCTimestamp;
-      } else {
-        const after = times.find((t) => t >= rawSig);
-        signalTs = (after ?? times[times.length - 1]) as UTCTimestamp;
-      }
-    } else {
-      signalTs = times[times.length - 1] as UTCTimestamp;
-    }
-  }
-
-  // SL / TP : traits pleins, bien visibles (price lines pleine largeur)
-  if (Number.isFinite(stop) && stop > 0) {
-    planLinesRef.current.push(
-      candleSeries.createPriceLine({
-        price: stop,
-        color: '#f87171',
-        lineStyle: LineStyle.Solid,
-        lineWidth: 3,
-        axisLabelVisible: true,
-        title: 'SL',
-      }),
-    );
-  }
-  if (Number.isFinite(tp) && tp > 0) {
-    planLinesRef.current.push(
-      candleSeries.createPriceLine({
-        price: tp,
-        color: '#34d399',
-        lineStyle: LineStyle.Solid,
-        lineWidth: 3,
-        axisLabelVisible: true,
-        title: 'TP',
-      }),
-    );
-  }
-
-  // Entry : commence à la bougie du signal (pas avant) → série limitée
-  if (
-    Number.isFinite(entry) && entry > 0
-    && signalTs != null && lastTime != null
-    && (lastTime as number) >= (signalTs as number)
-  ) {
-    // Ligne d'entrée bien visible (bleu vif, épaisseur 4)
-    const entrySeries = chart.addLineSeries({
-      color: '#0ea5e9',
-      lineWidth: 4,
+  const addLevel = (
+    price: number,
+    color: string,
+    width: 1 | 2 | 3 | 4,
+    title: string,
+    marker: boolean,
+  ) => {
+    if (
+      !Number.isFinite(price) || price <= 0
+      || signalTs == null || lastTime == null
+      || (lastTime as number) < (signalTs as number)
+    ) return;
+    const series = chart.addLineSeries({
+      color,
+      lineWidth: width,
       lineStyle: LineStyle.Solid,
       priceLineVisible: true,
       lastValueVisible: true,
-      crosshairMarkerVisible: true,
-      title: `Entry ${selectedPlan.setup || ''}`.trim(),
+      crosshairMarkerVisible: marker,
+      title,
     });
-    entrySeries.setData([
-      { time: signalTs, value: entry },
-      { time: lastTime, value: entry },
+    series.setData([
+      { time: signalTs, value: price },
+      { time: lastTime, value: price },
     ]);
-    planSeriesRef.current.push(entrySeries);
-    // Point d'ancrage signal
+    planSeriesRef.current.push(series);
+  };
+
+  addLevel(entry, '#0ea5e9', 4, `Entry ${selectedPlan.setup || ''}`.trim(), true);
+  addLevel(stop, '#f87171', 3, 'SL', false);
+  addLevel(tp, '#34d399', 3, 'TP', false);
+
+  if (Number.isFinite(entry) && entry > 0 && signalTs != null) {
     const anchor = chart.addLineSeries({
       color: '#38bdf8',
       lineWidth: 1,
@@ -599,7 +569,6 @@ useEffect(() => {
     planSeriesRef.current.push(anchor);
   }
 
-  // Zone d'entrée depuis le signal uniquement
   const zl = Number(selectedPlan.zone_low);
   const zh = Number(selectedPlan.zone_high);
   if (

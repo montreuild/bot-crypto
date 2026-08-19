@@ -58,6 +58,21 @@ export function formatPrice(v: unknown, decimals = 2): string {
   return formatUSD(n, { decimals });
 }
 
+/** Bougie d'ancrage d'un trade : exacte, sinon 1re ≥ signal, sinon dernière. */
+export function resolveSignalTimestamp(
+  times: number[],
+  signalTime: number | null | undefined,
+): number | null {
+  if (!times.length) return null;
+  const raw = Number(signalTime);
+  if (Number.isFinite(raw) && raw > 0) {
+    if (times.includes(raw)) return raw;
+    const after = times.find((t) => t >= raw);
+    return after ?? times[times.length - 1];
+  }
+  return times[times.length - 1];
+}
+
 export function normalizePd(raw: unknown): PremiumDiscount | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;

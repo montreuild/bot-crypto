@@ -20,7 +20,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from app.core.bot_identity import build_slot_key
+from app.core.bot_identity import build_slot_key, parse_pos_key
 from app.core.config import DEFAULT_TAKER_FEE
 from app.core.database import (
     delete_open_position,
@@ -394,12 +394,13 @@ class PositionCloseMixin(LiveHost):
                 )
         except Exception as e:
             logger.debug(f"[PositionCloseMixin] upnl {pos.get('symbol', '?')} : {e}")
+        tf = pos.get("timeframe") or parse_pos_key(pos.get("id", ""))[2]
         return {
             "id":        pos.get("id", ""),
             "symbol":    pos.get("symbol", ""),
             "side":      pos.get("side", ""),
             "strategy":  pos.get("strategy", ""),
-            "timeframe": pos.get("timeframe", ""),
+            "timeframe": tf,
             "score":     round(float(pos.get("score", 0)), 3),
             "entry":     round(float(pos.get("entry", 0)), 4),
             "stop":      round(float(pos.get("stop", 0)), 4),

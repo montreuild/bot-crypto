@@ -16,12 +16,13 @@ import {
 } from '@/components/cards/trade-plans-table';
 import { FastAnalysisPanel, type FastAnalysisResult } from '@/components/cards/fast-analysis-panel';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { SymbolSearchInput } from '@/components/ui/symbol-search';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { useSmartGraphChart } from '@/hooks/use-smart-graph-chart';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import {
-  Loader2, RefreshCw, AlertCircle, Activity, Search,
+  Loader2, RefreshCw, AlertCircle, Activity, Search, X,
   ArrowUp, ArrowDown, Target, Shield, Layers, Droplets, Waves, GitBranch, Sparkles,
   Box, Ban, BarChart3, TrendingUp, Recycle, Spline, Flame, CircleDot,
 } from 'lucide-react';
@@ -222,12 +223,7 @@ export function SmartGraphView({
         <CardContent className="flex flex-wrap items-end gap-4">
           <div>
             <label className="text-xs text-dim block mb-1.5">Symbole</label>
-            <input
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value)}
-              className="w-40 px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-              placeholder="BTC/USDC"
-            />
+            <SymbolSearchInput value={symbol} onChange={setSymbol} id="smart-graph-symbol" />
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Timeframe</label>
@@ -313,16 +309,36 @@ export function SmartGraphView({
         )}
       </Card>
 
-      {/* Panneaux RSI / MACD — sélectionnables comme EMA/BB, mêmes données que Scanner */}
+      {/* Panneaux RSI / MACD — cases à cocher en haut + croix pour masquer */}
       {showRsi && (
         <Card className="p-0 overflow-hidden">
-          <div className="text-[9px] text-dim px-2 pt-1">RSI</div>
+          <div className="flex items-center justify-between px-2 pt-1">
+            <div className="text-[9px] text-dim">RSI</div>
+            <button
+              type="button"
+              aria-label="Masquer RSI"
+              className="p-0.5 rounded text-muted hover:text-foreground hover:bg-card-hover"
+              onClick={() => setShowRsi(false)}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
           <div ref={rsiContainerRef} className="w-full h-[100px]" />
         </Card>
       )}
       {showMacd && (
         <Card className="p-0 overflow-hidden">
-          <div className="text-[9px] text-dim px-2 pt-1">MACD</div>
+          <div className="flex items-center justify-between px-2 pt-1">
+            <div className="text-[9px] text-dim">MACD</div>
+            <button
+              type="button"
+              aria-label="Masquer MACD"
+              className="p-0.5 rounded text-muted hover:text-foreground hover:bg-card-hover"
+              onClick={() => setShowMacd(false)}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
           <div ref={macdContainerRef} className="w-full h-[110px]" />
         </Card>
       )}

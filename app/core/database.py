@@ -328,14 +328,18 @@ def delete_open_position(session: Session, pos_id: str, commit: bool = True) -> 
 
 def load_open_positions(session: Session) -> List[dict]:
     """Charge les positions ouvertes depuis la BDD au démarrage."""
+    from app.core.bot_identity import parse_pos_key
+
     rows = session.query(OpenPosition).all()
     result = []
     for r in rows:
+        _sym, _strat, tf = parse_pos_key(r.id or "")
         result.append({
             "id":        r.id,
             "symbol":    r.symbol,
             "side":      r.side,
             "strategy":  r.strategy,
+            "timeframe": tf,
             "score":     r.score,
             "entry":     r.entry,
             "stop":      r.stop,

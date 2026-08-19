@@ -239,8 +239,14 @@ class TestRouteWiring:
     def test_the_envelope_payload_carries_the_base_alongside_the_risk(self):
         """Règle d'affichage du §6 : jamais un montant de risque sans sa base."""
         from app.api.routes.backtest import _envelope_payload
+        from app.engine.compute_jobs import _envelope_payload as job_payload
         payload = _envelope_payload(_env(90.0))
         assert payload["slot_envelope"] == 90.0
         assert payload["risk_amount"] == pytest.approx(2.25)
         assert payload["trade_risk_pct"] == 0.025
+        assert payload["min_notional"] == 0
         assert _envelope_payload(None) is None
+        # Le Laboratoire passe par compute_jobs (dual-pass) : même contrat.
+        job = job_payload(_env(90.0))
+        assert job["risk_amount"] == pytest.approx(2.25)
+        assert job["min_notional"] == 0

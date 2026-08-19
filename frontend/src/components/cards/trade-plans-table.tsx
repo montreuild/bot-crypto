@@ -12,11 +12,11 @@
  * `<DataTable>` gère nativement le tri, le rendu des cellules et le click.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
-import { Target } from 'lucide-react';
+import { Target, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn, formatUSD } from '@/lib/utils';
 
 export interface TradePlan {
@@ -104,6 +104,7 @@ export function TradePlansTable({
   selectedPlan?: TradePlan | null;
   title?: string;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   const list = useMemo(() => {
     return Array.isArray(plans) ? [...plans] : [];
   }, [plans]);
@@ -234,17 +235,30 @@ export function TradePlansTable({
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader
+        className="cursor-pointer flex-col items-stretch gap-1"
+        onClick={() => setCollapsed((c) => !c)}
+      >
         <CardTitle className="flex items-center gap-2">
           <Target className="w-3.5 h-3.5" />
           {title} ({list.length})
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setCollapsed((c) => !c); }}
+            aria-label={collapsed ? `Déplier ${title}` : `Replier ${title}`}
+            aria-expanded={!collapsed}
+            className="ml-auto p-0.5 rounded hover:bg-card-hover text-muted"
+          >
+            {collapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+          </button>
         </CardTitle>
-        {onSelectPlan && (
+        {!collapsed && onSelectPlan && (
           <p className="text-[11px] text-muted font-normal">
             Cliquez une ligne pour afficher Entry / SL / TP sur le graphique
           </p>
         )}
       </CardHeader>
+      {collapsed ? null : (
       <CardContent className="p-0">
         <div className="max-h-96 overflow-y-auto">
           <DataTable
@@ -259,6 +273,7 @@ export function TradePlansTable({
           />
         </div>
       </CardContent>
+      )}
     </Card>
   );
 }
@@ -321,6 +336,7 @@ export function RealizedTradesTable({
   /** Note explicative rendue directement sous le tableau, dans le bloc. */
   footnote?: React.ReactNode;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   const list = useMemo(() => {
     const arr = Array.isArray(trades) ? [...trades] : [];
     return arr.filter(
@@ -504,18 +520,31 @@ export function RealizedTradesTable({
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader
+        className="cursor-pointer flex-col items-stretch gap-1"
+        onClick={() => setCollapsed((c) => !c)}
+      >
         <CardTitle className="text-sm flex items-center gap-2">
           {displayTitle}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setCollapsed((c) => !c); }}
+            aria-label={collapsed ? `Déplier ${displayTitle}` : `Replier ${displayTitle}`}
+            aria-expanded={!collapsed}
+            className="ml-auto p-0.5 rounded hover:bg-card-hover text-muted"
+          >
+            {collapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+          </button>
         </CardTitle>
         {closed > 0 && (
           <span className="text-[10px] text-dim">
             {wins} gagnants · {closed - wins} perdants · WR{' '}
             {closed ? ((wins / closed) * 100).toFixed(0) : 0}%
-            {onSelectTrade ? ' · Cliquez une ligne pour Entry / SL / TP' : ''}
+            {onSelectTrade && !collapsed ? ' · Cliquez une ligne pour Entry / SL / TP' : ''}
           </span>
         )}
       </CardHeader>
+      {collapsed ? null : (
       <CardContent className="p-0">
         {closed === 0 ? (
           <p className="text-xs text-muted p-4 text-center">Aucun trade réalisé</p>
@@ -541,6 +570,7 @@ export function RealizedTradesTable({
           </div>
         )}
       </CardContent>
+      )}
     </Card>
   );
 }

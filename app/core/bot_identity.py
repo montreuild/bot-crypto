@@ -410,6 +410,19 @@ def build_pos_key(symbol: str, strategy: str, timeframe: str) -> str:
     return f"{symbol}::{strategy}::{timeframe}"
 
 
+def parse_pos_key(pos_key: str) -> tuple:
+    """Décompose ``symbol::strategy::tf`` → ``(symbol, strategy, tf)``.
+
+    Miroir de ``build_pos_key``. Le TF n'est pas une colonne de
+    ``open_positions`` : après un redémarrage il faut le relire depuis l'id.
+    """
+    parts = (pos_key or "").split("::")
+    symbol = parts[0] if parts else ""
+    strategy = parts[1] if len(parts) > 1 else ""
+    tf = parts[2] if len(parts) > 2 else ""
+    return symbol, strategy, tf
+
+
 def parse_slot_key(slot_key: str) -> tuple:
     """Décompose ``strategy::tf[::symbol]`` → ``(strategy, tf, symbol)``.
 

@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useWebSocket } from '@/lib/ws-provider';
+import { useBotStatus } from '@/hooks/use-api';
 import {
   Bot, Settings, Activity,
   Zap, Database, Network, Sparkles,
@@ -51,6 +52,8 @@ export function Sidebar() {
   // S0-F1-US5 — Le footer "Connected" était hardcodé et mentait quand le
   // backend était down. On consomme maintenant l'état réel du WS.
   const { status: wsStatus } = useWebSocket();
+  const { data: botStatus } = useBotStatus();
+  const modeLabel = botStatus?.paper_mode === false ? 'live' : 'paper';
 
   const wsLabel = wsStatus === 'connected' ? 'Connected'
     : wsStatus === 'connecting' ? 'Connecting...'
@@ -69,7 +72,7 @@ export function Sidebar() {
         </div>
         <div>
           <div className="font-bold text-base leading-tight">Crypto Bot</div>
-          <div className="text-[10px] text-dim font-mono">v12.17 · live</div>
+          <div className="text-[10px] text-dim font-mono">v12.17 · {modeLabel}</div>
         </div>
       </div>
 
