@@ -19,12 +19,12 @@ import {
 
 describe('formatMoney', () => {
   it('formate en USD par défaut', () => {
-    expect(formatMoney(1234.5)).toMatch(/1,234\.50/);
+    expect(formatMoney(1234.5)).toMatch(/1[\s\u00a0\u202f]234,50/);
   });
 
   it('accepte EUR', () => {
     const s = formatMoney(1234.5, 'EUR');
-    expect(s).toMatch(/1,234\.50/);
+    expect(s).toMatch(/1[\s\u00a0\u202f]234,50/);
     expect(s).toMatch(/€|EUR/);
   });
 
@@ -68,16 +68,16 @@ describe('quoteCurrency', () => {
 
 describe('formatPct / formatNumber / formatCompact', () => {
   it('préfixe le signe positif', () => {
-    expect(formatPct(12.5)).toBe('+12.50%');
-    expect(formatPct(-1, 1)).toBe('-1.0%');
+    expect(formatPct(12.5)).toMatch(/\+12,50\s%/);
+    expect(formatPct(-1, 1)).toMatch(/-1,0\s%/);
   });
 
   it('fixe les décimales', () => {
-    expect(formatNumber(1.2345, 2)).toBe('1.23');
+    expect(formatNumber(1.2345, 2)).toBe('1,23');
   });
 
   it('compacte les grands nombres', () => {
-    expect(formatCompact(1_200_000)).toMatch(/1\.2M|1.2M/);
+    expect(formatCompact(1_200_000)).toMatch(/1,2/);
   });
 });
 

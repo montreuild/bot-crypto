@@ -10,6 +10,11 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 UX-02
+
+- Nombres et devises en `fr-FR` (`1 234,56`, `12,50 %`). Masques Playwright
+  élargis aux montants français.
+
 ### 🐛 API-03
 
 - `POST /api/risk/envelopes` : chaque venue validée par `VenueEnvelopeBody`

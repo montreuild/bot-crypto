@@ -23,7 +23,7 @@ export function formatMoney(
   currency = 'USD',
   opts: { decimals?: number; sign?: boolean; locale?: string } = {},
 ): string {
-  const { decimals = 2, sign = false, locale = 'en-US' } = opts;
+  const { decimals = 2, sign = false, locale = 'fr-FR' } = opts;
   const code = (currency || 'USD').replace('USDC', 'USD').replace('USDT', 'USD');
   try {
     return new Intl.NumberFormat(locale, {
@@ -92,18 +92,21 @@ export function quoteCurrency(
 }
 
 export function formatPct(value: number, decimals = 2, sign = true): string {
-  const formatted = value.toFixed(decimals);
-  return sign && value > 0 ? `+${formatted}%` : `${formatted}%`;
+  const formatted = new Intl.NumberFormat('fr-FR', {
+    minimumFractionDigits: decimals, maximumFractionDigits: decimals,
+  }).format(value);
+  const body = `${formatted} %`;
+  return sign && value > 0 ? `+${body}` : body;
 }
 
 export function formatNumber(value: number, decimals = 2): string {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('fr-FR', {
     minimumFractionDigits: decimals, maximumFractionDigits: decimals,
   }).format(value);
 }
 
 export function formatCompact(value: number): string {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('fr-FR', {
     notation: 'compact', maximumFractionDigits: 1,
   }).format(value);
 }
