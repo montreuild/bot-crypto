@@ -314,3 +314,370 @@ class OptimizeResultsResponse(BaseModel):
 
     by_strategy_tf: Dict[str, Any] = Field(default_factory=dict)
     active_per_tf: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ── Contrats UI/API encore manuscrits dans types/index.ts (FE-03) ───────────
+
+
+class CostModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    venue: str
+    market_type: str
+    margin_mode: Optional[str] = None
+    max_leverage: float
+    asset_class: str
+    quote_currency: str
+    exchange: Optional[str] = None
+    calendar: str = "24/7"
+    can_execute: bool = True
+    allow_short: bool = True
+    fee_rate_taker: float
+    fee_rate_maker: float
+    fee_pct_override: Optional[float] = None
+    fee_fixed: float
+    fee_min: float
+    transaction_tax_pct: float
+    tax_on_buy_only: bool
+    borrows: bool
+    borrow_rate_daily: float
+    borrow_periods_per_day: int
+    borrow_rate_annual: float
+    spread_pct: float
+    slippage_model: str
+    slippage_k: float
+    partial_fill_pct: float
+    fractional: bool
+    lot_size: float
+    tick_size: float
+    min_notional: float
+    max_notional_pct: float
+
+
+class Position(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    symbol: str
+    side: str
+    strategy: str
+    timeframe: str
+    score: float
+    entry: float
+    stop: float
+    size: float
+    notional: float
+    fees: float
+    upnl: float
+    open_time: float
+    reason: str
+    quote_currency: str = ""
+
+
+class EquityPoint(BaseModel):
+    time: str
+    equity: float
+
+
+class BacktestRecommendation(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    severity: str
+    code: str
+    title: str
+    message: str
+    action: str
+    action_link: str = ""
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BacktestRecoCounts(BaseModel):
+    critical: int
+    warning: int
+    info: int
+    positive: int
+
+
+class BacktestRecommendationsSummary(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    counts: BacktestRecoCounts
+    verdict: str
+    verdict_label: str
+    total: int
+
+
+class StrategyStats(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    trades: int
+    wins: int
+    pnl: float
+    fees: float
+    win_rate: float
+    total_pnl: float
+    total_fees: float
+    total_trades: int
+    profit_factor: float
+    sharpe: Optional[float]
+    max_drawdown: float
+    expectancy: float = 0.0
+    total_borrow_cost: float = 0.0
+    best_trade: float = 0.0
+    worst_trade: float = 0.0
+    initial_capital: float = 0.0
+    buy_and_hold_pnl: float = 0.0
+    alpha: float = 0.0
+    equity_curve: List[EquityPoint] = Field(default_factory=list)
+    recommendations: List[BacktestRecommendation] = Field(default_factory=list)
+    recommendations_summary: BacktestRecommendationsSummary | None = None
+    monte_carlo: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SignalLogEntry(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    time: str
+    symbol: str
+    strategy: str
+    side: str
+    score: float
+    threshold: float
+    timeframe: str
+    status: str
+    reason: str
+    entry: Optional[float] = None
+    exit: Optional[float] = None
+    pnl: Optional[float] = None
+    pnl_pct: Optional[float] = None
+
+
+class SlotBudget(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    slot_key: str
+    strategy: str
+    tf: str
+    symbol: Optional[str] = None
+    enabled: bool
+    budget_pct: float
+    budget_usdc: float
+    used_notional: float
+    used_pct: float
+    weekly_pnl: float
+    weekly_trades: int
+    weekly_wins: int
+    next_rebalance: str
+    paused: bool
+    pause_reason: str
+    consecutive_losses: int
+    win_rate_15t: float
+    daily_pnl: float
+    excluded_by_optimizer: bool = False
+
+
+class RiskVenue(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    venue: str
+    currency: str
+    envelope: float
+    notional_engaged: float
+    risk_budget: float
+    risk_engaged: float
+    risk_pct_used: float
+
+
+class RiskSymbol(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    venue: str
+    symbol: str
+    currency: str
+    envelope: float
+    notional_engaged: float
+    risk_budget: float
+    risk_engaged: float
+
+
+class RiskSlot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    slot_key: str
+    venue: str
+    symbol: str
+    currency: str
+    weight: float
+    envelope: float
+    max_notional: float
+    risk_amount: float
+    risk_engaged: float
+    notional_engaged: float
+    edge_ci_low: Optional[float] = None
+
+
+class RiskRejections(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    total: Optional[int] = None
+    par_motif: Dict[str, int] = Field(default_factory=dict)
+    par_slot: Dict[str, int] = Field(default_factory=dict)
+    par_symbole: Dict[str, int] = Field(default_factory=dict)
+
+
+class VenueEnvelopeConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    capital: Optional[float] = None
+    max_symbol_exposure_pct: Optional[float] = None
+    symbol_risk_pct: Optional[float] = None
+    venue_risk_pct: Optional[float] = None
+
+
+class RiskOverview(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    venues: List[RiskVenue] = Field(default_factory=list)
+    symbols: List[RiskSymbol] = Field(default_factory=list)
+    slots: List[RiskSlot] = Field(default_factory=list)
+    total_risk_engaged: float = 0.0
+    rejections: RiskRejections = Field(default_factory=RiskRejections)
+    envelopes_config: Dict[str, VenueEnvelopeConfig] = Field(default_factory=dict)
+
+
+class RiskDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    severity: str
+    code: str
+    scope: str
+    message: str
+    values: Dict[str, Any]
+
+
+class RiskDiagnostics(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    diagnostics: List[RiskDiagnostic]
+    errors: int
+    warnings: int
+
+
+class CircuitBreakerStatus(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    slot_key: str
+    paused: bool
+    pause_reason: str
+    consecutive_losses: int
+    win_rate_15t: float
+    daily_pnl: float
+
+
+class SlotState(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    slot_key: str
+    consecutive_losses: int
+    last_trades: List[bool]
+    daily_pnl: float
+    daily_trades: int
+    day_key: str
+    paused_until: float
+    pause_reason: str
+    win_rate: float
+
+
+class BalanceDetail(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    free: float
+    used: float
+    total: float
+    borrowed: float
+
+
+class BotIdentity(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    slot_key: str
+    strategy: str
+    timeframe: str
+    symbol: str
+    generation: int
+    born_at: str
+    parent_slot: Optional[str] = None
+    lineage: List[str]
+
+
+class LifecycleSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    states: Dict[str, str]
+    counts: Dict[str, int]
+    reopt_queue: List[str]
+
+
+class BotStatus(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+    paper_mode: bool
+    timeframe: str
+    timeframes: List[str]
+    strategies: List[str]
+    capital: float = 0.0
+    cycle: int = 0
+    total_pnl: float = 0.0
+    total_pnl_pct: float = 0.0
+    total_trades: int = 0
+    win_rate: float = 0.0
+    profit_factor: float = 0.0
+    total_fees: float = 0.0
+    best_trade: float = 0.0
+    positions: List[Position] = Field(default_factory=list)
+    by_strategy: Dict[str, StrategyStats] = Field(default_factory=dict)
+    signal_log: List[SignalLogEntry] = Field(default_factory=list)
+    active_per_tf: Dict[str, List[str]] = Field(default_factory=dict)
+    circuit_breaker_active: bool = False
+    circuit_breaker_reason: str = ""
+    daily_pnl_pct: float = 0.0
+    global_dd_pct: float = 0.0
+    current_risk: float = 0.0
+    daily_dd_limit: float = 0.0
+    global_dd_limit: float = 0.0
+    capital_allocation: List[SlotBudget] = Field(default_factory=list)
+    circuit_breakers: List[CircuitBreakerStatus] = Field(default_factory=list)
+    slot_states: List[SlotState] = Field(default_factory=list)
+    volatility_brake: bool = False
+    margin_enabled: bool = False
+    margin_level: Optional[float] = None
+    margin_interest: float = 0.0
+    margin_mode: Optional[str] = None
+    balance_detail: Optional[BalanceDetail] = None
+    bots: List[BotIdentity] = Field(default_factory=list)
+    lifecycle: Optional[LifecycleSnapshot] = None
+    shadow_allocation: Dict[str, Any] = Field(default_factory=dict)
+    last_scan_time: str = ""
+    last_symbols_scanned: List[str] = Field(default_factory=list)
+    git_commit: str = ""
+
+
+class Trade(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: Any
+    time: str
+    symbol: str
+    side: str
+    strategy: str
+    timeframe: Optional[str] = None
+    entry: float
+    exit: float
+    pnl: float
+    pnl_pct: float
+    fees: float
+    status: str
+    score: float
+    reason: str
+    quote_currency: str = ""

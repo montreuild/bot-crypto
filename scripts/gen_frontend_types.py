@@ -36,7 +36,6 @@ def _ts_type(schema: Dict[str, Any], defs: Dict[str, Any]) -> str:
         return name
     if "anyOf" in schema:
         parts = [_ts_type(p, defs) for p in schema["anyOf"]]
-        # Pydantic Optional → T | null
         return " | ".join(dict.fromkeys(parts))
     t = schema.get("type")
     if t == "string":
@@ -66,13 +65,10 @@ def _ts_type(schema: Dict[str, Any], defs: Dict[str, Any]) -> str:
 
 def _iface(name: str, schema: Dict[str, Any], defs: Dict[str, Any]) -> str:
     required = set(schema.get("required") or [])
-    extra = schema.get("additionalProperties")
     lines = [f"export interface {name} {{"]
     for key, prop in (schema.get("properties") or {}).items():
         opt = "?" if key not in required else ""
         lines.append(f"  {key}{opt}: {_ts_type(prop, defs)};")
-    if extra is True or extra == {}:
-        lines.append("  [key: string]: unknown;")
     lines.append("}")
     return "\n".join(lines)
 
