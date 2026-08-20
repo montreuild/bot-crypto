@@ -20,6 +20,7 @@ from collections import Counter
 
 from app.core.timeframes import bars_per_year as _bars_per_year
 from app.live.position_open_mixin import _calc_unreal_pct
+from app.live.protocols import LiveHost
 from app.live.utils import _safe_float, _sanitize
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ def _years_spanned(times: list) -> float | None:
     return (span / _SECONDS_PER_YEAR) if span > 0 else None
 
 
-class HealthMixin:
+class HealthMixin(LiveHost):
     """Santé, résilience et reporting (voir docstring module)."""
 
     # ── Watchdog dead-man (Phase 3) ────────────────────────────────────────
@@ -173,8 +174,9 @@ class HealthMixin:
         et on ne relit ``data/bot_generations.json`` — qu'à l'invalidation
         (changement du set actif / application d'une optimisation).
         """
-        if getattr(self, "_bots_cache", None) is not None:
-            return self._bots_cache
+        _cache = getattr(self, "_bots_cache", None)
+        if _cache is not None:
+            return _cache
         from app.core.bot_identity import _load_generations, peek_identity
         gens = _load_generations()   # une seule lecture disque pour tous les bots
         out = []
@@ -361,9 +363,11 @@ class HealthMixin:
             else:
                 d["sharpe"] = None
             if len(pnls) >= 2:
-                eq   = _np.cumsum(pnls)
-                peak = _np.maximum.accumulate(eq)
-                raw  = float(_np.min((eq - peak) / (peak + 1e-9) * 100))
+                # Cumul de PnL, pas la courbe d'équité `eq` ci-dessus : deux
+                # grandeurs différentes qui portaient le même nom.
+                eq_cum = _np.cumsum(pnls)
+                peak = _np.maximum.accumulate(eq_cum)
+                raw  = float(_np.min((eq_cum - peak) / (peak + 1e-9) * 100))
                 d["max_drawdown"] = round(_safe_float(raw, 0.0), 2)
             else:
                 d["max_drawdown"] = 0.0

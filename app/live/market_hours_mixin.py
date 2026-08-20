@@ -30,6 +30,7 @@ from typing import Dict, List, Optional
 from app.core.bot_identity import resolve_venue
 from app.core.market_calendar import get_calendar
 from app.core.provider_router import market_calendar_for
+from app.live.protocols import LiveHost
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ logger = logging.getLogger(__name__)
 _CLOSED_LOG_INTERVAL = 900.0
 
 
-class MarketHoursMixin:
+class MarketHoursMixin(LiveHost):
     """Gating horaire de la boucle live. Requiert ``self.cfg`` (et, pour la
     clôture de séance, ``self.open_positions`` / ``self._close_position`` /
     ``self._safe_ticker``)."""
@@ -79,7 +80,8 @@ class MarketHoursMixin:
         """Retire les symboles dont la place est fermée (log throttlé)."""
         if not symbols:
             return []
-        open_syms, closed = [], []
+        open_syms: list[str] = []
+        closed: list[str] = []
         for sym in symbols:
             (open_syms if self._market_open(sym, now=now) else closed).append(sym)
         if closed:

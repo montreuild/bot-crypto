@@ -261,7 +261,10 @@ class OHLCVCache:
             return None
         try:
             tail = df.tail(lookback)
-            avg = float((tail["volume"] * tail["close"]).mean())
+            _m = (tail["volume"] * tail["close"]).mean()
+            if _m is None:
+                return None
+            avg = float(_m)  # type: ignore[arg-type]
             return avg if avg > 0 else None
         except Exception as e:
             logger.debug(f"[OHLCVCache] get_avg_quote_volume {symbol}/{tf} KO : {e}")

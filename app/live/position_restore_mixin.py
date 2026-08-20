@@ -144,7 +144,7 @@ class PositionRestoreMixin(LiveHost):
             except Exception as _tk_err:
                 logger.debug(f"[Reprise] Impossible de vérifier le prix de {symbol} : {_tk_err}")
 
-            trail_cfg = _apply_trail_override(self._trailing_cfg, pos.get("trail_override"))
+            trail_cfg = _apply_trail_override(self._trailing_cfg, pos.get("trail_override") or {})
             trailing = TrailingStopManager(**trail_cfg)
             trailing.init_from_stop(pos["entry"], pos["stop"], pos["side"])
             pos["_trailing"] = trailing

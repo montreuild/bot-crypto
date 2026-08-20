@@ -15,10 +15,12 @@ Requiert que l'instance possède :
 """
 import logging
 
+from app.live.protocols import LiveHost
+
 logger = logging.getLogger(__name__)
 
 
-class BalanceSyncMixin:
+class BalanceSyncMixin(LiveHost):
     """Mixin de synchronisation du capital pour LiveTrader."""
 
     # ── Restauration du capital paper au démarrage ────────────────────────
