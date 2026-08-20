@@ -326,7 +326,10 @@ def _run_baseline(strategy_name: str, cfg: dict,
         mod = importlib.import_module(f"app.strategies.{strategy_name}")
         eng = Engine()
         eng.register(mod.Strategy())
-        bt  = Backtester(eng, cfg, realistic_risk=True)
+        # BT-01 : même résolution que le walk-forward, sinon le gate d'apply
+        # compare un baseline avec circuit breakers à des folds sans.
+        from app.core.is_oos import resolve_realistic_risk
+        bt  = Backtester(eng, cfg, realistic_risk=resolve_realistic_risk(cfg))
         # timeframe transmis pour que resolve_strategy_params superpose
         # optimizer_results[tf] : le baseline reflète ainsi le paramétrage
         # RÉELLEMENT actif (params: + optimizer_results), comme le live/comparatif,
