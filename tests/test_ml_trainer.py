@@ -99,13 +99,13 @@ def _art(train_end=None, version_id="v1"):
 
 
 def test_freshness_warning_none_for_fresh_model():
-    train_end = (dt.datetime.utcnow() - dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    train_end = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
     warn = MLStrategyTrainer._freshness_warning(_art(train_end=train_end), interval_h=6.0)
     assert warn is None
 
 
 def test_freshness_warning_flags_stale_model():
-    train_end = (dt.datetime.utcnow() - dt.timedelta(hours=100)).strftime("%Y-%m-%dT%H:%M:%S")
+    train_end = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=100)).strftime("%Y-%m-%dT%H:%M:%S")
     warn = MLStrategyTrainer._freshness_warning(_art(train_end=train_end), interval_h=6.0)
     assert warn is not None
     assert "vieux" in warn

@@ -425,7 +425,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
     def _append_train_log(self, tf_key: str, meta: dict) -> None:
         try:
             os.makedirs(os.path.dirname(_TRAIN_LOG_PATH) or ".", exist_ok=True)
-            record = {"ts": _dt.datetime.utcnow().isoformat(), "strategy": self.name,
+            record = {"ts": _dt.datetime.now(_dt.timezone.utc).isoformat(), "strategy": self.name,
                       "tf": tf_key, **meta}
             with open(_TRAIN_LOG_PATH, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
