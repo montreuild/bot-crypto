@@ -152,6 +152,8 @@ export interface BacktestResult {
     low: number[];
     close: number[];
     volume?: number[];
+    /** Pas de sous-échantillonnage UI (`_n // 4000`) — pour recaler `trade.bar`. */
+    step?: number;
   };
   /** Métadonnées pour le diagnostic d'intégrité des données. */
   date_from?: string;

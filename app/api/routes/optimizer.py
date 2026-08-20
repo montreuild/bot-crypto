@@ -482,6 +482,18 @@ def optimizer_spaces():
     }
 
 
+def _with_pnl_pct(by_strategy: dict, capital) -> dict:
+    """Ajoute le gain % de la stratégie (PnL / capital) à chaque régime."""
+    cap = float(capital or 0)
+    out = {}
+    for regime, stats in (by_strategy or {}).items():
+        row = dict(stats)
+        pnl = float(row.get("pnl") or 0)
+        row["pnl_pct"] = round(pnl / cap * 100, 2) if cap else 0.0
+        out[regime] = row
+    return out
+
+
 # ── P1-4 : Route validate (Monte-Carlo + Regime Stress Test post-optimisation) ─
 @router.post("/api/optimize/validate", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("5/minute")
@@ -583,7 +595,10 @@ def optimizer_validate(
                 # Contexte : comportement du sous-jacent par régime.
                 "market": regime_summary(segments),
                 # Réponse à la question posée : tenue de la STRATÉGIE par régime.
-                "by_strategy": strategy_performance_by_regime(segments, res.trades),
+                "by_strategy": _with_pnl_pct(
+                    strategy_performance_by_regime(segments, res.trades),
+                    res.initial_capital,
+                ),
                 "n_trades": len(trades),
             }
         else:

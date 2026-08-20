@@ -126,6 +126,8 @@ export interface Notification {
 export interface RegimeStrategyPerf {
   n_trades: number;
   pnl: number;
+  /** Gain de la stratégie en % du capital, par régime. */
+  pnl_pct?: number;
   win_rate: number;
   avg_pnl: number;
   best: number;

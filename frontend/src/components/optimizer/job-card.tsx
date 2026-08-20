@@ -275,7 +275,10 @@ export function JobCard({
             {/* P1-4 : éprouver le paramétrage retenu (Monte-Carlo, régimes).
                 Réservé aux jobs terminés — la route exige un `best_params`. */}
             {isDone && result.best_params && (
-              <OptimizerValidatePanel jobId={job.job_id} />
+              <OptimizerValidatePanel
+                jobId={job.job_id}
+                initialCapital={result.initial_capital}
+              />
             )}
 
             {/* Error */}

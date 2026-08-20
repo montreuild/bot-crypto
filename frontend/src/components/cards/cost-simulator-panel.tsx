@@ -123,8 +123,11 @@ export function CostSimulatorPanel({
     }
     setResults(initial);
 
-    // Lancer les 3 backtests en parallèle
-    const promises = PRESETS.map(async (preset) => {
+    // Séquentiel : 3 backtests parallèles saturent le pool et laissent les
+    // lignes margin vides (timeout / erreur silencieuse).
+    const newResults: Record<string, ComparisonRow> = { ...initial };
+    for (const preset of PRESETS) {
+      let row: ComparisonRow;
       try {
         const res = await api.runBacktest({
           symbol,
@@ -133,11 +136,11 @@ export function CostSimulatorPanel({
           limit,
           cost_override: preset.costOverride,
         });
-        // La réponse est { by_strategy: { name: { total_pnl, total_fees, ... } } }
         const payload = Array.isArray(res) ? res[0] : res;
         const byStrategy = payload?.by_strategy ?? {};
         const firstStrat = (Object.values(byStrategy)[0] ?? {}) as StrategyStats;
-        return {
+        const empty = !firstStrat || Object.keys(firstStrat).length === 0;
+        row = {
           preset: preset.label,
           presetKey: preset.key,
           label: preset.label,
@@ -148,10 +151,11 @@ export function CostSimulatorPanel({
           max_dd: firstStrat.max_drawdown ?? null,
           win_rate: firstStrat.win_rate ?? null,
           total_trades: firstStrat.total_trades ?? null,
+          error: empty ? 'Pas de résultat' : null,
           loading: false,
-        } as ComparisonRow;
+        };
       } catch (e) {
-        return {
+        row = {
           preset: preset.label,
           presetKey: preset.key,
           label: preset.label,
@@ -159,14 +163,11 @@ export function CostSimulatorPanel({
           max_dd: null, win_rate: null, total_trades: null,
           error: errorMessage(e) || 'Erreur',
           loading: false,
-        } as ComparisonRow;
+        };
       }
-    });
-
-    const rows = await Promise.all(promises);
-    const newResults: Record<string, ComparisonRow> = {};
-    for (const r of rows) newResults[r.presetKey] = r;
-    setResults(newResults);
+      newResults[preset.key] = row;
+      setResults({ ...newResults });
+    }
     setLoading(false);
     setRan(true);
   }
@@ -193,7 +194,12 @@ export function CostSimulatorPanel({
               {r.label}
             </Badge>
             {r.loading && <Loader2 className="w-3 h-3 animate-spin text-muted" />}
-            {r.error && <AlertCircle className="w-3 h-3 text-red-400" />}
+            {r.error && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-red-400 max-w-[14rem]" title={r.error}>
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                <span className="truncate">{r.error}</span>
+              </span>
+            )}
           </span>
         );
       },
