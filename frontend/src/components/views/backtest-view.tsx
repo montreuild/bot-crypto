@@ -471,6 +471,7 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
               onClick={handleRun}
               disabled={
                 isLoading || !symbolValid || backtestStatus.running
+                || config.strategies.length === 0
                 || (useRange && !rangeCheck.ok)
               }
               className="flex-1"

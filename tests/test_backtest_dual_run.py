@@ -200,13 +200,14 @@ class TestDualPassIsolatesStrategyState:
             eng.register(_CooldownLong())
             return eng
 
-        df = _make_df(120)
+        df = _make_df(400)
         out = run_dual_pass(
             factory(), _cfg(), df, _env(90.0), symbol="BTC/USDC",
             engine_factory=factory,
         )
         assert out["live"].total_trades > 0
         assert out["reference"].total_trades > 0
+        assert out["live"].total_trades == out["reference"].total_trades
 
 
 class TestResultPayload:
