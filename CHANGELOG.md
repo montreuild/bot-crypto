@@ -6,6 +6,31 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔬 Motifs SMC BTC/USDC : le « 0 survivant » était un plafond de méthode
+
+Première exécution complète de `scripts/analyze_smc_patterns.py` sur BTC/USDC en
+15m/30m/1h/4h : **142 646 événements, 18 motifs distincts**, 73 010 composés
+énumérés. Le script conclut « aucun motif ne se distingue de ses témoins ».
+
+**Ce zéro ne mesurait rien.** Les p-values viennent d'un test de permutation à
+`N_TIRAGES_TEMOIN = 200`, dont le plancher est 1/201 = **0.00498**. Les seuils de
+Bonferroni exigés sont **sous ce plancher** — 1.39 × 10⁻⁴ pour les 360 hypothèses
+de motifs, 6.85 × 10⁻⁷ pour les 73 010 composés. Aucune ligne ne pouvait passer,
+quelles que soient les données. Le résultat était garanti par construction.
+
+Ce que l'exécution soutient réellement : sur 360 lignes, **26 passent les deux
+témoins à p < 0.05 brut** (7,2 %, contre 5 % attendus du hasard) et les écarts
+plafonnent à **0.28 %**, sous les 0.2 % d'un aller-retour au taker. Détail,
+tableaux et pistes de correction dans `research/RESULTATS_smc_patterns_btc.md`.
+Le protocole n'a **pas** été modifié : c'est une mesure, pas un correctif.
+
+### 🐛 `analyze_smc_patterns.py` : plus de crash d'encodage sous Windows
+
+Le rapport imprime `α`, `→` et les tableaux polars (`┌`, `─`, `┆`), dont aucun
+n'existe en cp1252 — l'encodage d'un stdout redirigé sous Windows. Le script
+mourait sur `UnicodeEncodeError` **après** avoir fait tout le calcul, sans rien
+écrire. `main()` force désormais UTF-8 sur stdout/stderr.
+
 ### 🎯 Recalibration HTF terminée — 15 candidats sur 27, zéro optimum dégénéré
 
 La campagne ouverte par le correctif HTF de L5 est close. **27 couples sur 36**

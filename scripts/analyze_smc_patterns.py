@@ -184,7 +184,22 @@ def afficher(paquet: dict) -> None:
     print("─" * 78 + "\n")
 
 
+def _stdout_utf8() -> None:
+    """Force UTF-8 en sortie — sinon le rapport est illisible sous Windows.
+
+    Le rapport imprime `α`, `→` et les tableaux polars (`┌`, `─`, `┆`) : aucun
+    de ces caractères n'existe en cp1252, l'encodage par défaut d'un stdout
+    redirigé sous Windows. Sans ce correctif le script meurt sur
+    `UnicodeEncodeError` APRÈS avoir fait tout le calcul — le pire moment.
+    """
+    for flux in (sys.stdout, sys.stderr):
+        reconfigure = getattr(flux, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def main() -> int:
+    _stdout_utf8()
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--symbol", required=True, help="ex. BTC/USDC (UN seul symbole)")

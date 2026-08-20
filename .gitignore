@@ -163,3 +163,10 @@ trades.db-wal
 # Sorties transitoires des scripts de mesure (le doc porte les chiffres)
 scripts/_*.log
 scripts/_*.json
+
+# Sorties parquet de `scripts/analyze_smc_patterns.py` — même raison que
+# `data/ohlcv/` : un parquet n'est pas relisible en diff, et le journal SMC
+# seul pèse 1,4 Mo par symbole. Les chiffres qui comptent sont dans
+# `research/RESULTATS_smc_patterns_btc.md` ; le reste se régénère par la
+# commande donnée en tête de ce document.
+research/smc_patterns/
