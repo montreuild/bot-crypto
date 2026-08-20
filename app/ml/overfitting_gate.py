@@ -26,16 +26,36 @@ AUC_GOOD = 0.60          # libellé « acceptable pour production » (pas un gat
 AUC_STRONG = 0.70        # edge solide
 
 
-def auc_hanley_ci_low(auc: float, n: int, z: float = 1.96) -> float:
-    """Borne basse 95 % (Hanley–McNeil, classes équilibrées — ML-01).
+def auc_hanley_ci_low(auc: float, n: int | None = None, z: float = 1.96, *,
+                      n_pos: int | None = None,
+                      n_neg: int | None = None) -> float:
+    """Borne basse 95 % de l'AUC (Hanley–McNeil).
 
-    Sans scores bruts on ne peut pas faire DeLong ; cette approximation
-    suffit à refuser une AUC ponctuelle statistiquement compatible avec
-    le hasard.
+    La variance d'une AUC dépend des effectifs de CHAQUE classe, pas du nombre
+    de lignes. Fournir ``n_pos``/``n_neg`` donne la vraie borne ; ne fournir que
+    ``n`` fait retomber sur l'hypothèse d'équilibre ``n1 = n0 = n/2``.
+
+    ML-02 — cette hypothèse n'est pas neutre, elle est **permissive** : elle
+    surestime ``n1·n0``, donc sous-estime la variance, donc remonte la borne
+    basse. Sur des labels construits par seuil d'amplitude — le cas normal ici
+    — elle laisse passer des modèles dont la borne réelle est sous 0,50.
+    Mesuré à 10 % de positifs, n=200, AUC 0,58 : 0,5010 annoncé contre 0,4429
+    réel. Le repli reste offert pour les scorers qui ne publient pas les
+    effectifs, mais il est signalé par l'appelant.
+
+    Sans scores bruts on ne peut pas faire DeLong ; cette approximation suffit
+    à refuser une AUC statistiquement compatible avec le hasard.
     """
-    if n <= 1 or auc <= 0.0 or auc >= 1.0:
+    if n_pos is not None and n_neg is not None:
+        n1, n0 = float(max(int(n_pos), 0)), float(max(int(n_neg), 0))
+        if n1 < 1.0 or n0 < 1.0:
+            return float(auc)
+    else:
+        if n is None or n <= 1:
+            return float(auc)
+        n1 = n0 = max(n / 2.0, 1.0)
+    if auc <= 0.0 or auc >= 1.0:
         return float(auc)
-    n1 = n0 = max(n / 2.0, 1.0)
     q1 = auc / (2.0 - auc)
     q2 = 2.0 * auc * auc / (1.0 + auc)
     var = (
@@ -47,10 +67,19 @@ def auc_hanley_ci_low(auc: float, n: int, z: float = 1.96) -> float:
     return max(0.0, float(auc) - z * se)
 
 
+#: Plancher par CLASSE. Une AUC calculée contre 3 positifs n'est pas une
+#: mesure, quel que soit le nombre total de lignes : c'est la classe rare qui
+#: fixe la précision (ML-02).
+MIN_PER_CLASS = 10
+
+
 def validate_model_quality(auc_oos: float,
                              strategy_name: str,
                              n_oos_samples: int,
-                             n_trials_optimization: int = 1) -> dict:
+                             n_trials_optimization: int = 1,
+                             *,
+                             n_pos: int | None = None,
+                             n_neg: int | None = None) -> dict:
     """Gate de validation post-entraînement d'un modèle ML.
 
     Parameters
@@ -60,9 +89,15 @@ def validate_model_quality(auc_oos: float,
     strategy_name : str
         Nom de la stratégie (pour log/notification).
     n_oos_samples : int
-        Nombre d'échantillons OOS (pour juger la significativité).
+        Nombre d'échantillons OOS RÉELLEMENT scorés (pour juger la
+        significativité) — pas la taille de holdout demandée en configuration.
     n_trials_optimization : int
         Nombre d'essais d'optimisation (pour biais de sélection — cf. Deflated Sharpe).
+    n_pos, n_neg : int, optionnels
+        Effectifs par classe. Fournis, ils donnent la vraie borne de confiance
+        et activent le plancher ``MIN_PER_CLASS``. Absents, on retombe sur
+        l'hypothèse d'équilibre — plus permissive, et signalée dans le résultat
+        par ``classes_estimees=True`` (ML-02).
 
     Returns
     -------
@@ -77,28 +112,56 @@ def validate_model_quality(auc_oos: float,
     """
     # Seuil minimal d'échantillons OOS (10 trades minimum — cf. MIN_SIGNIFICANT_TRADES)
     MIN_SAMPLES = 10
-    ci_low = auc_hanley_ci_low(float(auc_oos), int(n_oos_samples))
+    classes_estimees = n_pos is None or n_neg is None
+    ci_low = auc_hanley_ci_low(float(auc_oos), int(n_oos_samples),
+                               n_pos=n_pos, n_neg=n_neg)
+    _base = {'auc': auc_oos, 'auc_ci_low': ci_low,
+             'n_pos': n_pos, 'n_neg': n_neg,
+             'classes_estimees': classes_estimees,
+             'min_significant_samples': MIN_SAMPLES}
+    if classes_estimees:
+        logger.debug(
+            f"[ML Overfitting Gate] {strategy_name} : effectifs par classe "
+            f"absents — borne de confiance calculée sous hypothèse d'équilibre "
+            f"(plus permissive, cf. ML-02)"
+        )
+    # ML-02 : c'est la classe RARE qui fixe la précision. 200 lignes dont 3
+    # positifs ne mesurent rien, et le total franchirait pourtant MIN_SAMPLES.
+    if (n_pos is not None and n_neg is not None
+            and min(int(n_pos), int(n_neg)) < MIN_PER_CLASS):
+        logger.warning(
+            f"[ML Overfitting Gate] {strategy_name} : {n_pos} positifs / "
+            f"{n_neg} négatifs — sous {MIN_PER_CLASS} par classe, "
+            f"l'AUC {auc_oos:.3f} n'est pas mesurable. MODÈLE BLOQUÉ."
+        )
+        return {
+            **_base,
+            'ok': False,
+            'level': 'block',
+            'reason': (
+                f"Classe trop rare ({n_pos} positifs / {n_neg} négatifs, "
+                f"minimum {MIN_PER_CLASS} par classe) — AUC {auc_oos:.3f} "
+                f"non mesurable"
+            ),
+        }
     if n_oos_samples < MIN_SAMPLES:
         return {
+            **_base,
             'ok': False,
-            'auc': auc_oos,
-            'auc_ci_low': ci_low,
             'level': 'block',
             'reason': (
                 f"Pas assez d'échantillons OOS ({n_oos_samples} < {MIN_SAMPLES}) "
                 f"— modèle non validable statistiquement"
             ),
-            'min_significant_samples': MIN_SAMPLES,
         }
 
     # AUC hors range
     if auc_oos < 0 or auc_oos > 1:
         return {
+            **_base,
             'ok': False,
-            'auc': auc_oos,
             'level': 'block',
             'reason': f"AUC OOS invalide ({auc_oos}) — vérifier le calcul",
-            'min_significant_samples': MIN_SAMPLES,
         }
 
     # AUC < random → pire que aléatoire → bloquer
@@ -109,14 +172,13 @@ def validate_model_quality(auc_oos: float,
             f"du bruit ou a un bug. n_trials={n_trials_optimization}."
         )
         return {
+            **_base,
             'ok': False,
-            'auc': auc_oos,
             'level': 'block',
             'reason': (
                 f"AUC OOS {auc_oos:.3f} < {AUC_RANDOM} (aléatoire) — "
                 f"modèle a appris du bruit, ne pas promouvoir"
             ),
-            'min_significant_samples': MIN_SAMPLES,
         }
 
     # AUC ≈ random → pas d'edge mais pas pire → bloquer (préventif)
@@ -128,14 +190,13 @@ def validate_model_quality(auc_oos: float,
             f"n_trials={n_trials_optimization} → biais de sélection probable."
         )
         return {
+            **_base,
             'ok': False,
-            'auc': auc_oos,
             'level': 'warn',
             'reason': (
                 f"AUC OOS {auc_oos:.3f} < {AUC_WEAK} — edge trop faible, "
                 f"biais de sélection probable sur {n_trials_optimization} essais"
             ),
-            'min_significant_samples': MIN_SAMPLES,
         }
 
     # ML-01 : une AUC ponctuelle ≥ 0,55 dont l'IC 95 % recouvre 0,50 n'est
@@ -147,15 +208,13 @@ def validate_model_quality(auc_oos: float,
             f"(n={n_oos_samples}) — MODÈLE BLOQUÉ."
         )
         return {
+            **_base,
             'ok': False,
-            'auc': auc_oos,
-            'auc_ci_low': ci_low,
             'level': 'block',
             'reason': (
                 f"AUC OOS {auc_oos:.3f} (IC95 bas {ci_low:.3f}) "
                 f"indistinguable du hasard — n={n_oos_samples}"
             ),
-            'min_significant_samples': MIN_SAMPLES,
         }
 
     # AUC ≥ 0.55 < 0.60 → edge faible mais acceptable → warning, ok=True
@@ -166,12 +225,10 @@ def validate_model_quality(auc_oos: float,
             f"surveiller la dégradation."
         )
         return {
+            **_base,
             'ok': True,
-            'auc': auc_oos,
-            'auc_ci_low': ci_low,
             'level': 'good',
             'reason': f"AUC OOS {auc_oos:.3f} — edge acceptable (faible)",
-            'min_significant_samples': MIN_SAMPLES,
         }
 
     # AUC ≥ 0.60 < 0.70 → edge bon
@@ -181,12 +238,10 @@ def validate_model_quality(auc_oos: float,
             f"({AUC_GOOD} ≤ AUC < {AUC_STRONG}) — edge bon."
         )
         return {
+            **_base,
             'ok': True,
-            'auc': auc_oos,
-            'auc_ci_low': ci_low,
             'level': 'good',
             'reason': f"AUC OOS {auc_oos:.3f} — edge bon",
-            'min_significant_samples': MIN_SAMPLES,
         }
 
     # AUC ≥ 0.70 → edge fort
@@ -195,12 +250,10 @@ def validate_model_quality(auc_oos: float,
         f"≥ {AUC_STRONG} — edge fort (à surveiller pour overfitting)."
     )
     return {
+        **_base,
         'ok': True,
-        'auc': auc_oos,
-        'auc_ci_low': ci_low,
         'level': 'strong',
         'reason': f"AUC OOS {auc_oos:.3f} — edge fort (vérifier pas d'overfitting)",
-        'min_significant_samples': MIN_SAMPLES,
     }
 
 
