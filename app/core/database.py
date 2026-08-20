@@ -333,7 +333,7 @@ def load_open_positions(session: Session) -> List[dict]:
     rows = session.query(OpenPosition).all()
     result = []
     for r in rows:
-        _sym, _strat, tf = parse_pos_key(r.id or "")
+        _sym, _strat, tf = parse_pos_key(str(r.id or ""))
         result.append({
             "id":        r.id,
             "symbol":    r.symbol,
