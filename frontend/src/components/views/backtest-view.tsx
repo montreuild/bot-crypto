@@ -16,6 +16,8 @@ import { cn, errorMessage } from '@/lib/utils';
 import { toDateInputValue, validateDateRange, rangeDurationDays } from '@/lib/backtest-range';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { SymbolSearchInput } from '@/components/ui/symbol-search';
+import { StrategyPicker } from '@/components/ui/strategy-picker';
 import { BacktestRunningBanner } from '@/components/cards/backtest-running-banner';
 import { BacktestProgress } from '@/components/cards/backtest-progress';
 import { BacktestResults } from '@/components/views/backtest-results';
@@ -132,6 +134,10 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
       toast.error('Symbole invalide — format attendu : BTC/USDC ou BTC');
       return;
     }
+    if (config.strategies.length === 0) {
+      toast.error('Sélectionnez au moins une stratégie');
+      return;
+    }
     if (useRange) {
       if (!rangeCheck.ok) {
         toast.error(rangeCheck.error ?? 'Plage de dates invalide');
@@ -194,15 +200,6 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
     }
   };
 
-  const toggleStrategy = (s: string) => {
-    setConfig((c) => ({
-      ...c,
-      strategies: c.strategies.includes(s)
-        ? c.strategies.filter((x) => x !== s)
-        : [...c.strategies, s],
-    }));
-  };
-
   const allStrategies = settings?.all_strategies || settings?.strategies || [];
   const enabledStrategies: string[] = settings?.strategies || [];
   const availableStrategies = allStrategies;
@@ -211,37 +208,31 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
   const isLoading = runBacktest.isPending || !!startedAt;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div className="space-y-4">
       {backtestStatus.running && backtestStatus.startedAt && (
-        <div className="lg:col-span-3">
-          <BacktestRunningBanner
-            startedAt={backtestStatus.startedAt}
-            onCancel={handleCancel}
-          />
-        </div>
+        <BacktestRunningBanner
+          startedAt={backtestStatus.startedAt}
+          onCancel={handleCancel}
+        />
       )}
 
-      {/* Config panel */}
-      <Card className="lg:col-span-1">
+      {/* Config panel — pleine largeur, comme Optimizer */}
+      <Card>
         <CardHeader>
           <CardTitle className="text-sm">Configuration</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <Label htmlFor="bt-symbol">Symbole</Label>
-            <Input
+            <SymbolSearchInput
               id="bt-symbol"
               value={config.symbol}
-              onChange={(e) => setConfig({ ...config, symbol: e.target.value.toUpperCase() })}
-              placeholder="BTC/USDC"
-              className="font-mono"
-              pattern="^[A-Z0-9]+/[A-Z0-9]+$|^[A-Z0-9.]+$"
-              aria-invalid={!symbolValid}
-              aria-describedby="bt-symbol-help"
+              onChange={(s) => setConfig({ ...config, symbol: s })}
             />
             {!symbolValid && (
               <p id="bt-symbol-help" className="text-[10px] text-rose-400 mt-1" role="alert">
-                Format invalide — attendu « BASE/QUOTE » (ex. BTC/USDC) ou token simple (ex. BTC).
+                Format invalide — attendu « BASE/QUOTE » (ex. BTC/USDC) ou ticker (ex. AIR.PA).
               </p>
             )}
           </div>
@@ -392,6 +383,7 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
             })()}
           </div>
           )}
+          </div>
 
           <div className="flex items-start gap-2 text-xs">
             <Switch
@@ -409,37 +401,12 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
             </label>
           </div>
 
-          {/* Stratégies */}
-          <div>
-            <Label>Stratégies ({config.strategies.length} sélectionnées)</Label>
-            <div className="max-h-32 overflow-y-auto space-y-1 mt-1 border border-border rounded-md p-2">
-              {availableStrategies.length === 0 ? (
-                <p className="text-xs text-dim">Chargement…</p>
-              ) : (
-                availableStrategies.map((s: string) => {
-                  const isEnabled = enabledStrategies.includes(s);
-                  return (
-                    <label
-                      key={s}
-                      className="flex items-center gap-2 text-xs cursor-pointer hover:bg-card-hover rounded px-1 py-0.5"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={config.strategies.includes(s)}
-                        onChange={() => toggleStrategy(s)}
-                      />
-                      <span className="font-mono">{s}</span>
-                      {isEnabled && (
-                        <Badge variant="success" className="text-[0.55rem] px-1 py-0 ml-auto">
-                          ● actif
-                        </Badge>
-                      )}
-                    </label>
-                  );
-                })
-              )}
-            </div>
-          </div>
+          <StrategyPicker
+            strategies={availableStrategies}
+            value={config.strategies}
+            onChange={(strategies) => setConfig((c) => ({ ...c, strategies }))}
+            enabled={enabledStrategies}
+          />
 
           {/* Mode expert : options avancées */}
           {expertMode && (
@@ -535,7 +502,7 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
       </Card>
 
       {/* Results panel */}
-      <div className="lg:col-span-2 space-y-4">
+      <div className="space-y-4">
         {!result && !isLoading && (
           <Card>
             <CardContent className="flex items-center justify-center min-h-[300px] text-muted text-sm">

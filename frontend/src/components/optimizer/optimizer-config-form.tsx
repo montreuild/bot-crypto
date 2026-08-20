@@ -7,12 +7,13 @@ import { Button } from '@/components/ui/button';
 import { cn, errorMessage } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useStartOptimize, useConfig } from '@/hooks/use-api';
-import { Play, Loader2, CheckCircle2, Sparkles, Layers, Info } from 'lucide-react';
+import { Play, Loader2, CheckCircle2, Sparkles, Info } from 'lucide-react';
 import type { OptimizeSpaces } from '@/types';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { isOosHint } from '@/lib/limit-hint';
 import { METHODS, FALLBACK_SYMBOLS, PRESETS, type PresetKey } from '@/components/optimizer/status';
+import { StrategyPicker } from '@/components/ui/strategy-picker';
 
 type LaunchFeedback =
   | { kind: 'fetching' }
@@ -70,12 +71,10 @@ export function OptimizerConfigForm({
   }
 
   useEffect(() => {
-    if (visibleStrategies.length === 0 || selectedStrategies.length > 0) return;
+    if (selectedStrategies.length > 0) return;
     const wanted = searchParams.get('strategy');
     if (wanted && visibleStrategies.includes(wanted)) {
       setSelectedStrategies([wanted]);
-    } else {
-      setSelectedStrategies(visibleStrategies.slice(0, 1));
     }
   }, [visibleStrategies, selectedStrategies.length, searchParams]);
 
@@ -160,60 +159,44 @@ export function OptimizerConfigForm({
         <Sparkles className="w-4 h-4 text-primary-400" />
       </CardHeader>
       <CardContent className="space-y-5">
-        <div>
-          <div className="text-xs text-dim mb-2 flex items-center gap-2">
-            <Layers className="w-3 h-3" /> {filterMl ? 'Stratégies ML' : 'Stratégies'}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {listedStrategies.map((s) => {
-              const active = selectedStrategies.includes(s);
-              const isMl = spaces?.[s]?.is_ml;
-              const recTfs = recommendedTfsFor(s);
-              const hasWarn = active && hasNonRecommendedTf(s);
-              return (
-                <button
-                  key={s}
-                  onClick={() => toggle(selectedStrategies, s, setSelectedStrategies)}
-                  className={cn(
-                    'px-3 py-1.5 rounded-lg text-xs font-mono border transition-all inline-flex items-center gap-1',
-                    active
-                      ? 'bg-primary-500/15 text-primary-400 border-primary-500/40'
-                      : 'bg-card-hover text-muted border-border hover:border-border-hi',
-                  )}
-                >
-                  {s}
-                  {isMl && <span className="ml-1 text-purple-400">ML</span>}
-                  {active && recTfs.length > 0 && (
-                    <span className="ml-1 inline-flex gap-0.5">
-                      {recTfs.slice(0, 3).map((tf) => (
-                        <span
-                          key={tf}
-                          className="px-1 rounded text-[0.55rem] bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
-                          title={`TF recommandé : ${tf}`}
-                        >
-                          {tf}
-                        </span>
-                      ))}
-                      {hasWarn && (
-                        <span
-                          className="px-1 rounded text-[0.55rem] bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                          title="Au moins un TF sélectionné n'est pas recommandé pour cette stratégie"
-                        >
-                          ⚠
-                        </span>
-                      )}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          {filterMl && visibleStrategies.length === 0 && (
-            <p className="text-[11px] text-muted italic mt-2">
-              Aucune stratégie ML déclarée dans <code className="font-mono">/optimize/spaces</code>.
-            </p>
-          )}
-        </div>
+        <StrategyPicker
+          label={filterMl ? 'Stratégies ML' : 'Stratégies'}
+          strategies={listedStrategies}
+          value={selectedStrategies}
+          onChange={setSelectedStrategies}
+          isMl={(s) => !!spaces?.[s]?.is_ml}
+          trailing={(s, active) => {
+            const recTfs = recommendedTfsFor(s);
+            const hasWarn = active && hasNonRecommendedTf(s);
+            if (!active || recTfs.length === 0) return null;
+            return (
+              <span className="ml-1 inline-flex gap-0.5">
+                {recTfs.slice(0, 3).map((tf) => (
+                  <span
+                    key={tf}
+                    className="px-1 rounded text-[0.55rem] bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
+                    title={`TF recommandé : ${tf}`}
+                  >
+                    {tf}
+                  </span>
+                ))}
+                {hasWarn && (
+                  <span
+                    className="px-1 rounded text-[0.55rem] bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                    title="Au moins un TF sélectionné n'est pas recommandé pour cette stratégie"
+                  >
+                    ⚠
+                  </span>
+                )}
+              </span>
+            );
+          }}
+        />
+        {filterMl && visibleStrategies.length === 0 && (
+          <p className="text-[11px] text-muted italic mt-2">
+            Aucune stratégie ML déclarée dans <code className="font-mono">/optimize/spaces</code>.
+          </p>
+        )}
 
         <div>
           <div className="text-xs text-dim mb-2">Timeframes (multi)</div>

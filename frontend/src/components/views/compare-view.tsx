@@ -26,6 +26,8 @@ import {
 } from 'recharts';
 import type { BacktestResult } from '@/types';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { SymbolSearchInput } from '@/components/ui/symbol-search';
+import { StrategyPicker } from '@/components/ui/strategy-picker';
 import { limitHint } from '@/lib/limit-hint';
 
 const LIMITS = [100, 500, 1000, 2000];
@@ -126,7 +128,7 @@ export function CompareView() {
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [timeframe, setTimeframe] = useState('1h');
   const [limit, setLimit] = useState(500);
-  const [selected, setSelected] = useState<string[]>(['pullback_trend', 'trend_rider', 'breakout']);
+  const [selected, setSelected] = useState<string[]>([]);
 
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
@@ -136,14 +138,6 @@ export function CompareView() {
   const [sortKey, setSortKey] = useState<SortKey>('total_pnl');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
-  const toggleStrategy = (s: string) => {
-    setSelected((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
-  };
-
-  // CMP-004 — raccourcis de sélection : Toutes / Aucune / Omnibus (sélectionne
-  // uniquement les stratégies `opus_omnibus*` si présentes, sinon rien).
-  const selectAll = () => setSelected(availableStrategies.slice());
-  const selectNone = () => setSelected([]);
   const selectOmnibus = () => {
     const omnibus = availableStrategies.filter((s: string) => s.startsWith('opus_omnibus'));
     if (omnibus.length === 0) {
@@ -350,13 +344,7 @@ export function CompareView() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <label className="text-xs text-dim block mb-1.5">Symbole</label>
-              <input
-                aria-label="Symbole"
-                value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
-                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-                placeholder="BTC/USDC"
-              />
+              <SymbolSearchInput value={symbol} onChange={setSymbol} id="compare-symbol" />
             </div>
             <div>
               <label className="text-xs text-dim block mb-1.5">Timeframe</label>
@@ -391,53 +379,20 @@ export function CompareView() {
             </div>
           </div>
 
-          {/* CMP-004 — raccourcis de sélection en haut des chips. */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" onClick={selectAll} className="h-7 text-xs">
-              Toutes ({availableStrategies.length})
-            </Button>
-            <Button size="sm" variant="outline" onClick={selectNone} className="h-7 text-xs">
-              Aucune
-            </Button>
-            <Button size="sm" variant="outline" onClick={selectOmnibus} className="h-7 text-xs">
-              Omnibus
-            </Button>
-          </div>
-
-          {/* Strategy chips */}
-          <div>
-            <div className="text-xs text-dim mb-2">
-              Stratégies ({selected.length} sélectionnée{selected.length > 1 ? 's' : ''})
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {availableStrategies.map((s: string, i: number) => {
-                const isSel = selected.includes(s);
-                const color = STRATEGY_COLORS[i % STRATEGY_COLORS.length];
-                return (
-                  <button
-                    key={s}
-                    onClick={() => toggleStrategy(s)}
-                    className={cn(
-                      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
-                      isSel
-                        ? 'bg-card-hover border-border-hi text-foreground'
-                        : 'bg-transparent border-border text-muted hover:text-foreground hover:border-border-hi',
-                    )}
-                  >
-                    {isSel ? (
-                      <span
-                        className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: color }}
-                      />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full border border-border-hi" />
-                    )}
-                    {s}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <StrategyPicker
+            strategies={availableStrategies}
+            value={selected}
+            onChange={setSelected}
+            extra={
+              <button
+                type="button"
+                onClick={selectOmnibus}
+                className="px-2 py-0.5 rounded text-[10px] border border-border text-muted hover:text-foreground hover:border-border-hi"
+              >
+                Omnibus
+              </button>
+            }
+          />
 
           {/* Loading indicator */}
           {running && (

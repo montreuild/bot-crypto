@@ -17,6 +17,7 @@ export function StrategyPicker({
   isMl,
   label = 'Stratégies',
   extra,
+  trailing,
 }: {
   strategies: string[];
   value: string[];
@@ -25,6 +26,7 @@ export function StrategyPicker({
   isMl?: (name: string) => boolean;
   label?: string;
   extra?: ReactNode;
+  trailing?: (name: string, active: boolean) => ReactNode;
 }) {
   const selected = new Set(value);
   const toggle = (s: string) => {
@@ -78,6 +80,7 @@ export function StrategyPicker({
                 {live && (
                   <span className="text-[0.55rem] text-emerald-400">●</span>
                 )}
+                {trailing?.(s, active)}
               </button>
             );
           })}

@@ -19,10 +19,10 @@ import { useState, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { SymbolSearchInput } from '@/components/ui/symbol-search';
+import { StrategyPicker } from '@/components/ui/strategy-picker';
 import { toast } from 'sonner';
 import { Loader2, AlertCircle, Play, TrendingUp, Activity, Zap, Eye, Layers, Clock } from 'lucide-react';
 import { useRunBacktest, useCancelBacktest, useBacktestSettings } from '@/hooks/use-api';
@@ -65,7 +65,7 @@ export function ReplayView() {
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [timeframe, setTimeframe] = useState('1h');
   const [months, setMonths] = useState(3);
-  const [strategy, setStrategy] = useState<string>('');
+  const [strategies, setStrategies] = useState<string[]>([]);
 
   const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
   const [crosshairCandle, setCrosshairCandle] = useState<CandleRow | null>(null);
@@ -87,8 +87,7 @@ export function ReplayView() {
     return settings?.all_strategies ?? settings?.strategies ?? [];
   }, [settings]);
 
-  // Si pas de stratégie sélectionnée, prends la première activée.
-  const effectiveStrategy = strategy || (settings?.strategies_enabled?.[0] ?? availableStrategies[0] ?? '');
+  const selectedSet = useMemo(() => new Set(strategies), [strategies]);
 
   // Convertit le résultat backtest en candles + trades pour le replay.
   const candles: CandleRow[] = useMemo(() => {
@@ -108,10 +107,12 @@ export function ReplayView() {
     if (!backtestResult?.trades) return [];
     // Si multi-stratégies, filtre par effectiveStrategy si possible.
     const all = backtestResult.trades.map(normalizeTrade);
-    if (!effectiveStrategy) return all;
-    const filtered = all.filter((t) => t.strategy === effectiveStrategy || t.strategy_name === effectiveStrategy);
+    if (selectedSet.size === 0) return all;
+    const filtered = all.filter((t) =>
+      selectedSet.has(String(t.strategy || '')) || selectedSet.has(String(t.strategy_name || '')),
+    );
     return filtered.length > 0 ? filtered : all;
-  }, [backtestResult, effectiveStrategy]);
+  }, [backtestResult, selectedSet]);
 
   const engine = useReplayEngine({ candles, trades });
 
@@ -129,8 +130,8 @@ export function ReplayView() {
       toast.error('Symbole requis');
       return;
     }
-    if (!effectiveStrategy) {
-      toast.error('Sélectionnez une stratégie');
+    if (strategies.length === 0) {
+      toast.error('Sélectionnez au moins une stratégie');
       return;
     }
     // Estime le nombre de bougies à partir des mois + TF.
@@ -138,7 +139,7 @@ export function ReplayView() {
     const started = Date.now();
     setLoadLog([]);
     pushLog('info', `${symbol.trim()} · ${timeframe} · ${months} mois → ${limit} bougies demandées`);
-    pushLog('info', `Stratégie overlay : ${effectiveStrategy}`);
+    pushLog('info', `Stratégie overlay : ${strategies.join(', ')}`);
     try {
       toast.info(`Chargement des données (${limit} bougies ${timeframe})…`);
       pushLog('info', 'Backtest en cours côté serveur — fetch OHLCV puis évaluation…');
@@ -146,7 +147,7 @@ export function ReplayView() {
         symbol: symbol.trim(),
         timeframe,
         limit,
-        strategies: effectiveStrategy,
+        strategies: strategies.join(','),
       });
       // Si la réponse est un array (multi-strat), prends la première.
       const result = Array.isArray(r) ? r[0] : r;
@@ -205,8 +206,8 @@ export function ReplayView() {
           setTimeframe={setTimeframe}
           months={months}
           setMonths={setMonths}
-          strategy={effectiveStrategy}
-          setStrategy={setStrategy}
+          strategies={strategies}
+          setStrategies={setStrategies}
           availableStrategies={availableStrategies}
           hintBougies={hintBougies}
           onLoad={handleLoad}
@@ -250,8 +251,8 @@ export function ReplayView() {
           setTimeframe={setTimeframe}
           months={months}
           setMonths={setMonths}
-          strategy={effectiveStrategy}
-          setStrategy={setStrategy}
+          strategies={strategies}
+          setStrategies={setStrategies}
           availableStrategies={availableStrategies}
           hintBougies={hintBougies}
           onLoad={handleLoad}
@@ -311,8 +312,8 @@ export function ReplayView() {
             setTimeframe={setTimeframe}
             months={months}
             setMonths={setMonths}
-            strategy={effectiveStrategy}
-            setStrategy={setStrategy}
+            strategies={strategies}
+            setStrategies={setStrategies}
             availableStrategies={availableStrategies}
             hintBougies={hintBougies}
             onLoad={handleLoad}
@@ -400,8 +401,8 @@ interface ReplayConfigCardProps {
   setTimeframe: (v: string) => void;
   months: number;
   setMonths: (v: number) => void;
-  strategy: string;
-  setStrategy: (v: string) => void;
+  strategies: string[];
+  setStrategies: (v: string[]) => void;
   availableStrategies: string[];
   hintBougies: number;
   onLoad: () => void;
@@ -417,8 +418,8 @@ function ReplayConfigCard({
   setTimeframe,
   months,
   setMonths,
-  strategy,
-  setStrategy,
+  strategies,
+  setStrategies,
   availableStrategies,
   hintBougies,
   onLoad,
@@ -434,12 +435,7 @@ function ReplayConfigCard({
       <CardContent className={`space-y-3 ${compact ? 'py-3' : ''}`}>
         <div>
           <Label className="text-xs text-dim block mb-1">Symbole</Label>
-          <Input
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-            placeholder="BTC/USDC"
-            className="font-mono text-sm"
-          />
+          <SymbolSearchInput value={symbol} onChange={setSymbol} id="replay-symbol" />
         </div>
         <div>
           <Label className="text-xs text-dim block mb-1">Timeframe</Label>
@@ -462,25 +458,12 @@ function ReplayConfigCard({
           <div className="text-xs text-muted-foreground font-mono text-center mt-1">{months} mois</div>
         </div>
         <div>
-          <Label className="text-xs text-dim block mb-1">Stratégie overlay</Label>
-          <Select value={strategy} onValueChange={setStrategy}>
-            <SelectTrigger className="text-sm" aria-label="Stratégie overlay">
-              <SelectValue placeholder={strategy || 'Sélectionner…'} />
-            </SelectTrigger>
-            <SelectContent>
-              {availableStrategies.length === 0 ? (
-                <SelectItem value="" disabled>
-                  Chargement…
-                </SelectItem>
-              ) : (
-                availableStrategies.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
+          <StrategyPicker
+            label="Stratégie overlay"
+            strategies={availableStrategies}
+            value={strategies}
+            onChange={setStrategies}
+          />
         </div>
         <div className="flex gap-2">
           <Button onClick={onLoad} disabled={isLoading} variant="primary" className="flex-1">
