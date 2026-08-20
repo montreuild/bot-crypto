@@ -305,10 +305,14 @@ class BacktestResult:
             self.total_slippage_cost = _sum("slippage_cost")
             self.total_funding_cost  = _sum("funding_cost")
             self.gross_profit        = _sum("gross_pnl")
-            # ⚠ `total_pnl` somme les `pnl` de clôture, qui ne retranchent PAS
-            # les frais d'entrée (prélevés sur le capital à l'ouverture) :
-            # `net_profit` est la variation d'équité réelle, et l'écart entre
-            # les deux vaut exactement la somme des frais d'entrée.
+            # `total_pnl` somme les `pnl` de clôture, qui retranchent DÉJÀ les
+            # frais d'entrée — initiaux et pyramidages (cf. FIN-02,
+            # position_lifecycle._close_at). `net_profit` est la variation
+            # d'équité réelle : les deux coïncident, à l'arrondi près, et
+            # `test_partial_exits` verrouille cette égalité.
+            # Un commentaire antérieur annonçait ici un écart égal à la somme
+            # des frais d'entrée : c'était vrai d'une version plus ancienne du
+            # calcul, et faux depuis — mesuré, l'écart vaut ~2e-5.
             self.net_profit          = round(_sf(
                 self.final_equity - self.initial_capital, 0.0), 4)
             self.total_entry_fees    = _sum("entry_fees")
