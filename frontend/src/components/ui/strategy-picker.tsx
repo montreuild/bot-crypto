@@ -1,43 +1,45 @@
 'use client';
 
 /**
- * Sélecteur de stratégies partagé (Laboratoire).
- * Chips cliquables style Optimizer + raccourcis Toutes / Aucune.
- * Défaut : aucune sélection (l'appelant initialise à []).
+ * Sélecteur de stratégies unique (Laboratoire) — même rendu que l'Optimizer :
+ * chips, badge ML, TF recommandés, Toutes / Aucune. Aucune sélection par défaut.
  */
 
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import type { OptimizeSpaces } from '@/types';
 
 export function StrategyPicker({
   strategies,
   value,
   onChange,
-  enabled,
-  isMl,
-  label = 'Stratégies',
+  spaces,
+  selectedTfs,
   extra,
-  trailing,
 }: {
   strategies: string[];
   value: string[];
   onChange: (next: string[]) => void;
-  enabled?: string[];
-  isMl?: (name: string) => boolean;
-  label?: string;
+  spaces?: OptimizeSpaces;
+  selectedTfs?: string[];
   extra?: ReactNode;
-  trailing?: (name: string, active: boolean) => ReactNode;
 }) {
   const selected = new Set(value);
   const toggle = (s: string) => {
     onChange(selected.has(s) ? value.filter((x) => x !== s) : [...value, s]);
   };
 
+  const recTfs = (s: string): string[] => {
+    const info = spaces?.[s];
+    if (!info) return [];
+    return info.recommended_tfs ?? info.timeframes ?? [];
+  };
+
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 mb-2">
         <span className="text-xs text-dim">
-          {label} ({value.length}/{strategies.length})
+          Stratégies ({value.length}/{strategies.length})
         </span>
         <button
           type="button"
@@ -62,7 +64,10 @@ export function StrategyPicker({
         <div className="flex flex-wrap gap-2">
           {strategies.map((s) => {
             const active = selected.has(s);
-            const live = enabled?.includes(s);
+            const isMl = !!spaces?.[s]?.is_ml;
+            const tfs = recTfs(s);
+            const hasWarn = active && (selectedTfs?.length ?? 0) > 0 && tfs.length > 0
+              && selectedTfs!.some((tf) => !tfs.includes(tf));
             return (
               <button
                 key={s}
@@ -76,11 +81,28 @@ export function StrategyPicker({
                 )}
               >
                 {s}
-                {isMl?.(s) && <span className="text-purple-400">ML</span>}
-                {live && (
-                  <span className="text-[0.55rem] text-emerald-400">●</span>
+                {isMl && <span className="text-purple-400">ML</span>}
+                {tfs.length > 0 && (
+                  <span className="inline-flex gap-0.5">
+                    {tfs.slice(0, 3).map((tf) => (
+                      <span
+                        key={tf}
+                        className="px-1 rounded text-[0.55rem] bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
+                        title={`TF recommandé : ${tf}`}
+                      >
+                        {tf}
+                      </span>
+                    ))}
+                    {hasWarn && (
+                      <span
+                        className="px-1 rounded text-[0.55rem] bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                        title="Au moins un TF sélectionné n'est pas recommandé"
+                      >
+                        ⚠
+                      </span>
+                    )}
+                  </span>
                 )}
-                {trailing?.(s, active)}
               </button>
             );
           })}

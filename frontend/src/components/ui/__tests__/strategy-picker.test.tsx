@@ -30,4 +30,17 @@ describe('StrategyPicker', () => {
     fireEvent.click(screen.getByRole('button', { name: /trend_rider/ }));
     expect(onChange).toHaveBeenCalledWith(['breakout', 'trend_rider']);
   });
+
+  it('affiche le badge ML et les TF recommandés depuis spaces', () => {
+    render(
+      <StrategyPicker
+        strategies={STRATS}
+        value={[]}
+        onChange={() => {}}
+        spaces={{ supertrend_macd: { is_ml: true, recommended_tfs: ['1h', '4h'], timeframes: ['1h'], params: {}, n_combos: 1 } }}
+      />,
+    );
+    expect(screen.getByText('ML')).toBeInTheDocument();
+    expect(screen.getByText('1h')).toBeInTheDocument();
+  });
 });

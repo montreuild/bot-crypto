@@ -90,16 +90,24 @@ def map_jobs(payloads: Iterable[dict], *, max_workers: int = 2) -> List[Tuple[st
         return []
 
     cancel = get_cancel_event()
-    for p in jobs:
-        p.setdefault("cancel_event", cancel)
-
+    # In-process : l'Event reste dans le payload. ProcessPool spawn (Python 3.14) :
+    # un Event/Condition dans l'argument de submit() n'est pas héritable
+    # (« Condition objects should only be shared between processes through
+    # inheritance ») — on le retire avant pickle.
     if not _use_process_pool():
+        for p in jobs:
+            p.setdefault("cancel_event", cancel)
         return [run_strategy_job(p) for p in jobs]
 
     pool = get_pool(max_workers=min(max_workers, len(jobs)))
     results: List[Tuple[str, dict]] = []
     try:
-        futures = {pool.submit(run_strategy_job, p): p.get("name") for p in jobs}
+        pickled = []
+        for p in jobs:
+            q = dict(p)
+            q.pop("cancel_event", None)
+            pickled.append(q)
+        futures = {pool.submit(run_strategy_job, q): q.get("name") for q in pickled}
         for fut in as_completed(futures):
             if cancel.is_set():
                 for f in futures:

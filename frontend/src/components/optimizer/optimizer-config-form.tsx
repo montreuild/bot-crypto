@@ -160,37 +160,11 @@ export function OptimizerConfigForm({
       </CardHeader>
       <CardContent className="space-y-5">
         <StrategyPicker
-          label={filterMl ? 'Stratégies ML' : 'Stratégies'}
           strategies={listedStrategies}
           value={selectedStrategies}
           onChange={setSelectedStrategies}
-          isMl={(s) => !!spaces?.[s]?.is_ml}
-          trailing={(s, active) => {
-            const recTfs = recommendedTfsFor(s);
-            const hasWarn = active && hasNonRecommendedTf(s);
-            if (!active || recTfs.length === 0) return null;
-            return (
-              <span className="ml-1 inline-flex gap-0.5">
-                {recTfs.slice(0, 3).map((tf) => (
-                  <span
-                    key={tf}
-                    className="px-1 rounded text-[0.55rem] bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
-                    title={`TF recommandé : ${tf}`}
-                  >
-                    {tf}
-                  </span>
-                ))}
-                {hasWarn && (
-                  <span
-                    className="px-1 rounded text-[0.55rem] bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                    title="Au moins un TF sélectionné n'est pas recommandé pour cette stratégie"
-                  >
-                    ⚠
-                  </span>
-                )}
-              </span>
-            );
-          }}
+          spaces={spaces}
+          selectedTfs={selectedTfs}
         />
         {filterMl && visibleStrategies.length === 0 && (
           <p className="text-[11px] text-muted italic mt-2">

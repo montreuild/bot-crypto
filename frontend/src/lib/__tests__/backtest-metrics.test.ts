@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  equityValues, formatDrawdownPct, alphaPct,
+  equityValues, formatDrawdownPct, alphaPct, asPercentPoints, formatPctPoints,
 } from '@/lib/backend-normalizers';
 
 describe('equityValues', () => {
@@ -23,6 +23,20 @@ describe('formatDrawdownPct', () => {
   });
   it('accepte un ratio -0.12 → -12.0%', () => {
     expect(formatDrawdownPct(-0.12)).toBe('-12.0%');
+  });
+});
+
+describe('asPercentPoints', () => {
+  it('ne multiplie pas un WR déjà en %', () => {
+    expect(asPercentPoints(25.8)).toBe(25.8);
+    expect(formatPctPoints(25.8)).toBe('25.8%');
+  });
+  it('convertit un ratio 0–1', () => {
+    expect(asPercentPoints(0.258)).toBeCloseTo(25.8, 5);
+  });
+  it('évite 2580 % et 832 %', () => {
+    expect(formatPctPoints(25.8)).not.toBe('2580.0%');
+    expect(formatDrawdownPct(8.32)).toBe('8.3%');
   });
 });
 

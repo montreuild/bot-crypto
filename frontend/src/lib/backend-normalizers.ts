@@ -215,9 +215,24 @@ export function equityValues(curve: unknown): number[] {
 
 /** Max DD backend déjà en % (ex. -5.10). Ne plus ×100 (sinon -8791 %). */
 export function formatDrawdownPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return '—';
-  const pct = Math.abs(v) <= 1.0000001 && v !== 0 ? v * 100 : v;
-  return `${pct.toFixed(1)}%`;
+  const p = asPercentPoints(v);
+  return p == null ? '—' : `${p.toFixed(1)}%`;
+}
+
+/**
+ * WR / DD / proba : le backend mélange ratio 0–1 et points 0–100.
+ * |v| ≤ 1 → ×100 ; au-delà on ne touche pas (évite 25.8 → 2580 %).
+ */
+export function asPercentPoints(v: number | null | undefined): number | null {
+  if (v == null || !Number.isFinite(Number(v))) return null;
+  const n = Number(v);
+  if (n === 0) return 0;
+  return Math.abs(n) <= 1 ? n * 100 : n;
+}
+
+export function formatPctPoints(v: number | null | undefined, digits = 1): string {
+  const p = asPercentPoints(v);
+  return p == null ? '—' : `${p.toFixed(digits)}%`;
 }
 
 /** Alpha backend = PnL − B&H en devise. Afficher en % du capital, pas `-6420%`. */
