@@ -29,7 +29,7 @@ import logging
 import os
 import shutil
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional
 
 import app.ml.model_registry as registry
@@ -174,6 +174,11 @@ class GateConfig:
     metric: str = "auc_amp"
     label_horizons: List[int] = field(default_factory=lambda: [1, 3, 6])
     amp_top_pct: float = 0.30
+    # ML-01 : le verdict `block` de `overfitting_gate` annule la promotion.
+    # Actif par défaut — c'est un garde-fou, pas un diagnostic. La sortie
+    # existe pour les tests qui exercent la MÉCANIQUE de publication sur des
+    # séries synthétiques sans edge, où le refus est justement attendu.
+    overfitting_block: bool = True
 
     @classmethod
     def from_params(cls, p: Dict[str, Any]) -> "GateConfig":
@@ -197,6 +202,7 @@ class GateConfig:
             metric=str(p.get("gate_metric", p.get("metric", "auc_amp"))),
             label_horizons=list(p.get("label_horizons", [1, 3, 6])),
             amp_top_pct=float(p.get("amp_top_pct", 0.30)),
+            overfitting_block=bool(p.get("gate_overfitting_block", True)),
         )
 
 
@@ -324,18 +330,37 @@ def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
                     n_oos_samples=int(gc_.holdout_bars),
                     n_trials_optimization=1,
                 )
-                # Si le gate overfitting dit "block" mais que decide_gate a dit
-                # "promote" (cas rare : AUC ≥ auc_floor mais < AUC_WEAK par
-                # convention différente), on logge un warning critique — sans
-                # surcharger decide_gate (l'opérateur peut ajuster auc_floor).
-                if overfitting_diagnostics.get("level") == "block" and gate.decision in ("promote", "initial"):
-                    logger.warning(
-                        f"[MLPolicy] {tf}/{recipe} : decide_gate={gate.decision} "
-                        f"mais overfitting_gate=block "
-                        f"({overfitting_diagnostics.get('reason')}) — "
-                        f"vérifier la cohérence de gate_auc_floor ({gc_.auc_floor}) "
-                        f"vs AUC_WEAK (0.55) dans app/ml/overfitting_gate.py"
-                    )
+                # ML-01 : le verdict "block" BLOQUE. Il n'alimentait qu'un
+                # `logger.warning` et des métadonnées : le modèle était publié
+                # et servi malgré un refus explicite. Un garde-fou qui
+                # n'empêche rien n'est pas un garde-fou.
+                #
+                # Le renvoi vers `gate_auc_floor` qui figurait ici ne remplace
+                # pas ce refus : `auc_floor` compare une AUC ponctuelle à un
+                # plancher, tandis que `validate_model_quality` teste si son
+                # intervalle de confiance recouvre le hasard — ce qui dépend
+                # de `n_oos_samples`. Aucun réglage d'`auc_floor` ne reproduit
+                # ce test, les deux critères ne sont pas substituables.
+                if (overfitting_diagnostics.get("level") == "block"
+                        and gate.decision in ("promote", "initial")):
+                    _motif = overfitting_diagnostics.get("reason") or "qualité insuffisante"
+                    if gc_.overfitting_block:
+                        logger.warning(
+                            f"[MLPolicy] {tf}/{recipe} : decide_gate={gate.decision} "
+                            f"mais overfitting_gate=block ({_motif}) — "
+                            f"promotion ANNULÉE, le sortant est conservé"
+                        )
+                        gate = replace(
+                            gate,
+                            decision="keep",
+                            reason=f"overfitting_gate: {_motif}",
+                        )
+                    else:
+                        logger.warning(
+                            f"[MLPolicy] {tf}/{recipe} : overfitting_gate=block "
+                            f"({_motif}) mais gate_overfitting_block=false — "
+                            f"promotion MAINTENUE, refus ignoré volontairement"
+                        )
         except Exception as _og_err:
             logger.warning(
                 f"[MLPolicy] {tf}/{recipe} : overfitting_gate.validate_model_quality "
