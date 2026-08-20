@@ -82,7 +82,7 @@ export function StrategyPicker({
               >
                 {s}
                 {isMl && <span className="text-purple-400">ML</span>}
-                {tfs.length > 0 && (
+                {tfs.length > 0 && hasWarn && (
                   <span className="inline-flex gap-0.5">
                     {tfs.slice(0, 3).map((tf) => (
                       <span
@@ -96,7 +96,7 @@ export function StrategyPicker({
                     {hasWarn && (
                       <span
                         className="px-1 rounded text-[0.55rem] bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                        title="Au moins un TF sélectionné n'est pas recommandé"
+                        title="Un TF sélectionné n'est pas recommandé"
                       >
                         ⚠
                       </span>

@@ -216,6 +216,50 @@ export function OptimizerConfigForm({
         </div>
 
         <div>
+          <label className="text-xs text-dim block mb-1.5">Nombre de bougies</label>
+          <input
+            aria-label="Nombre de bougies"
+            type="number"
+            min={0}
+            max={50000}
+            step={100}
+            value={limitPerTf}
+            onChange={(e) => setLimitPerTf(Math.max(0, Math.min(50000, Number(e.target.value) || 0)))}
+            className="w-full max-w-xs px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+          />
+          <div className="flex flex-wrap gap-1 mt-1">
+            {[500, 2000, 5000, 8000, 50000].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setLimitPerTf(n)}
+                className={cn(
+                  'px-2 py-0.5 rounded text-[10px] border transition-colors',
+                  limitPerTf === n
+                    ? 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border-cyan-500/40'
+                    : 'bg-surface border-border text-muted hover:text-foreground hover:border-border-hi',
+                )}
+              >
+                {n >= 1000 ? `${n / 1000}k` : n}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setLimitPerTf(0)}
+              className={cn(
+                'px-2 py-0.5 rounded text-[10px] border',
+                limitPerTf === 0
+                  ? 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border-cyan-500/40'
+                  : 'bg-surface border-border text-muted',
+              )}
+            >
+              Auto
+            </button>
+          </div>
+          <p className="text-[10px] text-dim mt-1">0 / Auto = profondeur max du cache par TF.</p>
+        </div>
+
+        <div>
           <div className="text-xs text-dim mb-2">Presets</div>
           <div className="flex flex-wrap gap-2">
             {(Object.keys(PRESETS) as PresetKey[]).map((key) => {
@@ -314,49 +358,6 @@ export function OptimizerConfigForm({
         <div className="space-y-3 pt-2 border-t border-border">
           <div className="text-[10px] uppercase tracking-wider text-dim font-semibold">
             Options avancées
-          </div>
-          <div>
-            <label className="text-xs text-dim block mb-1.5">Nombre de bougies</label>
-            <input
-              aria-label="Nombre de bougies"
-              type="number"
-              min={0}
-              max={50000}
-              step={100}
-              value={limitPerTf}
-              onChange={(e) => setLimitPerTf(Math.max(0, Math.min(50000, Number(e.target.value) || 0)))}
-              className="w-full max-w-xs px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-            />
-            <div className="flex flex-wrap gap-1 mt-1">
-              {[500, 2000, 5000, 8000, 50000].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setLimitPerTf(n)}
-                  className={cn(
-                    'px-2 py-0.5 rounded text-[10px] border transition-colors',
-                    limitPerTf === n
-                      ? 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border-cyan-500/40'
-                      : 'bg-surface border-border text-muted hover:text-foreground hover:border-border-hi',
-                  )}
-                >
-                  {n >= 1000 ? `${n / 1000}k` : n}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setLimitPerTf(0)}
-                className={cn(
-                  'px-2 py-0.5 rounded text-[10px] border',
-                  limitPerTf === 0
-                    ? 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border-cyan-500/40'
-                    : 'bg-surface border-border text-muted',
-                )}
-              >
-                Auto
-              </button>
-            </div>
-            <p className="text-[10px] text-dim mt-1">0 / Auto = profondeur max du cache par TF.</p>
           </div>
           <div className="flex items-center gap-2 text-xs">
             <label className="cursor-pointer flex items-center gap-2">
