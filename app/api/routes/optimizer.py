@@ -315,7 +315,7 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
     """
     from app.core.config import load_config as _reload_cfg
     from app.engine.auto_optimizer import get_job
-    from app.engine.opt_scoring import beats_baseline
+    from app.engine.opt_scoring import beats_baseline, resolve_dd_max_abs
     from app.engine.optimizer_search import apply_best_params
 
     job = get_job(job_id)
@@ -359,8 +359,12 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
         # strictement plus faible que l'auto-apply : un drawdown OOS de 80 %
         # contre un baseline à 10 % passait sans rien déclencher.
         oos_dd=_h.get("dd", result.get("best_oos_dd")),
-        oos_pf=_h.get("profit_factor"),
-        oos_expectancy=_h.get("expectancy"),
+        oos_pf=_h.get("profit_factor", result.get("best_oos_pf")),
+        oos_expectancy=_h.get("expectancy", result.get("best_oos_expectancy")),
+        # OPT-03 : plafond absolu, ancré sur la limite que le moteur live fait
+        # respecter. Le plafond relatif seul se laisse contourner par cliquet,
+        # le baseline étant le paramétrage déjà appliqué.
+        dd_max_abs=resolve_dd_max_abs(state.cfg),
         # P0 — Deflated Sharpe gate (cf. auto_optimizer.py)
         n_trials=int(job.get("n_trials", 1)) or 1,
         min_deflated_sharpe=(

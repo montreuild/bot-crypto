@@ -67,6 +67,9 @@ class MarketCalendar(Protocol):
 
     def max_gap_seconds(self, ts: datetime, tf_seconds: int) -> float: ...
 
+    def expected_bars_between(self, a: datetime, b: datetime,
+                              tf_seconds: int) -> int: ...
+
 
 def _as_utc(ts: Optional[datetime]) -> datetime:
     """Normalise en datetime **aware UTC** (naïf = supposé UTC)."""
@@ -75,6 +78,81 @@ def _as_utc(ts: Optional[datetime]) -> datetime:
     if ts.tzinfo is None:
         return ts.replace(tzinfo=timezone.utc)
     return ts.astimezone(timezone.utc)
+
+
+# ── Barres attendues entre deux horodatages ─────────────────────────────────
+# Primitive commune aux calendriers à séances. La détection de trous OHLCV
+# posait jusqu'ici la question à l'envers : « quel écart tolérer ? », auquel on
+# répondait par une pile d'heuristiques (marge de fraîcheur, prochaine
+# ouverture, échantillonnage de l'intérieur du span). La bonne question est
+# « combien de barres DEVRAIENT exister entre ces deux-là ? », et le calendrier
+# sait y répondre exactement.
+_WALK_LIMITE = 400          # borne de sécurité : ~1 an de séances en journalier
+
+
+def _sessions_ouvertes_entre(cal, a: datetime, b: datetime) -> int:
+    """Nombre d'ouvertures de séance dans l'intervalle **ouvert** ``(a, b)``.
+
+    ``next_open(ts)`` rend ``ts`` lui-même quand le marché est déjà ouvert : il
+    faut donc sortir de la séance courante (``session_end``) avant de demander
+    la suivante, sinon on recompte indéfiniment la même.
+    """
+    n, t = 0, a
+    for _ in range(_WALK_LIMITE):
+        nxt = cal.next_open(t)
+        if nxt is None or nxt >= b:
+            return n
+        if nxt > a:                      # une ouverture strictement après `a`
+            n += 1
+        fin = cal.session_end(nxt)
+        t = fin if (fin is not None and fin > nxt) else nxt + timedelta(seconds=1)
+    return n
+
+
+def _secondes_ouvertes_entre(cal, a: datetime, b: datetime) -> float:
+    """Secondes de séance dans ``(a, b)`` — base du compte intraday."""
+    total, t = 0.0, a
+    for _ in range(_WALK_LIMITE):
+        if t >= b:
+            break
+        nxt = cal.next_open(t)
+        if nxt is None or nxt >= b:
+            break
+        fin = cal.session_end(nxt)
+        borne = min(fin, b) if fin is not None else b
+        if borne > nxt:
+            total += (borne - nxt).total_seconds()
+        if fin is None or fin <= nxt:    # séance sans fin : rien de plus à cumuler
+            break
+        t = fin
+    return total
+
+
+def _barres_attendues(cal, a: datetime, b: datetime, tf_seconds: int) -> int:
+    """Barres qui devraient exister STRICTEMENT entre ``a`` et ``b``.
+
+    Deux régimes, parce qu'une barre journalière ne vaut pas 86 400 s de
+    séance mais **une séance** :
+
+    - ``tf >= 1 j`` → compter les séances ouvertes entre les deux barres ;
+    - intraday      → temps de séance écoulé, divisé par le timeframe.
+    """
+    a, b = _as_utc(a), _as_utc(b)
+    if b <= a or tf_seconds <= 0:
+        return 0
+    if tf_seconds >= 86400:
+        return max(0, _sessions_ouvertes_entre(cal, a, b) - 1)
+    # On compte à partir du créneau qui SUIT ``a``, pas depuis ``a`` : sinon le
+    # reliquat de sa séance (``a`` à la clôture) ajoute une fraction de barre
+    # qui fausse l'arrondi, et il faut ensuite corriger selon que ``a`` tombe
+    # ou non dans une séance. En partant de ``a + tf``, la question posée est
+    # directement la bonne — « combien de créneaux ouverts strictement après
+    # ``a`` et avant ``b`` » — sans cas particulier.
+    depart = a + timedelta(seconds=tf_seconds)
+    if depart >= b:
+        return 0
+    return max(0, int(round(
+        _secondes_ouvertes_entre(cal, depart, b) / tf_seconds)))
 
 
 # ── 24/7 (crypto — défaut) ──────────────────────────────────────────────────
@@ -95,6 +173,14 @@ class AlwaysOpenCalendar:
 
     def max_gap_seconds(self, ts: Optional[datetime] = None, tf_seconds: int = 3600) -> float:
         return float(max(tf_seconds, 1) * _STALE_TF_MULTIPLIER)
+
+    def expected_bars_between(self, a: datetime, b: datetime,
+                              tf_seconds: int) -> int:
+        """Aucune fermeture : le compte est purement arithmétique."""
+        a, b = _as_utc(a), _as_utc(b)
+        if b <= a or tf_seconds <= 0:
+            return 0
+        return max(0, int(round((b - a).total_seconds() / tf_seconds)) - 1)
 
     def describe(self) -> str:
         return "24/7"
@@ -273,6 +359,10 @@ class SessionCalendar:
             return margin
         return (nxt - now_utc).total_seconds() + margin
 
+    def expected_bars_between(self, a: datetime, b: datetime,
+                              tf_seconds: int) -> int:
+        return _barres_attendues(self, a, b, tf_seconds)
+
     def describe(self) -> str:
         days = sorted(self.sessions)
         if not days:
@@ -359,6 +449,10 @@ class ExchangeCalendarsAdapter:
         if nxt is None or nxt <= now:
             return margin
         return (nxt - now).total_seconds() + margin
+
+    def expected_bars_between(self, a: datetime, b: datetime,
+                              tf_seconds: int) -> int:
+        return _barres_attendues(self, a, b, tf_seconds)
 
     def describe(self) -> str:
         return f"{self.name} (exchange_calendars)"

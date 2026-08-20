@@ -205,7 +205,12 @@ def test_l_equite_finale_reste_coherente():
 
 
 def test_total_pnl_egale_net_profit_avec_et_sans_jambes():
-    """FIN-01 : l'invariant revendiqué par to_dict (total_pnl == net_profit)."""
+    """FIN-01 : l'invariant revendiqué par to_dict (total_pnl == net_profit).
+
+    Le cas du PYRAMIDAGE est ajouté plus bas (`_JambesEtPyramide`) : c'est lui
+    qui manquait, et c'est par lui que FIN-02 passait — les frais d'entrée
+    d'un scale-in n'étaient retranchés nulle part.
+    """
     sans = _run(_SansJambes())
     assert sans.total_pnl == pytest.approx(sans.net_profit, abs=1e-4)
     avec = _run(_AvecJambes())
@@ -312,4 +317,20 @@ def test_la_somme_des_pnl_egale_la_variation_de_capital(strat):
     assert somme_pnl == pytest.approx(variation, abs=1e-4), (
         f"somme des PnL {somme_pnl:.6f} contre variation de capital "
         f"{variation:.6f} — écart {somme_pnl - variation:+.6f}"
+    )
+
+
+@pytest.mark.parametrize("strat", [_SansJambes, _AvecJambes, _JambesEtPyramide])
+def test_total_pnl_egale_net_profit_y_compris_avec_pyramidage(strat):
+    """Le même invariant, exposé cette fois par `BacktestResult`.
+
+    `net_profit` est la variation d'équité, `total_pnl` la somme des PnL de
+    trades : ils doivent coïncider. Le commentaire de `backtest_result` a
+    longtemps annoncé un écart égal aux frais d'entrée — mesuré, il vaut ~2e-5.
+    """
+    res = _run(strat())
+    assert res.trades
+    assert res.total_pnl == pytest.approx(res.net_profit, abs=1e-4), (
+        f"total_pnl={res.total_pnl:.6f} net_profit={res.net_profit:.6f} "
+        f"écart={res.total_pnl - res.net_profit:+.6f}"
     )

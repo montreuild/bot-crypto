@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 _TF_MINS = {
@@ -46,131 +46,38 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
     n = len(times)
     delta_secs_arr = _delta_seconds(df)
     gaps = []
+    # Un écart inférieur ou égal à 1,5×tf ne peut pas cacher de barre : c'est
+    # le seul cas où l'on peut trancher sans interroger le calendrier, et il
+    # couvre la quasi-totalité des barres.
     simple_allowed = expected_secs * 1.5
-    # Calculé une fois : décide si `max_gap_seconds` a un sens ici (DAT-01).
-    marche_247 = _est_24_7(cal)
     for i in range(1, n):
-        delta_secs = float(delta_secs_arr[i]) if delta_secs_arr is not None else _one_delta_secs(times[i - 1], times[i])
-        # PERF-01 : un écart déjà sous le seuil simple ne peut pas devenir un
-        # trou — `allowed` n'est construit que par des `max(...)`, il ne fait
-        # que croître. Le chemin calendaire coûte ~66× le chemin simple
-        # (3,2 µs/barre contre 212 mesurés) : le court-circuiter ici change le
-        # temps de scan du parc actions de ~392 s à quelques secondes.
-        # La garde portait auparavant `and cal is None`, jamais vrai :
-        # `calendar_for_symbol` renvoie ALWAYS_OPEN pour le crypto, et
-        # `candle_store` passe toujours un calendrier explicite.
+        delta_secs = (float(delta_secs_arr[i]) if delta_secs_arr is not None
+                      else _one_delta_secs(times[i - 1], times[i]))
         if delta_secs <= simple_allowed:
             continue
-        allowed = simple_allowed
-        if cal is not None:
-            try:
-                ts = _as_dt(times[i - 1])
-                after = _as_dt(times[i])
-                # Week-end / férié : si l'intérieur du span est fermé, ce n'est
-                # pas un trou de données. 1d : aucun jour de séance entre les
-                # deux barres (ven. minuit → lun. minuit).
-                if _calendar_closed_span(cal, ts, after, expected_secs):
-                    continue
-                end = cal.session_end(ts)
-                nxt = cal.next_open(end or ts)
-                if nxt is not None:
-                    allowed = max(
-                        allowed,
-                        (nxt - ts).total_seconds() + expected_secs * 1.5,
-                    )
-                # DAT-01 : `max_gap_seconds` mesure la fraîcheur tolérée d'une
-                # donnée LIVE (« mon cache est-il périmé ? »), pas la taille
-                # acceptable d'un trou historique. Sur un marché à séances
-                # elle vaut « temps jusqu'à la prochaine ouverture + marge »,
-                # ce qui couvre légitimement nuits, week-ends et fériés — on
-                # la garde. Sur un marché 24/7 elle se réduit à une marge
-                # forfaitaire de 3×tf, sans aucun sens calendaire : un marché
-                # qui ne ferme jamais n'a pas de fermeture à tolérer. L'y
-                # appliquer portait le seuil de 1,5×tf à 3×tf et masquait tout
-                # trou de 1 à 2 barres (15 trous réels non détectés sur
-                # BTC_USDC 1h, 4 sur 4h).
-                if not marche_247:
-                    try:
-                        allowed = max(
-                            allowed,
-                            float(cal.max_gap_seconds(ts, expected_secs)),
-                        )
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-        if delta_secs > allowed:
-            gap_bars = max(0, round(delta_secs / expected_secs) - 1)
+        # Au-delà, on ne devine pas un « écart tolérable » : on demande au
+        # calendrier combien de barres DEVRAIENT exister entre les deux.
+        # Une fermeture (nuit, week-end, férié) en produit zéro et n'est donc
+        # pas un trou ; une séance manquante en produit autant qu'il en manque.
+        try:
+            manquantes = int(cal.expected_bars_between(
+                _as_dt(times[i - 1]), _as_dt(times[i]), int(expected_secs)))
+        except Exception:
+            # Calendrier incomplet ou horodatage inattendu : repli arithmétique
+            # plutôt que silence — un trou non signalé ne se rattrape jamais.
+            manquantes = max(0, int(round(delta_secs / expected_secs)) - 1)
+        if manquantes > 0:
             gaps.append({
                 "index":        int(i),
                 "time_before":  str(times[i - 1])[:16],
                 "time_after":   str(times[i])[:16],
-                "gap_bars":     int(gap_bars),
+                "gap_bars":     int(manquantes),
                 "gap_duration": str(times[i] - times[i - 1]),
             })
     return gaps
 
 
-def _est_24_7(cal) -> bool:
-    """True si le calendrier n'a aucune fermeture (crypto).
 
-    Sondé plutôt que testé par type : ``get_calendar`` peut retomber sur
-    ``ALWAYS_OPEN`` quand une venue est inconnue, et le repli doit alors être
-    traité comme du 24/7. Deux sondes un samedi et un dimanche suffisent —
-    aucune bourse à séances n'est ouverte ces jours-là.
-    """
-    if cal is None:
-        return True
-    try:
-        from app.core.market_calendar import ALWAYS_OPEN
-        if cal is ALWAYS_OPEN:
-            return True
-    except Exception:
-        pass
-    try:
-        samedi = datetime(2021, 1, 2, 3, 0, tzinfo=timezone.utc)
-        dimanche = datetime(2021, 1, 3, 12, 0, tzinfo=timezone.utc)
-        return bool(cal.is_open(samedi)) and bool(cal.is_open(dimanche))
-    except Exception:
-        return False
-
-
-def _calendar_closed_span(cal, ts: datetime, after: datetime, expected_secs: float) -> bool:
-    """True si le span est une fermeture calendaire, pas un trou de données."""
-    if _interior_all_closed(cal, ts, after):
-        return True
-    if expected_secs < 86400 * 0.9:
-        return False
-    d0 = ts.date()
-    d1 = after.date()
-    d = d0 + timedelta(days=1)
-    while d < d1:
-        noon = datetime(d.year, d.month, d.day, 12, 0, tzinfo=timezone.utc)
-        try:
-            if cal.is_open(noon):
-                return False
-            morning = datetime(d.year, d.month, d.day, 8, 0, tzinfo=timezone.utc)
-            nxt = cal.next_open(morning)
-            if nxt is not None and nxt.date() == d:
-                return False
-        except Exception:
-            return False
-        d += timedelta(days=1)
-    return True
-
-
-def _interior_all_closed(cal, ts: datetime, after: datetime, samples: int = 7) -> bool:
-    total = (after - ts).total_seconds()
-    if total <= 0:
-        return False
-    for k in range(1, samples + 1):
-        mid = ts + timedelta(seconds=total * k / (samples + 1))
-        try:
-            if cal.is_open(mid):
-                return False
-        except Exception:
-            return False
-    return True
 
 
 def _one_delta_secs(a, b) -> float:
