@@ -2,8 +2,8 @@
 
 Audit du 2026-08-20 sur `bb94993`. Delta audité : `a6659e1..HEAD`.
 
-**36 constats** : 0 P0, 11 P1, 15 P2, 10 P3.
-**24 CONFIRMÉS par exécution**, 4 PLAUSIBLES (lecture seule), 8 améliorations
+**35 constats** : 0 P0, 11 P1, 15 P2, 9 P3.
+**23 CONFIRMÉS par exécution**, 4 PLAUSIBLES (lecture seule), 8 améliorations
 vérifiées.
 
 ---
@@ -13,13 +13,13 @@ vérifiées.
 | Sévérité | Nombre | Dont reproduits |
 |---|---:|---:|
 | **P0** — bloquant | 0 | — |
-| **P1** — majeur | 11 | 10 |
-| **P2** — mineur | 15 | 11 |
-| **P3** — cosmétique | 10 | 7 |
+| **P1** — majeur | 11 | 11 |
+| **P2** — mineur | 15 | 13 |
+| **P3** — cosmétique | 9 | 7 |
 
 | Statut | Nombre |
 |---|---:|
-| CONFIRMÉ (reproduit par exécution ou mesure) | 24 |
+| CONFIRMÉ (reproduit par exécution ou mesure) | 23 |
 | PLAUSIBLE (lecture du code seule) | 4 |
 | Amélioration vérifiée (pas un défaut) | 8 |
 
@@ -76,7 +76,6 @@ vérifiées.
 | `FE-02` | La reconnexion WS redemande un jeton à chaque tentative | `frontend/src/lib/ws-provider.tsx:93` | CONFIRMÉ | — | 11 |
 | `SEC-02` | Pas de limite de débit sur `POST /api/ws/ticket` ; purge linéaire sous verrou | `app/api/routes/ws.py:197` | CONFIRMÉ | 1 h | 14 |
 | `DETTE-04` | 11 fichiers Python > 700 lignes | — | CONFIRMÉ | — | 16 |
-| `DETTE-05` | `.gitlab-ci.yml` impose `--cov-fail-under=64`, absent du workflow GitHub | `.gitlab-ci.yml` | CONFIRMÉ | 30 min | 16 |
 | `ML-03b` | `fit_trace` est par thread : un entraînement délégué à un autre thread ou processus n'est pas tracé | `app/ml/fit_trace.py:17` | PLAUSIBLE | 1 h | 08 |
 | `FIN-04` | Le pyramidage applique désormais la courbe de risque et le frein de volatilité — changement de paramétrage | `app/engine/position_lifecycle.py:400-408` | CONFIRMÉ | — | 04 |
 

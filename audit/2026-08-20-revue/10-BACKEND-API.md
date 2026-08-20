@@ -185,7 +185,7 @@ méthode : il vérifie le schéma réellement servi.
   sur une requête à beaucoup de stratégies.
 - **`app/api` hors périmètre mypy** — seul `ws_tickets.py` est type-vérifié en
   CI. Voir `TEST-02` dans `15-TESTS-CI.md`.
-- **Divergence des deux pipelines** — `.gitlab-ci.yml` impose
-  `--cov-fail-under=64` sur pytest, absent de `.github/workflows/ci.yml`. Les
-  deux pipelines n'appliquent donc pas le même critère. Sans conséquence
-  aujourd'hui (GitHub est la référence), mais c'est une divergence à connaître.
+- **Cohérence des deux pipelines** — `.github/workflows/ci.yml:49-50` et
+  `.gitlab-ci.yml` appliquent le **même** critère de couverture
+  (`--cov-fail-under=64`). Le pipeline GitLab est bien le miroir qu'il annonce
+  être.

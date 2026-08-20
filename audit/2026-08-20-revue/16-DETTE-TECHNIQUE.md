@@ -135,23 +135,6 @@ d'invariant du lot `TEST-01` : c'est exactement ce qui a manqué ici.
 
 ---
 
-## DETTE-05 — Deux pipelines CI aux critères divergents (P3, CONFIRMÉ)
-
-**Fichiers** : `.github/workflows/ci.yml:49`, `.gitlab-ci.yml`.
-
-`.gitlab-ci.yml` impose `--cov-fail-under=64` sur pytest ; le workflow GitHub
-ne pose aucun seuil de couverture. `.gitlab-ci.yml` se décrit lui-même comme
-un miroir du premier, mais il ne l'est pas.
-
-**Scénario d'échec** — un changement fait chuter la couverture sous 64 % :
-GitHub reste vert, GitLab devient rouge. Si les deux sont branchés sur le même
-dépôt, l'incohérence se lit comme une CI instable.
-
-**Correctif** — aligner les deux, ou retirer le pipeline GitLab s'il n'est pas
-utilisé.
-
-**Effort** : 30 min.
-
 ---
 
 ## Ce qui va bien
