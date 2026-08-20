@@ -136,25 +136,31 @@ def run_strategy_job(payload: dict) -> tuple:
         wf_folds = int(payload.get("wf_folds") or 5)
         mc_runs = int(payload.get("mc_runs") or 200)
 
-        mod = importlib.import_module(f"app.strategies.{name}")
-        inst = mod.Strategy()
-        if hasattr(inst, "_cancel_event") and cancel is not None:
-            inst._cancel_event = cancel
-        eng = Engine()
-        eng.register(inst, silent=True)
+        def _fresh_engine():
+            """Une instance neuve par passe : cooldown / caches d'une stratégie
+            (ex. supertrend_macd._call_count) ne doivent pas contaminer
+            la passe d'étude après la passe live."""
+            mod = importlib.import_module(f"app.strategies.{name}")
+            inst = mod.Strategy()
+            if hasattr(inst, "_cancel_event") and cancel is not None:
+                inst._cancel_event = cancel
+            eng = Engine()
+            eng.register(inst, silent=True)
+            return eng
 
         runs_payload = None
         if dual_pass and env is not None:
             runs = run_dual_pass(
-                eng, cfg, df, env, symbol=symbol, timeframe=tf,
+                _fresh_engine(), cfg, df, env, symbol=symbol, timeframe=tf,
                 cancel_event=cancel, realistic_risk=realistic_risk,
+                engine_factory=_fresh_engine,
             )
             res = runs["live"]
             runs_payload = {k: _pass_summary(r) for k, r in runs.items()}
             runs_payload["ecart_pnl_pct"] = round(
                 runs_payload["live"]["pnl_pct"] - runs_payload["reference"]["pnl_pct"], 4)
         else:
-            bt = Backtester(eng, cfg, cancel_event=cancel,
+            bt = Backtester(_fresh_engine(), cfg, cancel_event=cancel,
                             realistic_risk=realistic_risk)
             res = bt.run(df, symbol, timeframe=tf)
 
@@ -162,7 +168,7 @@ def run_strategy_job(payload: dict) -> tuple:
             res, name, days_covered, bars_warning, env=env, runs_payload=runs_payload)
 
         if walk_forward and len(df) >= 200:
-            wf = WalkForwardAnalyzer(eng, cfg, n_folds=wf_folds)
+            wf = WalkForwardAnalyzer(_fresh_engine(), cfg, n_folds=wf_folds)
             entry["walk_forward"] = wf.run(df, symbol, timeframe=tf)
 
         all_trades = entry.get("trades") or []

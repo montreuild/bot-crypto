@@ -171,6 +171,44 @@ class TestDivergenceOnAnEquityVenueIsExplained:
         assert set(result.rejections["par_motif"]) <= set(REASONS)
 
 
+class TestDualPassIsolatesStrategyState:
+    """Une stratégie avec cooldown/_call_count ne doit pas vider la passe
+    d'étude après la passe live (supertrend_macd au Laboratoire)."""
+
+    def test_stateful_strategy_still_trades_on_the_reference_pass(self):
+        class _CooldownLong(BaseStrategy):
+            name = "cooldown_dummy"
+
+            def __init__(self):
+                self._call_count = {}
+                self._last_signal = {}
+
+            def score(self, df, params=None, df_htf=None, **kw):
+                if len(df) < 30:
+                    return {"side": "none", "score": 0}
+                sym = "BTC/USDC"
+                cnt = self._call_count.get(sym, 0) + 1
+                self._call_count[sym] = cnt
+                if cnt - self._last_signal.get(sym, -999) < 12:
+                    return {"side": "none", "score": 0, "reason": "Cooldown"}
+                self._last_signal[sym] = cnt
+                return {"side": "long", "score": 0.9, "name": self.name,
+                        "reason": "test", "sl_atr_mult": 2.0}
+
+        def factory():
+            eng = Engine()
+            eng.register(_CooldownLong())
+            return eng
+
+        df = _make_df(120)
+        out = run_dual_pass(
+            factory(), _cfg(), df, _env(90.0), symbol="BTC/USDC",
+            engine_factory=factory,
+        )
+        assert out["live"].total_trades > 0
+        assert out["reference"].total_trades > 0
+
+
 class TestResultPayload:
     def test_rejections_are_exposed_in_to_dict(self):
         """Le payload doit porter les compteurs : c'est par la que l'UI et

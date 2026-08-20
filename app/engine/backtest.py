@@ -97,16 +97,22 @@ def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
 
 def run_dual_pass(engine: Engine, cfg: dict, df, envelope, *,
                   symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "1d",
+                  engine_factory=None,
                   **run_kwargs) -> dict:
     """``live`` = enveloppe du slot (promouvable ?) ;
     ``reference`` = même enveloppe à échelle fixe (la stratégie vaut-elle ?).
     Un écart de PnL % vient des contraintes absolues (min notional, lot, frais).
+
+    ``engine_factory`` : si fourni, une Engine **neuve** par passe. Sans ça,
+    l'état runtime de la stratégie (cooldown, ``_call_count``) de la passe
+    live empoisonne la passe d'étude — 0 trade alors que le réel en a.
     """
     reference_capital = float((cfg.get("backtest") or {}).get("reference_envelope", 1000.0))
     out = {}
     for pass_name, env in (("live", envelope),
                            ("reference", with_reference_envelope(envelope, reference_capital))):
-        bt = Backtester(engine, cfg, envelope=env, **run_kwargs)
+        eng = engine_factory() if callable(engine_factory) else engine
+        bt = Backtester(eng, cfg, envelope=env, **run_kwargs)
         out[pass_name] = bt.run(df, symbol=symbol, timeframe=timeframe)
     return out
 
@@ -298,6 +304,12 @@ class Backtester(PositionLifecycleMixin):
                     ml_info["models"][strat.name] = entry
             strat._bt_symbol = symbol
             strat._bt_tf = timeframe or self.cfg["trading"].get("timeframe", "1h")
+            # Dual-pass / WF : un cooldown ou un call_count d'une passe
+            # précédente ne doit pas bloquer la suivante.
+            for attr in ("_call_count", "_last_signal"):
+                val = getattr(strat, attr, None)
+                if isinstance(val, dict):
+                    val.clear()
             prep = getattr(strat, "prepare_for_backtest", None)
             if callable(prep):
                 try:

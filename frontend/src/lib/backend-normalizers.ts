@@ -201,6 +201,41 @@ export function equityFinal(r: Pick<BacktestResult, 'equity_final' | 'final_equi
   return r.equity_final ?? r.final_equity ?? null;
 }
 
+/** `equity_curve` backend = tableau de nombres, pas `{equity}` — `.map(p => p.equity)` donnait 0$. */
+export function equityValues(curve: unknown): number[] {
+  if (!Array.isArray(curve) || curve.length === 0) return [];
+  const out: number[] = [];
+  for (const p of curve) {
+    const n = typeof p === 'number' ? p
+      : (p && typeof p === 'object' && 'equity' in p ? Number((p as { equity: unknown }).equity) : NaN);
+    if (Number.isFinite(n)) out.push(n);
+  }
+  return out;
+}
+
+/** Max DD backend déjà en % (ex. -5.10). Ne plus ×100 (sinon -8791 %). */
+export function formatDrawdownPct(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  const pct = Math.abs(v) <= 1.0000001 && v !== 0 ? v * 100 : v;
+  return `${pct.toFixed(1)}%`;
+}
+
+/** Alpha backend = PnL − B&H en devise. Afficher en % du capital, pas `-6420%`. */
+export function alphaPct(
+  alpha: number | null | undefined,
+  initialCapital?: number | null,
+  alphaVsBh?: number | null,
+): number | null {
+  if (alphaVsBh != null && Number.isFinite(alphaVsBh) && Math.abs(alphaVsBh) < 500) {
+    return alphaVsBh;
+  }
+  if (alpha == null || !Number.isFinite(alpha)) return null;
+  if (initialCapital && initialCapital > 0 && Math.abs(alpha) > 5) {
+    return (alpha / initialCapital) * 100;
+  }
+  return alpha;
+}
+
 /** BT-006 — buy & hold (PnL ou %). */
 export function buyHold(r: Pick<BacktestResult, 'buy_and_hold_pnl' | 'buy_and_hold_pct'>): { pnl: number | null; pct: number | null } {
   return {
