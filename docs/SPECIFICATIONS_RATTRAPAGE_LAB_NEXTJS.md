@@ -37,7 +37,9 @@ Le passage Jinja2 → Next.js (S6-09, commit `ecc87b2`) a livré une base saine 
 
 1. **Récupération des templates Jinja2 supprimés** via `git show ecc87b2~1:app/web/templates/{backtest,optimizer,replay,ml,compare,base}.html`. Les fichiers restaurés sont dans `/home/z/my-project/analysis/jinja2-originals/` (4 092 lignes cumulées).
 2. **Lecture intégrale des pages Next.js actuelles** :
-   - `frontend/src/app/lab/page.tsx` (781 l.) — onglet Backtest inline + lazy-load des 4 autres vues
+   - `frontend/src/app/lab/page.tsx` — **depuis #244** : shell (~175 L) +
+     `next/dynamic` par onglet. Backtest dans `components/views/backtest-view.tsx`.
+     (À la rédaction : 781 L, onglet Backtest inline + lazy-load des 4 autres vues.)
    - `frontend/src/components/views/{optimizer,compare,replay,ml}-view.tsx`
    - `frontend/src/components/charts/*` et `frontend/src/components/cards/*`
    - `frontend/src/lib/api.ts` et `frontend/src/types/index.ts`

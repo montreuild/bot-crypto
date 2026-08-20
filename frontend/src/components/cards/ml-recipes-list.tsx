@@ -61,7 +61,7 @@ export function MLRecipesList() {
             <p className="text-xs text-muted">Aucune recette disponible</p>
           ) : (
             <div className="space-y-3">
-              {data.recipes.map((recipe: any) => {
+              {data.recipes.map((recipe) => {
                 const trainable = recipe.trainable !== false;
                 // `features_catalog` est un **identifiant** de catalogue
                 // (« dyn_threshold@1 »), pas la liste des features. La version

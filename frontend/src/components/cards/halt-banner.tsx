@@ -16,7 +16,8 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { AlertOctagon, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '@/lib/api';
-import { toast } from 'sonner';
+import { toast } from 'sonner'
+import { errorMessage } from '@/lib/utils';
 import { useQueryClient } from '@tanstack/react-query';
 
 interface HaltBannerProps {
@@ -41,8 +42,8 @@ export function HaltBanner({ halted, reason, killSwitch }: HaltBannerProps) {
       qc.invalidateQueries({ queryKey: ['status'] });
       qc.invalidateQueries({ queryKey: ['portfolio'] });
       qc.invalidateQueries({ queryKey: ['circuitBreakers'] });
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     } finally {
       setLoading(false);
     }

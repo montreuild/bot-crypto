@@ -366,7 +366,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
     _TRAIN_STATE_ATTRS = MLBackend._TRAIN_STATE_ATTRS
     _TRAIN_PARAM_KEYS  = MLBackend._TRAIN_PARAM_KEYS
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         warmup = int(p.get("warmup_bars", self._DEFAULTS["warmup_bars"]))
         return max(230, warmup + 30)
@@ -389,7 +389,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
             logger.info(f"[OmnibusV11] Modèle {tf} chargé depuis {path}")
         return ok
 
-    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
+    def fit(self, df: pl.DataFrame, params: dict | None = None) -> None:
         # Préserve le chemin de log JSONL spécifique V11.
         p = (params or {}).get(self.name, {})
         if p.get("log_training", self._DEFAULTS["log_training"]):
@@ -451,7 +451,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
                 self.predict_direction(features, tf))
 
     # ── Score V11 (routing conservé) ───────────────────────────────────────
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         if df is None or len(df) < self.min_bars_required(params):
             return self._none(f"Données insuffisantes ({len(df) if df is not None else 0})")
@@ -654,7 +654,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
 
     # ── Sortie anticipée (routing V10) ────────────────────────────────────────
     def check_early_exit(self, df: pl.DataFrame, position: dict,
-                         params: dict = None) -> Optional[str]:
+                         params: dict | None = None) -> Optional[str]:
         setup_name = position.get("setup")
         if not setup_name:
             ind = position.get("indicators") or {}

@@ -30,7 +30,7 @@ import polars as pl
 
 from app.core.bot_identity import build_pos_key, build_slot_key, resolve_venue
 from app.core.config import DEFAULT_TAKER_FEE
-from app.core.database import persist_open_position, session_scope
+from app.core.database import delete_open_position, persist_open_position, session_scope
 from app.core.execution import (
     plan_partial_targets,
     quantize_price,
@@ -42,6 +42,7 @@ from app.core.indicators import atr_val as _compute_atr
 from app.core.risk_envelope import resolve_envelope
 from app.core.timeframes import HTF_MAP as _HTF_MAP
 from app.core.trailing import TrailingStopManager
+from app.live.protocols import LiveHost
 
 # WebSocket temps réel — non bloquant, jamais critique pour le trading
 try:
@@ -76,7 +77,17 @@ def _order_failed(order: dict | None) -> bool:
     """
     if order is None:
         return True
-    return str(order.get("status") or "").lower() in _REJECTED_ORDER_STATUSES
+    status = str(order.get("status") or "").lower()
+    if status in _REJECTED_ORDER_STATUSES:
+        return True
+    filled = float(order.get("filled") or 0)
+    if filled > 0:
+        return False
+    if status in ("closed", "filled"):
+        return False
+    if status in ("open", "new", "pending", "unfilled"):
+        return True
+    return False
 
 
 def _order_fail_reason(order: dict | None) -> str:
@@ -118,7 +129,7 @@ def _apply_trail_override(base_cfg: dict, override: dict) -> dict:
     return merged
 
 
-class PositionOpenMixin:
+class PositionOpenMixin(LiveHost):
     """Ouverture de positions (voir docstring module)."""
 
     # ── Sizing : distance au stop initial (parité backtest) ─────────────────
@@ -175,7 +186,7 @@ class PositionOpenMixin:
 
     # ── Venue (G2) ─────────────────────────────────────────────────────────
 
-    def _venue_for(self, symbol: str, strategy: str = None, tf: str = None):
+    def _venue_for(self, symbol: str, strategy: str | None = None, tf: str | None = None):
         """Venue applicable au trade — crypto par défaut (aucun changement)."""
         return resolve_venue(self.cfg, strategy, tf, symbol)
 
@@ -225,8 +236,8 @@ class PositionOpenMixin:
                                 peers=peers, edges={k: None for k in peers})
 
     def _execute_order(self, venue, symbol: str, order_type: str, side: str,
-                       amount: float, price: float = None,
-                       params: dict = None) -> dict:
+                       amount: float, price: float | None = None,
+                       params: dict | None = None) -> dict:
         """Transmet l'ordre, ou le simule si la venue n'a pas d'exécution.
 
         Décision prise **ici**, au plus près du trade, et pas seulement dans
@@ -289,16 +300,35 @@ class PositionOpenMixin:
         if take_profit is not None:
             take_profit = quantize_price(take_profit, venue)
 
+        # L-08 : persister AVANT l'ordre. Un crash après fill et avant
+        # persist laissait un ordre réel sans position. La reprise relit
+        # cette ligne (pending_open) et reprend la gestion.
+        with session_scope(self.SessionLocal) as _sess:
+            persist_open_position(_sess, {
+                "id": pos_key, "symbol": symbol, "side": signal["side"],
+                "strategy": signal.get("name", ""), "entry": price,
+                "stop": stop, "size": size, "notional": notional,
+                "leverage": leverage, "open_time": time.time(),
+                "fees": 0.0, "order_id": "", "reason": "pending_open",
+            })
         order     = self._execute_order(
             venue, symbol, "market", signal["side"], size,
             params={"leverage": int(leverage)}
         )
         if _order_failed(order):
+            try:
+                with session_scope(self.SessionLocal) as _sess:
+                    delete_open_position(_sess, pos_key)
+            except Exception as _rb:
+                logger.error(
+                    f"[OPEN] {symbol} rollback delete_open_position KO : {_rb}",
+                    exc_info=True,
+                )
             raise RuntimeError(
                 f"[OPEN] {symbol} : ordre non exécuté — {_order_fail_reason(order)}"
             )
         exec_price = order.get("price") or order.get("average") or price
-        if not exec_price and not self.cfg["trading"].get("paper_mode"):
+        if not exec_price and not self.cfg["trading"].get("paper_mode", True):
             try:
                 filled = self.exchange.fetch_order(order.get("id", ""), symbol)
                 exec_price = filled.get("average") or filled.get("price") or price
@@ -311,15 +341,24 @@ class PositionOpenMixin:
                 exec_price = price
 
         # Slippage adverse en paper mode (achat plus cher)
-        if self.cfg["trading"].get("paper_mode"):
+        if self.cfg["trading"].get("paper_mode", True):
             slip = self._paper_slippage_fraction(symbol, tf, notional)
             exec_price *= (1 + slip) if signal["side"] == "long" else (1 - slip)
+            # LIVE-03 : le paper applique le même partial_fill que le backtest
+            # (sinon le paper est plus optimiste, et le chemin d'ajustement
+            # de taille n'est jamais exercé avant la première session réelle).
+            pf = float((self.cfg.get("backtest") or {}).get("partial_fill_pct") or 1.0)
+            if 0.0 < pf < 1.0:
+                size = size * pf
+            # L-09 : le notionnel suit le prix slippé (sinon le ledger et
+            # le sizing restent sur le ticker pré-exécution).
+            notional = size * exec_price
         else:
             # Remplissage partiel : aligner la taille trackée sur la taille
             # réellement exécutée (sinon stops/PnL calculés sur une taille fausse).
             try:
                 filled = float(order.get("filled") or 0)
-                if 0 < filled < size * 0.98:
+                if filled < size * 0.98:
                     logger.warning(
                         f"[OPEN] {symbol} remplissage partiel : "
                         f"{filled:.6f}/{size:.6f} — taille de position ajustée"
@@ -336,7 +375,7 @@ class PositionOpenMixin:
         fees     = venue_trade_cost(exec_price, size, fee_rate,
                                     side=signal["side"], venue=venue, is_entry=True)
         with self._capital_lock:
-            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+            if self.cfg["trading"].get("paper_mode", True) and hasattr(self, "_paper_base"):
                 self._paper_base -= fees
             else:
                 self.capital_display -= fees
@@ -411,15 +450,10 @@ class PositionOpenMixin:
             "reason":    signal.get("reason", ""),
         })
 
-        score_factor = round(
-            0.5 + 0.5 * (signal.get("score", 0) - strat_threshold)
-            / max(1.0 - strat_threshold, 1e-9),
-            2,
-        )
         logger.info(
             f"[OPEN] {signal['side'].upper()} {symbol} @ {exec_price:.4f} "
             f"| Strat={strat_name}@{tf} | Score={signal['score']:.2f} "
-            f"| Sizing={score_factor * 100:.0f}% | Size={size:.6f} | Stop={stop:.4f}"
+            f"| Size={size:.6f} | Stop={stop:.4f}"
         )
         # G2 : une venue data-only n'a reçu AUCUN ordre — la notification de
         # trade (symbole / sens / ouverture / SL / TP) est le seul chemin vers
@@ -474,6 +508,15 @@ class PositionOpenMixin:
         backtest : c'est ce qui permet d'expliquer une divergence entre les
         deux plutôt que de la constater.
         """
+        # N-04 : même résolution de mode de sortie que le backtest, sinon un
+        # paramétrage validé sous `trailing` serait tradé en `as_declared`.
+        from app.core.execution import apply_exit_mode
+        _bcfg = (self.cfg.get("backtest") or {})
+        _mode = str(signal_dict.get("exit_mode") or _bcfg.get("exit_mode", "as_declared"))
+        if _mode != "as_declared":
+            signal_dict = apply_exit_mode(
+                signal_dict, _mode, dict(_bcfg.get("exit_mode_params") or {}))
+
         now_iso = datetime.now(timezone.utc).isoformat()
 
         def _reject(tag: str, reason: str) -> bool:
@@ -574,7 +617,17 @@ class PositionOpenMixin:
             with self._positions_lock:
                 self.open_positions.pop(pos_key, None)
             self.ledger.release(pos_key)
+            try:
+                with session_scope(self.SessionLocal) as _sess:
+                    delete_open_position(_sess, pos_key)
+            except Exception as _rb:
+                logger.error(
+                    f"[OPEN] {symbol} rollback delete_open_position KO : {_rb}",
+                    exc_info=True,
+                )
             raise
+        # F-11 : le jeton anti-spam n'est consommé qu'après un fill réussi.
+        self.risk.consume_rate_token()
         # Le fill réel peut différer de la taille demandée (remplissage partiel,
         # slippage) : réaligner le risque engagé sur la position effective.
         opened = self.open_positions.get(pos_key) or {}

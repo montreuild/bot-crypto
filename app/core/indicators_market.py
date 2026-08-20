@@ -33,9 +33,9 @@ def market_structure(high: pl.Series, low: pl.Series,
     """+1 = HH/HL (uptrend), −1 = LL/LH (downtrend), 0 = neutral."""
     if len(high) < n_pivots * window * 2:
         return 0
-    highs = [float(high[-i * window - 1:-i * window + window - 1].max())
+    highs = [float(high[-i * window - 1:-i * window + window - 1].max() or 0)  # type: ignore[arg-type]
              for i in range(1, n_pivots + 1)]
-    lows  = [float(low[-i * window - 1:-i * window + window - 1].min())
+    lows  = [float(low[-i * window - 1:-i * window + window - 1].min() or 0)  # type: ignore[arg-type]
              for i in range(1, n_pivots + 1)]
     hh = sum(1 for i in range(len(highs) - 1) if highs[i] > highs[i + 1])
     hl = sum(1 for i in range(len(lows) - 1)  if lows[i]  > lows[i + 1])
@@ -49,7 +49,7 @@ def market_structure(high: pl.Series, low: pl.Series,
 
 
 def htf_trend(df_htf, ema_period: int = 50, *, df_ltf=None,
-              mult: int = 4, full_df=None, cache: dict = None) -> int:
+              mult: int = 4, full_df=None, cache: dict | None = None) -> int:
     """Tendance du timeframe supérieur : +1 haussier, −1 baissier, 0 neutre.
 
     ⚠ **Parité backtest ↔ live (L5).** ``df_htf`` n'est fourni QUE par le live
@@ -94,6 +94,27 @@ def htf_trend(df_htf, ema_period: int = 50, *, df_ltf=None,
                     cache[key] = arr
                 if arr is not None:
                     return int(arr[pos])
+                fb_key = (id(full_df), full_df.height, int(ema_period), int(mult), "fb")
+                if fb_key not in cache:
+                    from app.core.smc_sessions import _htf_buckets
+                    htf_df_f, idx_f, _, _ = _htf_buckets(full_df, None, mult)
+                    if htf_df_f is None or len(htf_df_f) < ema_period + 3:
+                        cache[fb_key] = (None, None)
+                    else:
+                        c_h = htf_df_f["close"]
+                        ema_h = c_h.ewm_mean(span=ema_period, adjust=False)
+                        n_h = len(htf_df_f)
+                        arr_h = [0] * n_h
+                        for j in range(ema_period + 2, n_h):
+                            pa = float(c_h[j]) > float(ema_h[j])
+                            su = float(ema_h[j]) > float(ema_h[j - 3])
+                            arr_h[j] = 1 if (pa and su) else (-1 if (not pa and not su) else 0)
+                        cache[fb_key] = (arr_h, idx_f)
+                arr_h, idx_f = cache[fb_key]
+                if arr_h is not None and idx_f is not None and pos < len(idx_f):
+                    hi = int(idx_f[pos])
+                    if 0 <= hi < len(arr_h):
+                        return int(arr_h[hi])
         from app.core.smc_sessions import _htf_buckets
         htf_df, idx, _, _ = _htf_buckets(df_ltf, None, mult)
         if htf_df is None or idx[-1] < 0:

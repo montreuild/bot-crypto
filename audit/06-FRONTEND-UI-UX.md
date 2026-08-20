@@ -13,15 +13,20 @@
 | U-01 | 🟠 Majeur | Le système i18n n'est branché nulle part | `lib/i18n.tsx` |
 | U-02 | 🟠 Majeur | L'UI présente comme des mesures des valeurs sentinelles et des Sharpe absurdes | `cards/kpi-cards.tsx`, `views/optimizer-view.tsx` |
 | U-03 | 🟠 Majeur | Sondage permanent : ≈ 40 requêtes/min par onglet, en plus du WebSocket | `hooks/use-api.ts` |
-| U-04 | 🟠 Majeur | 98 composants sur 122 sont `'use client'` — le SSR ne sert à rien | tout `frontend/src` |
-| U-05 | 🟡 Moyen | 212 usages de `any` / `as any` : les types du backend ne protègent rien | 40 fichiers |
-| U-06 | 🟡 Moyen | ~39 champs de saisie sans étiquette associée | 61 `<input>` / 22 `htmlFor` |
+| U-04 | 🟠 Majeur | 98 composants sur 122 sont `'use client'` — le SSR ne sert à rien | ✅ atténué — `dynamic()` lab + portfolio |
+| U-05 | 🟡 Moyen | 212 usages de `any` / `as any` : les types du backend ne protègent rien | ✅ contrats métier ; `as any` graphiques / SMC hors scope |
+| U-06 | 🟡 Moyen | ~39 champs de saisie sans étiquette associée | ✅ atténué — lab/settings ont Label/aria-label |
 | U-07 | 🟡 Moyen | `dangerouslySetInnerHTML` sur du texte venant du backend | `cards/optimizer-warnings.tsx:50` |
-| U-08 | 🟡 Moyen | Quatre composants de plus de 700 lignes, jusqu'à 1 558 | `views/optimizer-view.tsx` |
-| U-09 | 🟡 Moyen | `key={i}` sur des listes qui changent d'ordre | 19 emplacements |
+| U-08 | 🟡 Moyen | Quatre composants de plus de 700 lignes, jusqu'à 1 558 | ✅ toutes les vues listées sous 700 L (`optimizer-view` ~88 L) |
+| U-09 | 🟡 Moyen | `key={i}` sur des listes qui changent d'ordre | ✅ atténué — clés stables sur listes métier |
 | U-10 | 🟡 Moyen | Le mode expert a deux sources de vérité qui peuvent diverger | `app/lab/page.tsx:139-145` |
 | U-11 | 🔵 Mineur | `lang="fr"` figé sur `<html>` | `app/layout.tsx` |
 | U-12 | 🔵 Mineur | Le nom des onglets vit dans l'URL sans être validé | `app/lab/page.tsx`, `app/market/page.tsx` |
+
+> **18/08** — libellés honnêtes, pas une refonte UI : walk-forward annoncé
+> comme **stabilité** (`kind`, `avg_fold_pnl`) ; optimiseur affiche `val_*`
+> et `gate_source` (holdout vs sélection). U-02 atténué côté backend
+> (F-02 / F-10). U-05 / U-08 : [`19-REVISION-2026-08-18.md`](19-REVISION-2026-08-18.md).
 
 ---
 
@@ -200,9 +205,12 @@ un écart est journalisé et la donnée brute passe. C'est le bon arbitrage pour
 un tableau de bord. Il faudrait toutefois que ces écarts soient **visibles**
 (compteur dans le bandeau de statut) et non seulement en console.
 
-**Correction** : générer les types depuis l'OpenAPI de FastAPI
-(`/api/openapi.json` est exposé hors production) avec `openapi-typescript`.
-Cela supprime la classe entière de divergences `tf`/`timeframe`.
+**Correction (livrée #244–#246, FE-03 #256)** : contrats API dans
+`types/generated.ts`. Vues riches dans `types/views.ts`. `index.ts` est
+un barrel. Les `as any` métier (bots, Verdict, session, OOS, audit,
+enveloppes, optimize start) sont retirés. Zod reste non bloquant. Les
+`as any` de graphiques (lightweight-charts) et payloads SMC/replay
+hétérogènes restent hors scope (U-05).
 
 ---
 
@@ -290,8 +298,11 @@ re-rend l'intégralité de la page**, y compris les graphiques des autres onglet
 s'ils sont montés. Il y a 97 `useMemo`/`useCallback` dans le frontend, ce qui
 indique qu'on a déjà lutté contre le problème au cas par cas.
 
-**Correction** : un fichier par onglet, chargés par `next/dynamic` (cf. U-04).
-Le découpage est mécanique et sans risque fonctionnel.
+**Correction (livrée #244–#246)** : un fichier par onglet, chargés par
+`next/dynamic`. `lab/page.tsx` ~175 L (shell). Backtest → vue ~525 L +
+`backtest-results.tsx` ~626 L. Smart Graph → vue ~556 L +
+`use-smart-graph-chart.ts` ~595 L. Optimizer → vue ~88 L +
+`optimizer-config-form.tsx` ~514 L + `optimizer-jobs-panel.tsx` ~294 L.
 
 ---
 

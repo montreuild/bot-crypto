@@ -56,19 +56,19 @@ def composite_score(res, min_trades: int = MIN_SIGNIFICANT_TRADES) -> float:
         return -999.0
 
     if isinstance(res, dict):
-        sharpe = res.get("sharpe", 0)
+        sharpe = res.get("sharpe") or 0
         wr     = res.get("win_rate", 0) / 100
         pf     = res.get("profit_factor", 0)
-        pnl    = res.get("total_pnl", 0)
+        pnl    = res.get("net_profit", res.get("total_pnl", 0))
         dd     = abs(res.get("max_drawdown", -100))
         exp    = res.get("expectancy", 0)
         alpha  = res.get("alpha", 0)
         cap    = res.get("initial_capital") or _FALLBACK_CAPITAL
     else:
-        sharpe = res.sharpe
+        sharpe = res.sharpe or 0
         wr     = res.win_rate / 100
         pf     = res.profit_factor
-        pnl    = res.total_pnl
+        pnl    = getattr(res, "net_profit", res.total_pnl)
         dd     = abs(res.max_drawdown)
         exp    = res.expectancy
         alpha  = getattr(res, "alpha", 0)
@@ -76,12 +76,14 @@ def composite_score(res, min_trades: int = MIN_SIGNIFICANT_TRADES) -> float:
 
     cap = float(cap) if cap else _FALLBACK_CAPITAL
 
+    if pf is None or (isinstance(pf, float) and not math.isfinite(pf)):
+        pf = 6.0  # F-10 : aucune perte → plafond qualité, pas sentinelle 999
     if isinstance(pf, str):
         pf = 6.0
     pf = min(float(pf), 6.0)
 
     trade_factor = min(n / 10, 1.0)
-    dd_factor    = max(0, 1.0 - dd / 30)
+    dd_factor    = 1.0 / (1.0 + dd / 15.0)
     alpha_norm   = max(min(alpha / 50.0, 1.0), -1.0)
     alpha_bonus  = alpha_norm * 0.10
 
@@ -139,12 +141,33 @@ def composite_score(res, min_trades: int = MIN_SIGNIFICANT_TRADES) -> float:
 
 
 def overfitting_ratio(is_score: float, oos_score: float) -> float:
-    """Ratio IS/OOS (>2.5 = surapprentissage probable). NaN si non significatif."""
+    """Ratio IS/OOS (> 2.5 = surapprentissage probable), NaN si INDÉFINI.
+
+    Un ratio n'a de sens que si les deux scores sont positifs. Les trois cas
+    dégénérés rendent donc ``NaN`` — pas une valeur numérique qui prendrait
+    rang dans un classement :
+
+    - score IS ou OOS non significatif (≤ −990, run dégénéré) ;
+    - **score IS ≤ 0** : la configuration échoue déjà en apprentissage. Il n'y a
+      pas de « sur-apprentissage » à mesurer, il n'y a pas d'apprentissage ;
+    - **score OOS ≤ 0** : la dégradation est totale. Le rapport tendrait vers
+      l'infini ; le saturer à 10 en ferait un nombre comparable à un vrai ratio.
+
+    ⚠ Correction. La version précédente rendait **0.0** quand le score IS était
+    négatif — c'est-à-dire *la meilleure valeur de l'échelle* pour une
+    configuration qui ne marche nulle part. Mesuré sur la campagne de
+    recalibration : `multi_tf_sr` ETH 4 h (PnL OOS **+371,7**, Sharpe 1,35) et
+    `fear_momentum` BTC 1 h (PnL OOS **−168,4**, Sharpe −2,48) recevaient tous
+    deux ``overfit = 0.0``. Et elle saturait à **10.0** dès que le score OOS
+    passait sous 0.01, par l'effet du garde ``max(oos_score, 0.01)`` — ce qui
+    faisait lire « surapprentissage extrême » là où le fait mesuré était
+    seulement « score OOS négatif ». Cf. docs/DEFAUT_METRIQUE_OVERFIT.md.
+    """
     if oos_score <= -990 or is_score <= -990:
         return float('nan')
-    if is_score <= 0:
-        return 0.0
-    return round(min(is_score / max(oos_score, 0.01), 10.0), 2)
+    if is_score <= 0 or oos_score <= 0:
+        return float('nan')
+    return round(min(is_score / oos_score, 10.0), 2)
 
 
 # Alias privés historiques (compat avec le code/les tests existants)
@@ -156,7 +179,10 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
                    oos_sharpe: float, baseline: dict,
                    min_trades: int = MIN_SIGNIFICANT_TRADES,
                    n_trials: int = 1,
-                   min_deflated_sharpe: Optional[float] = None) -> tuple:
+                   min_deflated_sharpe: Optional[float] = None,
+                   oos_dd: float | None = None,
+                   oos_pf: float | None = None,
+                   oos_expectancy: float | None = None) -> tuple:
     """Garde-fou UNIQUE d'application d'un paramétrage optimisé (BT-04/BT-06).
 
     Retourne ``(ok, raison)``. Partagé par l'auto-apply (AutoOptimizer) et
@@ -168,7 +194,7 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
     2. PnL OOS strictement positif ;
     3. PnL OOS strictement meilleur que le baseline (params actuels) ;
     4. amélioration d'au moins un critère de qualité (win-rate OU Sharpe) ;
-    5. **Deflated Sharpe** (P0 — câblage du module ``app/core/deflated_sharpe.py``)
+    5. **Deflated Sharpe** (Bailey & López de Prado, ``deflated_sharpe_ratio``)
        si ``n_trials > 1`` et ``min_deflated_sharpe`` fourni > 0 : corrige le
        biais de multiple testing (López de Prado 2014). Un Sharpe OOS élevé
        obtenu après 50 essais est beaucoup moins significatif que le même
@@ -187,9 +213,33 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
         return False, f"PnL OOS non positif ({oos_pnl:+.2f})"
     if oos_pnl <= b_pnl:
         return False, (f"PnL OOS ({oos_pnl:+.2f}) ≤ baseline ({b_pnl:+.2f})")
-    if not (oos_wr > b_wr or oos_sharpe > b_sharpe):
+    # F-02 : un Sharpe None n'est pas mesurable — il ne peut pas battre
+    # le baseline. On n'autorise l'amélioration de qualité que via le WR.
+    _sharpe_ok = (oos_sharpe is not None
+                  and b_sharpe is not None
+                  and oos_sharpe > b_sharpe)
+    b_pf = baseline.get("profit_factor")
+    b_exp = baseline.get("expectancy")
+    _exp_ok = (oos_expectancy is not None and b_exp is not None
+               and oos_expectancy > b_exp)
+    _pf_ok = (oos_pf is not None and b_pf is not None and oos_pf > b_pf)
+    if not (_sharpe_ok or _exp_ok or _pf_ok or oos_wr > b_wr):
+        _sh_txt = "—" if oos_sharpe is None else f"{oos_sharpe:.2f}"
+        _bsh_txt = "—" if b_sharpe is None else f"{b_sharpe:.2f}"
         return False, (f"aucune amélioration de qualité (WR {oos_wr:.1f}% vs "
-                       f"{b_wr:.1f}%, Sharpe {oos_sharpe:.2f} vs {b_sharpe:.2f})")
+                       f"{b_wr:.1f}%, Sharpe {_sh_txt} vs {_bsh_txt})")
+    if oos_wr > b_wr and not (_sharpe_ok or _exp_ok or _pf_ok):
+        return False, (
+            f"win-rate seul insuffisant (WR {oos_wr:.1f}% vs {b_wr:.1f}%) "
+            f"— exiger Sharpe, expectancy ou profit factor"
+        )
+    b_dd = baseline.get("dd", baseline.get("max_drawdown"))
+    if oos_dd is not None and b_dd is not None:
+        if abs(float(oos_dd)) > abs(float(b_dd)) * 1.25 + 1e-9:
+            return False, (
+                f"drawdown OOS ({oos_dd:.1f}%) dégrade le baseline "
+                f"({b_dd:.1f}%) au-delà de +25 %"
+            )
 
     # ── 5. Deflated Sharpe gate (P0 — câblage TODO auto_optimizer.py:521) ──
     # Ne s'active QUE si n_trials > 1 (sinon pas de biais de sélection à
@@ -197,18 +247,21 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
     # calcul (Sharpe NaN, etc.), on n'échoue pas silencieusement : on logge
     # et on accepte (préserve la rétrocompatibilité — un gate trop strict
     # silencieux serait pire qu'un gate absent).
-    if n_trials and n_trials > 1 and min_deflated_sharpe is not None and min_deflated_sharpe > 0:
+    if (n_trials and n_trials > 1
+            and min_deflated_sharpe is not None and min_deflated_sharpe > 0
+            and oos_sharpe is not None):
         try:
-            from app.core.deflated_sharpe import is_deflated_sharpe_significant
-            ds_ok, ds_val, ds_reason = is_deflated_sharpe_significant(
-                sharpe_observed=float(oos_sharpe),
+            # F-07 : formule Bailey & López de Prado (probabilité ∈ [0,1]),
+            # Bailey & López de Prado (2014), plus l'ancienne heuristique.
+            dsr = deflated_sharpe_ratio(
+                float(oos_sharpe),
+                n_observations=int(oos_trades),
                 n_trials=int(n_trials),
-                min_deflated_sharpe=float(min_deflated_sharpe),
             )
-            if not ds_ok:
-                return False, (f"Deflated Sharpe gate refusé : {ds_reason} "
-                               f"(DS={ds_val:.2f}, seuil={min_deflated_sharpe:.2f}, "
-                               f"n_trials={n_trials})")
+            if dsr < float(min_deflated_sharpe):
+                return False, (f"Deflated Sharpe gate refusé : DSR={dsr:.2f} "
+                               f"< seuil={min_deflated_sharpe:.2f} "
+                               f"(n_trials={n_trials})")
         except Exception as _ds_err:
             logger.warning(
                 f"[beats_baseline] Deflated Sharpe KO ({_ds_err}) — gate ignoré "
@@ -247,7 +300,7 @@ def _expected_max_sharpe(n_trials: int, sharpe_std: float) -> float:
 
 
 def deflated_sharpe_ratio(sharpe: float, n_observations: int, n_trials: int = 1,
-                          trial_sharpes_std: float = None,
+                          trial_sharpes_std: float | None = None,
                           skew: float = 0.0, kurtosis: float = 3.0) -> float:
     """Deflated Sharpe Ratio ∈ [0, 1] : probabilité que ``sharpe`` soit
     réellement positif, corrigée du biais de sélection multiple (``n_trials``

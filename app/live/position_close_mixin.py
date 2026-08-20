@@ -20,7 +20,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from app.core.bot_identity import build_slot_key
+from app.core.bot_identity import build_slot_key, parse_pos_key
 from app.core.config import DEFAULT_TAKER_FEE
 from app.core.database import (
     delete_open_position,
@@ -37,11 +37,12 @@ from app.live.position_open_mixin import (
     _order_failed,
     publish_trade_closed,
 )
+from app.live.protocols import LiveHost
 
 logger = logging.getLogger(__name__)
 
 
-class PositionCloseMixin:
+class PositionCloseMixin(LiveHost):
     """Clôture, PnL et sérialisation (voir docstring module)."""
 
     # ── Réconciliation des coûts réels (live) ──────────────────────────────
@@ -73,7 +74,9 @@ class PositionCloseMixin:
         try:
             close_id = str((close_order or {}).get("id") or "")
             if close_id and not close_id.startswith("paper_"):
-                my_trades = self.exchange.fetch_my_trades(symbol, since=since) or []
+                # P-07 : depuis l'ouverture + 50 fills max, pas tout l'historique.
+                my_trades = self.exchange.fetch_my_trades(
+                    symbol, since=since, limit=50) or []
                 total, found, convertible = 0.0, False, True
                 for t in my_trades:
                     if str(t.get("order")) != close_id:
@@ -135,8 +138,10 @@ class PositionCloseMixin:
                     self.notif.notify_reconciliation_mismatch(
                         symbol, label, est, real, gap_pct
                     )
-                except Exception:
-                    pass
+                except Exception as _nerr:
+                    logger.error(
+                        f"[Reconcile] notification mismatch {symbol} KO : {_nerr}"
+                    )
         return pnl, fees, borrow
 
     # ── Clôture ───────────────────────────────────────────────────────────
@@ -205,7 +210,7 @@ class PositionCloseMixin:
                 )
                 return
             exec_price = order.get("price") or order.get("average") or 0
-            if not exec_price and not self.cfg["trading"].get("paper_mode"):
+            if not exec_price and not self.cfg["trading"].get("paper_mode", True):
                 # Ordres market réels : récupérer le prix moyen réellement exécuté
                 try:
                     filled = self.exchange.fetch_order(order.get("id", ""), pos["symbol"])
@@ -220,7 +225,7 @@ class PositionCloseMixin:
                 exec_price = exit_price
 
         # Slippage adverse en paper mode (vente moins chère)
-        if self.cfg["trading"].get("paper_mode"):
+        if self.cfg["trading"].get("paper_mode", True):
             slip = self._paper_slippage_fraction(
                 pos["symbol"], pos.get("timeframe", self.tf), pos.get("notional", 0.0))
             exec_price *= (1 - slip) if pos["side"] == "long" else (1 + slip)
@@ -241,7 +246,7 @@ class PositionCloseMixin:
         # Réconciliation avec les coûts RÉELS de l'exchange (live uniquement) :
         # frais du fill de clôture via fetch_my_trades, intérêts d'emprunt réels
         # via l'historique margin. Remplace les estimations dans le PnL persisté.
-        if (not self.cfg["trading"].get("paper_mode")
+        if (not self.cfg["trading"].get("paper_mode", True)
                 and self.cfg["trading"].get("reconcile_real_costs", True)):
             pnl, fees, borrow_cost = self._reconcile_close_costs(
                 pos, order, fees, borrow_cost, pnl
@@ -249,7 +254,7 @@ class PositionCloseMixin:
         self._margin_interest += borrow_cost
 
         with self._capital_lock:
-            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+            if self.cfg["trading"].get("paper_mode", True) and hasattr(self, "_paper_base"):
                 self._paper_base += pnl
             else:
                 self.capital_display += pnl
@@ -267,8 +272,10 @@ class PositionCloseMixin:
         # position ne consomme plus rien dès qu'elle est close.
         self.ledger.release(pos_id)
 
-        with session_scope(self.SessionLocal) as _sess:
-            delete_open_position(_sess, pos_id)
+        # A-01 : la suppression de la position ouverte est reportée dans
+        # la même transaction que save_trade + update_daily_stats, plus bas.
+        # Un crash entre les deux commits laissait un trade exécuté nulle
+        # part (ni open_positions, ni trades).
         self._loss_notified.discard(pos_id)
 
         pnl_pct    = round(pnl / pos["notional"] * 100, 4) if pos.get("notional", 0) > 0 else 0.0
@@ -283,12 +290,16 @@ class PositionCloseMixin:
         # quels écrasait ceux d'entrée (et des jambes partielles) déjà portés par
         # la position. Même correction de report qu'au backtest : le PnL et le
         # capital, eux, étaient justes.
-        fees_total = float(pos.get("fees", 0.0) or 0.0) + fees
+        entry_fees = float(pos.get("fees", 0.0) or 0.0)
+        fees_total = entry_fees + fees
         trade = {k: v for k, v in pos.items()
                  if k not in ("_trailing", "partial_targets", "_be_done")}
         trade.update({
             "exit":          exec_price,
-            "pnl":           round(pnl + realise, 6),
+            # F-01 : même convention que le backtest — le trade porte les
+            # frais d'entrée (déjà prélevés sur le capital à l'ouverture).
+            "pnl":           round(pnl + realise - entry_fees, 6),
+            "entry_fees":    round(entry_fees, 6),
             "pnl_pct":       pnl_pct,
             "fees":          round(fees_total, 6),
             # FIN-06 : aucune distinction maker/taker à l'exécution live
@@ -321,12 +332,19 @@ class PositionCloseMixin:
         })
 
         with session_scope(self.SessionLocal) as session:
-            save_trade(session, trade)
+            delete_open_position(session, pos_id, commit=False)
+            save_trade(session, trade, commit=False)
             update_daily_stats(
                 session,
                 datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                pnl, pnl > 0, fees, self.capital_display
+                pnl, pnl > 0, fees_total, self.capital_display,
+                commit=False,
             )
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
         if exit_reason in ("stop_loss", "trailing_stop", "gap") or pnl < 0:
             cooldown_secs = (
@@ -367,7 +385,7 @@ class PositionCloseMixin:
     def _serialize_position(self, pos: dict) -> dict:
         upnl = 0.0
         try:
-            ticker = self._safe_ticker(pos["symbol"])
+            ticker = self._safe_ticker(pos["symbol"], allow_network=False)
             if ticker:
                 price = ticker.get("last", pos["entry"])
                 upnl  = (
@@ -376,12 +394,13 @@ class PositionCloseMixin:
                 )
         except Exception as e:
             logger.debug(f"[PositionCloseMixin] upnl {pos.get('symbol', '?')} : {e}")
+        tf = pos.get("timeframe") or parse_pos_key(pos.get("id", ""))[2]
         return {
             "id":        pos.get("id", ""),
             "symbol":    pos.get("symbol", ""),
             "side":      pos.get("side", ""),
             "strategy":  pos.get("strategy", ""),
-            "timeframe": pos.get("timeframe", ""),
+            "timeframe": tf,
             "score":     round(float(pos.get("score", 0)), 3),
             "entry":     round(float(pos.get("entry", 0)), 4),
             "stop":      round(float(pos.get("stop", 0)), 4),

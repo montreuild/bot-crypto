@@ -28,7 +28,7 @@ import re
 import threading
 from typing import Any, Dict, List, Optional
 
-import yaml
+import yaml  # type: ignore[import-untyped,unused-ignore]
 
 from app.core.config import DATA_ROOT
 

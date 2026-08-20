@@ -77,11 +77,29 @@ def chrono_split(n: int, label_horizons: Optional[Iterable[Any]] = None,
         return None
     split = max(int(n * fraction), min_train)
     split = min(split, n - min_valid)
-    embargo = label_embargo(label_horizons)
+    from app.core.is_oos import default_purge_embargo
+    _, embargo = default_purge_embargo(n, label_embargo(label_horizons))
     train = split - embargo
     if train < min_train or n - split < min_valid:
         return None
     return SplitPlan(train=train, split=split, n=n, embargo=embargo)
+
+
+#: Plancher ML-04 : assez pour un AUC et un fit isotonique lisibles.
+MIN_CALIB = 20
+MIN_EVAL = 20
+
+
+def val_eval_cut(n_valid: int, min_each: int = MIN_CALIB) -> Optional[int]:
+    """Coupe la validation en calib ``[0, cut)`` et eval ``[cut, n)``.
+
+    ``None`` si les deux tranches ne tiennent pas — l'appelant garde alors
+    l'unique tranche (early-stop + calib + AUC sur le même échantillon).
+    """
+    n_valid = int(n_valid)
+    if n_valid < 2 * int(min_each):
+        return None
+    return n_valid // 2
 
 
 def purged_time_series_splits(n: int, n_splits: int, embargo: int = 0

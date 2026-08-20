@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any, Tuple
 
-import yaml
+import yaml  # type: ignore[import-untyped,unused-ignore]
 from dotenv import load_dotenv
 
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
@@ -66,7 +66,7 @@ DEFAULT_MAKER_FEE = 0.0004
 # leurs répertoires par défaut (data/ohlcv, data/features, data/derivatives).
 DATA_ROOT = "data"
 
-DEFAULTS = {
+DEFAULTS: dict[str, dict[str, Any]] = {
     "trading": {
         "paper_mode": True,
         "scan_interval": 60, "score_threshold": 0.55, "daily_drawdown_limit": 0.05,
@@ -94,7 +94,7 @@ DEFAULTS = {
     "optimizer": {"enabled": False, "method": "bayesian", "n_trials": 50, "out_of_sample_ratio": 0.3,
                   # S4-03 : "full" (IS+OOS, historique) vs "is_only" — cf.
                   # docstring de _save_ml_model_post_opt (auto_optimizer.py).
-                  "ml_final_train_mode": "full"},
+                  "ml_final_train_mode": "is_only"},
     # OBS-02 : "format" pilote le seul handler FICHIER — "json" (défaut) ou
     # "text" pour revenir à l'ancien format ligne.
     "logging":   {"level": "INFO", "debug": False, "max_bytes": 10_485_760, "backup_count": 5,
@@ -386,7 +386,7 @@ def _validate_venues(cfg: dict) -> None:
             f"market_type: spot ; pour du margin réel, max_leverage > 1."
         )
 
-    if borrows and t.get("paper_mode"):
+    if borrows and t.get("paper_mode", True):
         logger.warning(
             f"⚠ [Config] paper_mode + venue par défaut '{default}' en {market} : "
             f"les coûts d'emprunt sont simulés au taux "
@@ -574,7 +574,7 @@ def load_config(path: str = "config.yaml") -> dict:
     api_key = cfg.get("exchange", {}).get("api_key", "")
     if api_key in ("", "YOUR_KEY"):
         logger.warning("⚠ Clés API exchange non configurées — mode backtest uniquement.")
-    if not cfg["trading"].get("paper_mode"):
+    if not cfg["trading"].get("paper_mode", True):
         logger.warning("🔴 LIVE TRADING ACTIVÉ — vérifiez bien vos paramètres !")
 
     # OKX (et Kucoin/Coinbase) exigent une passphrase API en plus de la clé/secret.

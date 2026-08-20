@@ -213,7 +213,10 @@ describe('WalkForward', () => {
   // Payload calqué sur WalkForwardAnalyzer.run() (app/engine/walk_forward.py).
   const real = {
     n_folds: 4,
+    kind: 'stability',
+    reoptimizes: false,
     avg_oos_pnl: 128.4312,
+    avg_fold_pnl: 128.4312,
     avg_oos_sharpe: 1.21,
     avg_oos_wr: 54.3,
     consistency: 75.0,

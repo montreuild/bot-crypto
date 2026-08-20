@@ -1,10 +1,23 @@
 # Audit complet — Synthèse
 
+> ⚠️ **RÉVISÉ le 18 août 2026** — état courant :
+> [`20-REVISION-2026-08-18.md`](20-REVISION-2026-08-18.md)
+> (revue-complete). Passes précédentes : [`19`](19-REVISION-2026-08-18.md),
+> [`18`](18-REVISION-2026-08-18.md), [`17`](17-REVISION-2026-08-18.md), [`16`](16-REVISION-2026-08-18.md),
+> [`15`](15-REVISION-2026-08-18.md), [`14`](14-REVISION-2026-08-18.md),
+> [`13`](13-REVISION-2026-08-17.md).
+>
+> Les dix corrections du §3 sont **faites**, y compris **B-02**.
+> N-01 à N-04 sont traités. O-05 sans retour de scikit-learn.
+> Revue-complete : PR **#249**–**#257**, **#258** (FIN-11 / API-03 /
+> UX-02 / PERF-05 / vues FE-03). Reste : [`20-REVISION` §2](20-REVISION-2026-08-18.md).
+
 **Dépôt** : `bot-crypto` — bot de trading algorithmique multi-stratégies
 (Python 3.14 / FastAPI / polars / LightGBM + Next.js 15 / React 19)
 **Périmètre** : ~131 000 lignes (58 k Python applicatif, 46 k frontend,
 26 k tests) + 827 Mo de données persistées
-**Date** : 14 août 2026
+**Base auditée** : `d62c487` (PR #221) — révisée sur `32d6c90` (PR #228)
+**Date** : 14 août 2026, révisé le 17 puis le 18 août 2026
 **Méthode** : lecture du code source seul. Conformément à la demande, ni la
 documentation (`docs/`, 35 k lignes), ni le `CHANGELOG.md`, ni les scripts
 indépendants (`scripts/`, `research/`) n'ont été utilisés comme source de
@@ -84,9 +97,9 @@ Toutes vérifiées sur les données réelles du dépôt.
 | Runs de backtest sur moins de 10 trades | 74 / 158 | F-02 |
 | Modules ≥ 40 lignes sans aucun test | **34** | T-02 |
 | Recouvrement `scoring_statistique_opus_v5` ↔ `_v4` | **80 %** (478/600 lignes) | X-02 |
-| Usages de `any` / `as any` dans le frontend | 212 | U-05 |
+| Usages de `any` / `as any` dans le frontend | 212 à l'audit ; contrats métier typés (#244–#247) | U-05 |
 | Composants `'use client'` | 98 / 122 | U-04 |
-| Consommateurs du module i18n | **0** | U-01 |
+| Consommateurs du module i18n | 0 à l'audit ; branché (nav + sélecteur) | U-01 |
 
 ---
 
@@ -108,6 +121,14 @@ livrables une par une.
 | 9 | Supprimer le plafond caché `notional > capital × 0,25` | `live/balance_sync.py:196` | ~1 h | Le live cesse de refuser silencieusement les trades dimensionnés à l'enveloppe |
 | 10 | Évaluer le stop sur le plus-bas/plus-haut de la bougie en formation | `live/position_manage_mixin.py:217` | ~1 j | Aligne les trois modèles d'exécution (backtest / paper / live) |
 
+**État au 18/08 (après #244)** : les 10 corrections du tableau
+sont dans `main`. B-02 + R-02 (`RiskLedger`). D-06 posé. Historique `data/`
+vidé. U-05 / U-08 / X-03 livrés — voir
+[`19-REVISION-2026-08-18.md`](19-REVISION-2026-08-18.md).
+Revue-complete livrée (PR #249) — reste listé dans
+[`20-REVISION-2026-08-18.md`](20-REVISION-2026-08-18.md) §2.
+Il reste à **faire tourner le paper** pour les verdicts `oos_tracker` (D-07).
+
 **Avertissement sur l'ordre** : les corrections 3, 6 et 8 modifient les
 résultats de tous les backtests historiques. Elles doivent être livrées
 **séparément**, chacune avec un re-baselining explicite de
@@ -124,25 +145,33 @@ calcul.
 
 | Sévérité | Nombre | Signification |
 |---|---|---|
-| 🔴 Critique | **10** | Fausse une décision de trading ou peut faire perdre de l'argent / des données |
-| 🟠 Majeur | **39** | Fausse une mesure, casse la parité, ou expose à un incident |
-| 🟡 Moyen | **57** | Incohérence réelle, effet borné ou conditionnel |
-| 🔵 Mineur | **25** | Hygiène, lisibilité, angle mort d'observabilité |
+| Sévérité | 14 août | **17 août** | Signification |
+|---|---|---|---|
+| 🔴 Critique | 10 | **8** | Fausse une décision de trading ou peut faire perdre de l'argent / des données |
+| 🟠 Majeur | 39 | **40** | Fausse une mesure, casse la parité, ou expose à un incident |
+| 🟡 Moyen | 57 | **57** | Incohérence réelle, effet borné ou conditionnel |
+| 🔵 Mineur | 25 | **25** | Hygiène, lisibilité, angle mort d'observabilité |
 
 ### Les dix constats critiques
 
-| Réf | Titre | Rapport |
-|---|---|---|
-| F-01 | `total_pnl` exclut les frais d'entrée mais pilote score, sélection et promotion | [Financier](01-FINANCIER.md) |
-| F-02 | Sharpe calculé sur 1 à 3 observations — 104/158 runs à \|Sharpe\| > 10 | [Financier](01-FINANCIER.md) |
-| F-03 | `max_dd_p95` renvoie le meilleur drawdown, pas le pire | [Financier](01-FINANCIER.md) |
-| B-01 | Stops et TP remplis au niveau, jamais au gap | [Backtest](02-BACKTEST.md) |
-| B-02 | Backtest mono-position : `RiskLedger` et concurrence jamais exercés | [Backtest](02-BACKTEST.md) |
-| O-01 | L'objectif d'optimisation **est** le score OOS | [Optimiseur](03-OPTIMISEUR.md) |
-| O-02 | `beats_baseline` évalué sur la fenêtre de sélection | [Optimiseur](03-OPTIMISEUR.md) |
-| O-03 | Le gate walk-forward tourne sur les données de sélection | [Optimiseur](03-OPTIMISEUR.md) |
-| L-01 | Le stop live n'est évalué qu'une fois par cycle, sur le dernier prix | [Live](04-LIVE.md) |
-| L-02 | En paper (défaut), aucun stop exchange et aucun stop intrabar | [Live](04-LIVE.md) |
+| Réf | Titre | Rapport | État au 18/08 |
+|---|---|---|---|
+| F-01 | `total_pnl` exclut les frais d'entrée mais pilote score, sélection et promotion | [Financier](01-FINANCIER.md) | ✅ **résolu** — `net_profit` / frais d'entrée dans `trade.pnl` |
+| F-02 | Sharpe calculé sur 1 à 3 observations — 104/158 runs à \|Sharpe\| > 10 | [Financier](01-FINANCIER.md) | ✅ **résolu** — `None` sous 10 obs. |
+| F-03 | `max_dd_p95` renvoie le meilleur drawdown, pas le pire | [Financier](01-FINANCIER.md) | ✅ **résolu** — percentile 5 |
+| B-01 | Stops et TP remplis au niveau, jamais au gap | [Backtest](02-BACKTEST.md) | ✅ **résolu** — fill à l'open si gap |
+| B-02 | Backtest mono-position : `RiskLedger` et concurrence jamais exercés | [Backtest](02-BACKTEST.md) | ✅ **résolu** — plusieurs slots, `passing_signals` |
+| O-01 | L'objectif d'optimisation **est** le score OOS | [Optimiseur](03-OPTIMISEUR.md) | 🟡 requalifié — alias `val_*` ajoutés |
+| O-02 | `beats_baseline` évalué sur la fenêtre de sélection | [Optimiseur](03-OPTIMISEUR.md) | ✅ **résolu** (PR #222) |
+| O-03 | Le gate walk-forward tourne sur les données de sélection | [Optimiseur](03-OPTIMISEUR.md) | ✅ **résolu** (PR #222) |
+| L-01 | Le stop live n'est évalué qu'une fois par cycle, sur le dernier prix | [Live](04-LIVE.md) | ✅ **résolu** — high/low de la bougie en formation |
+| L-02 | En paper (défaut), aucun stop exchange et aucun stop intrabar | [Live](04-LIVE.md) | ✅ **résolu** — fill au niveau du stop |
+
+**N-01** et **N-02** (holdout trop court / apply UI sur la sélection) sont
+**résolus** : `required_total_bars` réserve les 20 %, le bouton Appliquer
+juge le holdout et expose `gate_source`. Détail :
+[révision 17/08](13-REVISION-2026-08-17.md),
+[révision 18/08](14-REVISION-2026-08-18.md).
 
 ---
 
@@ -259,29 +288,37 @@ chaque grandeur financière, l'assertion qui exprime sa **définition** :
 | [10 — Tests & qualité](10-TESTS-QUALITE.md) | 7 | 0 | Couverture, nature des assertions, CI |
 | [11 — Données](11-DONNEES.md) | 7 | 0 | Cache OHLCV, features, intégrité, cycle de vie |
 | [12 — Architecture & dette](12-ARCHITECTURE-DETTE.md) | 7 | 0 | Couplage, duplication, code mort, conventions |
+| [**13 — Révision 17/08**](13-REVISION-2026-08-17.md) | +4 | 0 | Delta des PR #222 à #228 : 5 résolus, 4 nouveaux, 8 critiques revérifiés |
+| [**14 — Révision 18/08**](14-REVISION-2026-08-18.md) | — | — | Branche `fix/audit-quick-wins` : sprint 1–4 + S-02–S-04 / A-03 / A-08 / A-12 ; B-02 reporté |
 
 ---
 
 ## 8. Plan de travail suggéré
 
-**Sprint 1 — arrêter de mentir aux chiffres** *(≈ 3 jours)*
+> **18/08 — exécuté** sur `fix/audit-quick-wins` sauf B-02 et le rebaseline
+> de `data/`. Détail : [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
+
+**Sprint 1 — arrêter de mentir aux chiffres** ✅
 Corrections 1, 2, 4, 5 et 9 du tableau §3. Chacune est locale, à faible risque,
 et rend immédiatement les tableaux de bord lisibles. Ajouter en parallèle les
 six assertions de définition listées en §6c.
 
-**Sprint 2 — rétablir la comptabilité** *(≈ 1 semaine)*
-Correction 3 (`net_profit` comme référence) puis 8 (emprunt à levier 1). Livrer
-séparément, avec `schema_version` + `git_commit` sur les fichiers de résultats
-(D-06) et purge de l'historique produit par l'ancien calcul.
+**Ajout du 17 août — N-01 / N-02** ✅
+Holdout réservé dans `required_total_bars` ; apply UI juge le holdout
+(`gate_source`). Voir [la révision du 17/08](13-REVISION-2026-08-17.md) §5.
 
-**Sprint 3 — rétablir l'out-of-sample** *(≈ 1 semaine)*
-Correction 7 (train / validation / test), purge et embargo entre tranches
-(B-08, M-02), `n_trials` réel dans le Deflated Sharpe (O-07), et bascule sur
-l'implémentation conforme (F-07).
+**Sprint 2 — rétablir la comptabilité** ✅ (rebaseline `data/` après merge)
+Correction 3 (`net_profit` comme référence) puis 8 (emprunt à levier 1).
+`schema_version` + `git_commit` posés (D-06).
 
-**Sprint 4 — aligner exécution backtest / paper / live** *(≈ 1 semaine)*
-Corrections 6 et 10, activation de `realistic_risk` sur les chemins de décision
-(B-07), simulation du stop exchange en paper (L-02).
+**Sprint 3 — rétablir l'out-of-sample** ✅ (O-01 = alias `val_*`, pas un
+renommage cassant)
+Correction 7 (train / validation / test), purge et embargo (B-08), `n_trials`
+réel (O-07), DSR conforme (F-07). O-05 sans sklearn.
+
+**Sprint 4 — aligner exécution backtest / paper / live** ✅ sauf B-02
+Corrections 6 et 10, `realistic_risk` sur les chemins de décision (B-07),
+stop paper au niveau (L-02). **B-02 reporté.**
 
 **En continu, dès maintenant** : faire tourner le bot en paper pour que
 `oos_tracker` produise ses premiers verdicts (§6a). Sans cela, les quatre

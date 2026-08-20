@@ -26,26 +26,42 @@
 import {
   CapitalCard, PnLCard, WinRateCard, ProfitFactorCard, DrawdownCard,
 } from '@/components/cards/kpi-cards';
-import { EquityCurve } from '@/components/charts/equity-curve';
 import { PositionsTable } from '@/components/cards/positions-table';
 import { LiveTradesFeed } from '@/components/cards/live-trades-feed';
 import { SignalsFeed } from '@/components/cards/signals-feed';
 import { RiskPanel } from '@/components/cards/risk-panel';
 import { HealthBanner } from '@/components/cards/health-banner';
-import { AllocationDonut } from '@/components/cards/allocation-donut';
-import { AllocationsGrid } from '@/components/cards/allocations-grid';
-import { RiskEnvelopesCard } from '@/components/cards/risk-envelopes-card';
 import { HaltBanner } from '@/components/cards/halt-banner';
 import { FeesBreakdown } from '@/components/cards/fees-breakdown';
 import { ActivityFeed } from '@/components/cards/activity-feed';
+import dynamic from 'next/dynamic';
+
+const EquityCurve = dynamic(
+  () => import('@/components/charts/equity-curve').then((m) => m.EquityCurve),
+  { ssr: false },
+);
+const AllocationDonut = dynamic(
+  () => import('@/components/cards/allocation-donut').then((m) => m.AllocationDonut),
+  { ssr: false },
+);
+const AllocationsGrid = dynamic(
+  () => import('@/components/cards/allocations-grid').then((m) => m.AllocationsGrid),
+);
+const RiskEnvelopesCard = dynamic(
+  () => import('@/components/cards/risk-envelopes-card').then((m) => m.RiskEnvelopesCard),
+);
 import { SignificantBotsTable } from '@/components/cards/significant-bots-table';
 import { Button } from '@/components/ui/button';
 import { QueryBoundary } from '@/components/ui/query-state';
-import { useBotStatus, usePortfolio } from '@/hooks/use-api';
+import { MetricValue } from '@/components/ui/metric-value';
+import type { StrategyStats } from '@/types';
+import { useBotStatus, usePortfolio, useRisk } from '@/hooks/use-api';
+import { quoteCurrency } from '@/lib/utils';
 import { Play, Square, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -56,6 +72,8 @@ export default function PortfolioV2Page() {
 
   const { data: status } = statusQuery;
   const { data: portfolio } = portfolioQuery;
+  const { data: risk } = useRisk();
+  const displayCcy = quoteCurrency(risk?.venues?.[0]);
 
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
   const [stopLoading, setStopLoading] = useState(false);
@@ -67,8 +85,8 @@ export default function PortfolioV2Page() {
       await api.startBot();
       toast.success('Trader démarré');
       qc.invalidateQueries({ queryKey: ['status'] });
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e: unknown) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     } finally {
       setStartLoading(false);
     }
@@ -80,8 +98,8 @@ export default function PortfolioV2Page() {
       await api.stopBot(closePositions);
       toast.success(closePositions ? 'Trader arrêté, positions clôturées' : 'Trader arrêté');
       qc.invalidateQueries({ queryKey: ['status'] });
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e: unknown) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     } finally {
       setStopLoading(false);
     }
@@ -140,7 +158,7 @@ export default function PortfolioV2Page() {
       {header}
 
       {/* Bandeau de santé en français */}
-      <HealthBanner status={status} portfolio={portfolio} />
+      <HealthBanner status={status} portfolio={portfolio} currency={displayCcy} />
 
       {/* S3-F3-US3 — Bandeau HALT avec acquittement (si circuit breaker actif) */}
       <HaltBanner
@@ -151,8 +169,8 @@ export default function PortfolioV2Page() {
 
       {/* KPIs row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <CapitalCard value={status.capital || 1000} />
-        <PnLCard value={status.total_pnl || 0} pct={status.total_pnl_pct || 0} />
+        <CapitalCard value={status.capital || 1000} currency={displayCcy} />
+        <PnLCard value={status.total_pnl || 0} pct={status.total_pnl_pct || 0} currency={displayCcy} />
         <WinRateCard value={status.win_rate || 0} totalTrades={status.total_trades || 0} />
         <ProfitFactorCard value={status.profit_factor || 0} />
         <DrawdownCard value={status.global_dd_pct || 0} limit={status.global_dd_limit || 0.20} />
@@ -229,7 +247,7 @@ export default function PortfolioV2Page() {
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(status.by_strategy).map(([name, stats]: [string, any]) => (
+                {Object.entries(status.by_strategy).map(([name, stats]: [string, StrategyStats]) => (
                   <tr key={name} className="border-b border-border/50 hover:bg-card-hover">
                     <td className="py-2.5 font-medium">{name}</td>
                     <td className="py-2.5 text-right font-mono text-muted">{stats.total_trades}</td>
@@ -242,7 +260,13 @@ export default function PortfolioV2Page() {
                     <td className="py-2.5 text-right font-mono text-muted">
                       {stats.profit_factor === 999 ? '∞' : stats.profit_factor.toFixed(2)}
                     </td>
-                    <td className="py-2.5 text-right font-mono text-muted">{stats.sharpe.toFixed(2)}</td>
+                    <td className="py-2.5 text-right font-mono text-muted">
+                      <MetricValue
+                        value={stats.sharpe}
+                        nObs={stats.total_trades}
+                        format={(v) => v.toFixed(2)}
+                      />
+                    </td>
                     <td className="py-2.5 text-right font-mono text-red-400">{stats.max_drawdown.toFixed(2)}%</td>
                   </tr>
                 ))}

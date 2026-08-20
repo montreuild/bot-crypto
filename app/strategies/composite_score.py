@@ -248,14 +248,14 @@ class Strategy(BaseStrategy):
         """Mémorise le df complet pour réutiliser l'histogramme MACD (causal)."""
         self._bt_full_df = df
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get("composite_score", {})
         return max(int(p.get("min_bars", 200)), 60)
 
     def score(
         self,
         df: pl.DataFrame,
-        params: dict = None,
+        params: dict | None = None,
         df_htf=None,
         symbol: str = "",
     ) -> Dict[str, Any]:

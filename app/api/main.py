@@ -21,6 +21,7 @@ import hmac
 import logging
 import os
 import socket
+import threading
 import time as _time
 
 # phase6-sklearn-removal : plus de warning sklearn à filtrer (sklearn supprimé
@@ -131,18 +132,34 @@ def health_check():
     }
 
 
-# ── Métriques Prometheus (OBS-01, sans auth) ──────────────────────────────
+# ── Métriques Prometheus (OBS-01) ─────────────────────────────────────────
 @app.get("/metrics")
-def prometheus_metrics():
+def prometheus_metrics(request: Request):
     """Exposition Prometheus au format texte.
 
-    Sans authentification, comme ``/health`` : un scrapeur Prometheus ne sait
-    pas porter d'en-tête ``X-API-Key`` sans configuration supplémentaire, et
-    l'endpoint ne divulgue aucun secret. Il divulgue en revanche l'activité de
-    trading (capital, positions, PnL) — **à restreindre au réseau
-    d'administration côté nginx**, comme les autres endpoints d'exploitation.
+    S-01 : si ``METRICS_TOKEN`` ou ``web.api_key`` est défini, exige
+    ``Authorization: Bearer …`` ou ``X-API-Key``. Prometheus gère
+    ``authorization`` / ``bearer_token_file`` nativement. Sans jeton
+    (dev local, ``api_key`` vide) l'endpoint reste public.
     """
+    from fastapi import HTTPException
     from starlette.responses import Response
+
+    token = os.environ.get("METRICS_TOKEN") or ""
+    if not token:
+        token = ((state.cfg or {}).get("web") or {}).get("api_key", "") or ""
+    if token:
+        auth = request.headers.get("Authorization", "") or ""
+        supplied = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+        if not supplied:
+            supplied = request.headers.get("X-API-Key", "") or ""
+        ok = False
+        try:
+            ok = bool(supplied) and hmac.compare_digest(supplied, token)
+        except Exception:
+            ok = False
+        if not ok:
+            raise HTTPException(403, "metrics auth required")
 
     from app.core.metrics import render
     payload, content_type = render()
@@ -170,17 +187,12 @@ def prometheus_metrics():
 # HTML** qui explique comment le démarrer + liens vers /api/docs.
 # Ça donne un retour visible à l'utilisateur au lieu d'un "site inaccessible".
 
-_frontend_reachable_cache: dict = {"ts": 0.0, "ok": False}
+_frontend_reachable_cache: dict = {"ts": 0.0, "ok": False, "refreshing": False}
 _FRONTEND_CHECK_TTL = 60.0  # cache 60s pour éviter un ping par request
+_frontend_ping_lock = threading.Lock()
 
 
-def _is_frontend_reachable() -> bool:
-    """Ping TCP rapide du frontend Next.js (cache 60s)."""
-    now = _time.monotonic()
-    if now - _frontend_reachable_cache["ts"] < _FRONTEND_CHECK_TTL:
-        return _frontend_reachable_cache["ok"]
-
-    # Parse host + port depuis FRONTEND_URL
+def _probe_frontend() -> bool:
     try:
         from urllib.parse import urlparse
         parsed = urlparse(FRONTEND_URL)
@@ -188,23 +200,42 @@ def _is_frontend_reachable() -> bool:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
     except Exception:
         host, port = "localhost", 3000
-
-    ok = False
     try:
-        with socket.create_connection((host, port), timeout=1.0):
-            ok = True
+        with socket.create_connection((host, port), timeout=0.2):
+            return True
     except (OSError, socket.timeout):
-        ok = False
-
-    _frontend_reachable_cache["ts"] = now
-    _frontend_reachable_cache["ok"] = ok
-    return ok
+        return False
 
 
-def _route_frontend_or_help(path: str):
+def _refresh_frontend_reachable() -> None:
+    try:
+        ok = _probe_frontend()
+        _frontend_reachable_cache["ts"] = _time.monotonic()
+        _frontend_reachable_cache["ok"] = ok
+    finally:
+        _frontend_reachable_cache["refreshing"] = False
+
+
+def _is_frontend_reachable() -> bool:
+    """A-13 : ne bloque plus la boucle — ping en thread, dernière valeur connue."""
+    now = _time.monotonic()
+    if now - _frontend_reachable_cache["ts"] < _FRONTEND_CHECK_TTL:
+        return _frontend_reachable_cache["ok"]
+    with _frontend_ping_lock:
+        if not _frontend_reachable_cache["refreshing"]:
+            _frontend_reachable_cache["refreshing"] = True
+            threading.Thread(target=_refresh_frontend_reachable, daemon=True).start()
+    return _frontend_reachable_cache["ok"]
+
+
+def _route_frontend_or_help(path: str, *, legacy: bool = False):
     """Redirige 308 vers le frontend si joignable, sinon sert la page d'aide."""
     if _is_frontend_reachable():
-        return RedirectResponse(url=f"{FRONTEND_URL}{path}", status_code=308)
+        resp = RedirectResponse(url=f"{FRONTEND_URL}{path}", status_code=308)
+        if legacy:
+            resp.headers["Sunset"] = HTML_REDIRECTS_SUNSET_HTTP
+            resp.headers["Deprecation"] = "true"
+        return resp
     # Frontend non joignable : sert la page d'aide HTML (status 200, pas de redirect)
     from starlette.responses import Response
     return Response(
@@ -311,6 +342,18 @@ FRONTEND_URL=https://bot.mondomaine.com</pre>
 # `tests/test_legacy_redirects.py` vérifie qu'elles ne divergent pas : c'est
 # ce test, et non la relecture, qui garantit qu'une future redirection posée
 # côté Next sera répercutée ici.
+#
+# A-11 : date de retrait des alias hérités (favoris / 308 déjà en cache).
+# Après cette date les alias `-v2` et les anciennes pages fusionnées
+# (`/backtest`, `/optimizer`, …) pourront être retirés.
+HTML_REDIRECTS_SUNSET = "2026-12-31"
+HTML_REDIRECTS_SUNSET_HTTP = "Thu, 31 Dec 2026 23:59:59 GMT"
+HTML_LEGACY_ALIASES = {
+    "/bots-v2", "/portfolio-v2", "/settings-v2",
+    "/backtest", "/optimizer", "/ml", "/replay", "/compare",
+    "/scanner", "/smartgraph", "/smartreplay", "/derivatives",
+    "/config", "/slots",
+}
 HTML_ROUTES_TO_REDIRECT = {
     # `/` reste sur `/` : ce n'est pas un alias hérité mais la racine de
     # l'app, et c'est `frontend/src/app/page.tsx` qui décide de la page
@@ -347,18 +390,18 @@ HTML_ROUTES_TO_REDIRECT = {
 }
 for _route, _target in HTML_ROUTES_TO_REDIRECT.items():
     # Capture _target via default arg pour éviter le piège du closure tardif
-    def _make_handler(t):
-        def _handler(request: Request, _t=t):
-            return _route_frontend_or_help(_t)
+    def _make_handler(t, r):
+        def _handler(request: Request, _t=t, _r=r):
+            return _route_frontend_or_help(_t, legacy=_r in HTML_LEGACY_ALIASES)
         return _handler
-    app.add_api_route(_route, _make_handler(_target), methods=["GET"])
+    app.add_api_route(_route, _make_handler(_target, _route), methods=["GET"])
 
 
 # Rétro-compat : /slots redirigeait vers /bots. On vise la cible finale plutôt
 # que d'enchaîner deux sauts.
 @app.get("/slots")
 def slots_legacy():
-    return _route_frontend_or_help("/bots")
+    return _route_frontend_or_help("/bots", legacy=True)
 
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────

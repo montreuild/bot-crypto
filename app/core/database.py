@@ -4,7 +4,7 @@ Base de données SQLite étendue — trades, métriques journalières, signaux, 
 import logging
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import (
     JSON,
@@ -24,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 logger = logging.getLogger(__name__)
-Base   = declarative_base()
+Base: Any = declarative_base()
 
 
 class Trade(Base):
@@ -255,18 +255,21 @@ def init_db(url: str = "sqlite:///crypto_bot.db"):
 
 @contextmanager
 def session_scope(SessionLocal):
-    """Context manager garantissant la fermeture de la session en toutes circonstances.
+    """A-07 : commit en sortie, rollback sur exception, puis fermeture.
 
-    Les fonctions de database.py (persist_open_position, save_trade, etc.) gèrent
-    elles-mêmes commit/rollback — session_scope se contente de fermer proprement.
-
-    Usage :
-        with session_scope(self.SessionLocal) as sess:
-            persist_open_position(sess, pos)
+    Les helpers (persist_open_position, save_trade, …) gardent ``commit=True``
+    par défaut pour les appelants hors scope. Un second ``commit()`` ici est
+    un no-op s'ils ont déjà commité ; un ``commit=False`` + ``sess.commit()``
+    (A-01) reste le chemin transactionnel unique.
     """
     session = SessionLocal()
+    session.expire_on_commit = False
     try:
         yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -308,11 +311,13 @@ def persist_open_position(session: Session, pos: dict) -> None:
         raise
 
 
-def delete_open_position(session: Session, pos_id: str) -> None:
+def delete_open_position(session: Session, pos_id: str, commit: bool = True) -> None:
     """Supprime une position de la table open_positions (appelé à la clôture)."""
     rec = session.get(OpenPosition, pos_id)
     if rec:
         session.delete(rec)
+        if not commit:
+            return
         try:
             session.commit()
         except Exception as e:
@@ -323,14 +328,18 @@ def delete_open_position(session: Session, pos_id: str) -> None:
 
 def load_open_positions(session: Session) -> List[dict]:
     """Charge les positions ouvertes depuis la BDD au démarrage."""
+    from app.core.bot_identity import parse_pos_key
+
     rows = session.query(OpenPosition).all()
     result = []
     for r in rows:
+        _sym, _strat, tf = parse_pos_key(r.id or "")
         result.append({
             "id":        r.id,
             "symbol":    r.symbol,
             "side":      r.side,
             "strategy":  r.strategy,
+            "timeframe": tf,
             "score":     r.score,
             "entry":     r.entry,
             "stop":      r.stop,
@@ -347,7 +356,53 @@ def load_open_positions(session: Session) -> List[dict]:
     return result
 
 
-def save_trade(session: Session, t: dict):
+def _as_utc_naive(dt: datetime) -> datetime:
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _resolve_entry_time(t: dict):
+    """A-08 : horodatage d'entrée mesuré, reconstruction seulement en dernier recours.
+
+    Priorité : ``entry_time`` (backtest ISO / datetime) → ``open_time`` unix
+    (live) → reconstruction ``close − duration_bars × TF`` (héritage).
+    Sur une venue à calendrier, la reconstruction traverse nuits et week-ends
+    et fausse ``by_session``.
+    """
+    raw = t.get("entry_time")
+    if isinstance(raw, datetime):
+        return _as_utc_naive(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            s = raw.strip().replace("Z", "+00:00")
+            return _as_utc_naive(datetime.fromisoformat(s))
+        except ValueError:
+            pass
+    if isinstance(raw, (int, float)) and raw > 1e9:
+        return datetime.fromtimestamp(float(raw), tz=timezone.utc).replace(tzinfo=None)
+
+    open_time = t.get("open_time")
+    if isinstance(open_time, (int, float)) and open_time > 0:
+        return datetime.fromtimestamp(float(open_time), tz=timezone.utc).replace(tzinfo=None)
+
+    if t.get("duration_bars") is not None and t.get("time") is not None:
+        try:
+            from app.core.timeframes import TF_MINUTES
+            tf = t.get("timeframe", "1h")
+            mins_per_bar = TF_MINUTES.get(tf, 60)
+            close_time = t["time"]
+            if isinstance(close_time, str):
+                close_time = datetime.fromisoformat(close_time.replace("Z", ""))
+            if isinstance(close_time, datetime):
+                close_time = _as_utc_naive(close_time)
+                return close_time - timedelta(minutes=int(t["duration_bars"]) * mins_per_bar)
+        except Exception:
+            return None
+    return None
+
+
+def save_trade(session: Session, t: dict, commit: bool = True):
     # FIN-06 : si l'appelant ne fournit pas déjà la répartition taker/maker,
     # replie tout l'agrégat `fees` sur `fee_taker` — c'est la réalité actuelle
     # du chemin live (aucune distinction maker/taker implémentée côté
@@ -357,27 +412,7 @@ def save_trade(session: Session, t: dict):
     fees = t.get("fees", 0) or 0
     fee_taker = t.get("fee_taker", fees)
     fee_maker = t.get("fee_maker", 0)
-    # S4-11 (audit V2) : entry_time était défini en colonne (database.py:56)
-    # mais JAMAIS renseigné → impossible d'analyser la durée des positions
-    # ouvertes vs fermées, ou de calculer des métriques de holding time.
-    # On le remplit depuis `t['entry_time']` si fourni (format ISO str ou
-    # datetime), sinon on dérive depuis `t['time']` (close) moins
-    # `t['duration_bars']` × TF (approximation).
-    entry_time = t.get("entry_time")
-    if entry_time is None and t.get("duration_bars") is not None and t.get("time") is not None:
-        try:
-            from datetime import datetime as _dt
-            from datetime import timedelta as _td
-
-            from app.core.timeframes import TF_MINUTES
-            tf = t.get("timeframe", "1h")
-            mins_per_bar = TF_MINUTES.get(tf, 60)
-            close_time = t["time"]
-            if isinstance(close_time, str):
-                close_time = _dt.fromisoformat(close_time.replace("Z", ""))
-            entry_time = close_time - _td(minutes=int(t["duration_bars"]) * mins_per_bar)
-        except Exception:
-            entry_time = None
+    entry_time = _resolve_entry_time(t)
     rec = Trade(
         symbol=t.get("symbol"), side=t.get("side"), strategy=t.get("strategy"),
         score=t.get("score"), entry=t.get("entry"), exit_price=t.get("exit"),
@@ -406,7 +441,8 @@ def save_trade(session: Session, t: dict):
     )
     try:
         session.add(rec)
-        session.commit()
+        if commit:
+            session.commit()
     except Exception:
         session.rollback()
         raise
@@ -489,7 +525,7 @@ def get_fee_breakdown(session: Session, since: Optional[datetime] = None) -> dic
 
 
 def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
-                               days: int = 45, symbol: str = None) -> List[Trade]:
+                               days: int = 45, symbol: str | None = None) -> List[Trade]:
     """Trades réels **fermés** d'un slot ``strategy::timeframe[::symbol]`` sur les
     ``days`` derniers jours, du plus récent au plus ancien.
 
@@ -512,7 +548,7 @@ def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
 
 
 def get_slot_live_stats(session: Session, strategy: str, timeframe: str,
-                        days: int = 30, symbol: str = None) -> dict:
+                        days: int = 30, symbol: str | None = None) -> dict:
     """Stats live agrégées d'un bot ``strategy::timeframe[::symbol]`` sur
     ``days`` jours. ``symbol`` optionnel : restreint au symbole du slot.
 
@@ -549,8 +585,8 @@ def get_slot_live_stats(session: Session, strategy: str, timeframe: str,
 
 
 def record_lifecycle_event(session: Session, slot_key: str, from_state: Optional[str],
-                           to_state: str, reason: str = "", score: float = None,
-                           budget_pct: float = None) -> None:
+                           to_state: str, reason: str = "", score: float | None = None,
+                           budget_pct: float | None = None) -> None:
     """Persiste une transition d'état du cycle de vie d'un bot."""
     rec = SlotLifecycleEvent(
         slot_key=slot_key, from_state=from_state, to_state=to_state,
@@ -571,7 +607,7 @@ def get_current_lifecycle_states(session: Session) -> Dict[str, str]:
     ).all()
     states: Dict[str, str] = {}
     for r in rows:
-        states[r.slot_key] = r.to_state
+        states[str(r.slot_key)] = str(r.to_state)
     return states
 
 
@@ -584,14 +620,14 @@ def save_risk_state(session: Session, key: str, data: dict) -> None:
             row = RiskStateRow(id=key, data=data)
             session.add(row)
         else:
-            row.data = data
+            row.data = data  # type: ignore[assignment]
         session.commit()
     except Exception as e:
         logger.warning(f"[DB] save_risk_state KO ({key}) : {e}")
         session.rollback()
 
 
-def load_risk_state(session: Session, key: str = None) -> dict:
+def load_risk_state(session: Session, key: str | None = None) -> dict:
     """Charge l'état de risque : un blob si ``key`` fourni, sinon tout le dict."""
     try:
         if key is not None:
@@ -604,18 +640,20 @@ def load_risk_state(session: Session, key: str = None) -> dict:
 
 
 def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,
-                       fees: float, equity: float):
+                       fees: float, equity: float, commit: bool = True):
     row = session.query(DailyStats).filter(DailyStats.date == date_str).first()
     if not row:
         row = DailyStats(date=date_str, trades=0, wins=0, pnl=0.0,
                          fees=0.0, equity_open=equity, equity_close=equity)
         session.add(row)
     # Protection NoneType si colonnes NULL en DB (migration depuis version antérieure)
-    row.trades      = (row.trades  or 0) + 1
-    row.wins        = (row.wins    or 0) + (1 if win else 0)
-    row.pnl         = round((row.pnl   or 0.0) + pnl,  6)
-    row.fees        = round((row.fees  or 0.0) + fees, 6)
-    row.equity_close = equity
+    row.trades       = (row.trades or 0) + 1  # type: ignore[assignment]
+    row.wins         = (row.wins or 0) + (1 if win else 0)  # type: ignore[assignment]
+    row.pnl          = round((row.pnl or 0.0) + pnl, 6)  # type: ignore[arg-type]
+    row.fees         = round((row.fees or 0.0) + fees, 6)  # type: ignore[arg-type]
+    row.equity_close = equity  # type: ignore[assignment]
+    if not commit:
+        return
     try:
         session.commit()
     except Exception:

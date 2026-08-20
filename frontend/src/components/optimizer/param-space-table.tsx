@@ -1,18 +1,31 @@
 'use client';
 
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { OptimizeSpaces } from '@/types';
 
 export function ParamSpaceTable({ spaces }: { spaces: OptimizeSpaces }) {
+  const [collapsed, setCollapsed] = useState(true);
   const entries = Object.entries(spaces || {});
   if (entries.length === 0) return null;
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Espaces de paramètres</CardTitle>
-        <Badge variant="info">{entries.length} stratégies</Badge>
+      <CardHeader
+        className="cursor-pointer"
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        <CardTitle className="flex items-center gap-2">
+          Espaces de paramètres
+          <Badge variant="info">{entries.length} stratégies</Badge>
+          <span className="ml-auto text-muted flex items-center gap-1 text-[10px] font-normal uppercase tracking-wider">
+            {collapsed ? 'Déplier' : 'Masquer'}
+            {collapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+          </span>
+        </CardTitle>
       </CardHeader>
+      {collapsed ? null : (
       <CardContent className="p-0">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -51,6 +64,7 @@ export function ParamSpaceTable({ spaces }: { spaces: OptimizeSpaces }) {
           </table>
         </div>
       </CardContent>
+      )}
     </Card>
   );
 }

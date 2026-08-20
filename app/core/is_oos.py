@@ -37,11 +37,26 @@ OOS_FRACTION_DEFAULT = 0.35
 # elle s'applique simplement à la partie restante.
 HOLDOUT_FRACTION_DEFAULT = 0.20
 
+# Embargo par défaut : ≈ 1 % de la série (López de Prado, ch. 7).
+EMBARGO_FRACTION_DEFAULT = 0.01
+
+
+def default_purge_embargo(n: int, lookahead: int = 0) -> tuple:
+    """``(purge_bars, embargo_bars)`` pour un historique de ``n`` barres.
+
+    B-08 : ``purge`` = horizon de label (fuite IS → OOS par les y[t]) ;
+    ``embargo`` = max(purge, 1 % de la série).
+    """
+    purge = max(int(lookahead), 0)
+    embargo = max(purge, int(n * EMBARGO_FRACTION_DEFAULT)) if n else 0
+    return purge, embargo
+
 
 def split_with_holdout(df, warmup: int = WARMUP_BARS_DEFAULT,
                        oos_fraction: float = OOS_FRACTION_DEFAULT,
                        holdout_fraction: float = HOLDOUT_FRACTION_DEFAULT,
-                       min_holdout_bars: int = 0) -> Tuple:
+                       min_holdout_bars: int = 0,
+                       purge_bars: int = 0, embargo_bars: int = 0) -> Tuple:
     """``(df_is, df_oos, split_idx, df_recherche, df_holdout)``.
 
     ``df_recherche`` est tout ce qui précède le holdout — c'est lui qui remplace
@@ -66,17 +81,20 @@ def split_with_holdout(df, warmup: int = WARMUP_BARS_DEFAULT,
     # une recherche : sinon on a déplacé le problème au lieu de le résoudre.
     if (n_holdout <= 0 or n_holdout < besoin
             or reste < max(warmup + 100 + besoin, int(besoin / max(oos_fraction, 1e-9)))):
-        df_is, df_oos, split = split_is_oos(df, warmup, oos_fraction)
+        df_is, df_oos, split = split_is_oos(
+            df, warmup, oos_fraction, purge_bars, embargo_bars)
         return df_is, df_oos, split, df, None
 
     df_recherche = df[:reste]
     df_holdout = df[reste:]
-    df_is, df_oos, split = split_is_oos(df_recherche, warmup, oos_fraction)
+    df_is, df_oos, split = split_is_oos(
+        df_recherche, warmup, oos_fraction, purge_bars, embargo_bars)
     return df_is, df_oos, split, df_recherche, df_holdout
 
 
 def split_is_oos(df, warmup: int = WARMUP_BARS_DEFAULT,
-                 oos_fraction: float = OOS_FRACTION_DEFAULT) -> Tuple:
+                 oos_fraction: float = OOS_FRACTION_DEFAULT,
+                 purge_bars: int = 0, embargo_bars: int = 0) -> Tuple:
     """Coupe ``df`` en ``(df_is, df_oos, split_idx)`` selon la convention canon.
 
     ``split_idx = max(warmup + 100, int(n × (1 − oos_fraction)))`` — l'IS ne
@@ -84,10 +102,18 @@ def split_is_oos(df, warmup: int = WARMUP_BARS_DEFAULT,
     produit de trade côté IS). Reproduit à l'identique le calcul historique
     d'``auto_optimizer`` (byte-identique : mêmes indices de coupure).
 
+    B-08 : ``purge_bars`` retire la fin de l'IS (labels ML qui regardent
+    dans l'OOS) ; ``embargo_bars`` saute le début de l'OOS. Défauts 0 =
+    comportement historique, pour ne pas casser les indices de non-régression.
+
     ``df`` peut être None (retourne ``(None, None, 0)``).
     """
     n = len(df) if df is not None else 0
     if n == 0:
         return None, None, 0
     split = max(warmup + 100, int(n * (1.0 - oos_fraction)))
-    return df[:split], df[split:], split
+    if n <= split:
+        return df, df.head(0), split
+    is_end = max(0, split - max(int(purge_bars), 0))
+    oos_start = min(n, split + max(int(embargo_bars), 0))
+    return df[:is_end], df[oos_start:], split

@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * BT-004 — sync serveur + persistance session pour le backtest.
  *
@@ -10,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
+import type { BacktestResult } from '@/types';
 
 export interface BacktestStatus {
   running: boolean;
@@ -43,7 +46,7 @@ const SESSION_KEY = 'bt_data';
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 export interface BacktestSessionData {
-  result: any;
+  result: BacktestResult | BacktestResult[];
   config: {
     symbol: string;
     timeframe: string;
@@ -86,7 +89,7 @@ export function useBacktestSession() {
     }
   }, []);
 
-  const save = (result: any, config: BacktestSessionData['config']) => {
+  const save = (result: BacktestResult | BacktestResult[], config: BacktestSessionData['config']) => {
     try {
       const data: BacktestSessionData = {
         result,

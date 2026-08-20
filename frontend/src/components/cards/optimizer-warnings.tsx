@@ -41,14 +41,17 @@ export function OptimizerWarnings({ overfit, oosTrades, oosScore }: Props) {
     <div className="space-y-2">
       {warnings.map((w, i) => (
         <div
-          key={i}
+          key={w.text}
           className={`rounded-md px-3 py-2 text-xs ${
             w.level === 'critical'
               ? 'border border-rose-500/30 bg-rose-500/10 text-rose-300'
               : 'border border-amber-500/30 bg-amber-500/10 text-amber-300'
           }`}
-          dangerouslySetInnerHTML={{ __html: w.text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>') }}
-        />
+        >
+          {w.text.split(/\*\*(.+?)\*\*/).map((part, j) =>
+            j % 2 === 1 ? <strong key={j}>{part}</strong> : part,
+          )}
+        </div>
       ))}
     </div>
   );

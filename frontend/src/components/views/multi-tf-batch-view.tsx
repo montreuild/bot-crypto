@@ -13,9 +13,9 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatUSD, formatPct } from '@/lib/utils';
+import {cn, formatUSD, formatPct, errorMessage} from '@/lib/utils';
 import { toast } from 'sonner';
-import { useRunReplay, useCancelReplay } from '@/hooks/use-api';
+import { useRunReplay, useCancelReplay, useBacktestSettings, useOptimizeSpaces } from '@/hooks/use-api';
 import {
   Play, Loader2, StopCircle, AlertCircle, BarChart3,
   TrendingUp, Clock,
@@ -26,6 +26,8 @@ import {
 } from 'recharts';
 import type { ReplayResult } from '@/types';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { SymbolSearchInput } from '@/components/ui/symbol-search';
+import { StrategyPicker } from '@/components/ui/strategy-picker';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -198,16 +200,23 @@ export function MultiTfBatchView() {
   const cancelReplay = useCancelReplay();
   const [result, setResult] = useState<ReplayResult | null>(null);
 
+  const { data: settings } = useBacktestSettings();
+  const { data: spaces } = useOptimizeSpaces();
+  const availableStrategies: string[] = settings?.all_strategies ?? settings?.strategies ?? [];
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [months, setMonths] = useState(3);
   const [selectedTfs, setSelectedTfs] = useState<string[]>(['15m', '1h', '4h']);
-  const [strategies, setStrategies] = useState('');
+  const [strategies, setStrategies] = useState<string[]>([]);
   const [walkForward, setWalkForward] = useState(false);
   const [monteCarlo, setMonteCarlo] = useState(false);
 
   const handleRun = async () => {
     if (!symbol.trim()) {
       toast.error('Symbole requis');
+      return;
+    }
+    if (strategies.length === 0) {
+      toast.error('Sélectionnez au moins une stratégie');
       return;
     }
     if (months < 0.5 || months > 24) {
@@ -220,14 +229,14 @@ export function MultiTfBatchView() {
         symbol: symbol.trim(),
         months,
         timeframes: selectedTfs.length ? selectedTfs.join(',') : undefined,
-        strategies: strategies.trim() || undefined,
+        strategies: strategies.join(','),
         walk_forward: walkForward,
         monte_carlo: monteCarlo,
       });
       setResult(r);
       toast.success(`Replay terminé · ${(r.timeframes_tested || []).length} TFs testés`);
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -235,8 +244,8 @@ export function MultiTfBatchView() {
     try {
       await cancelReplay.mutateAsync();
       toast.success('Replay annulé');
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -270,13 +279,7 @@ export function MultiTfBatchView() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <label className="text-xs text-dim block mb-1.5">Symbole</label>
-              <input
-                aria-label="Symbole"
-                value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
-                placeholder="BTC/USDC"
-                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-              />
+              <SymbolSearchInput value={symbol} onChange={setSymbol} id="batch-symbol" />
             </div>
             <div>
               <label className="text-xs text-dim block mb-1.5">Months (0.5-24)</label>
@@ -300,17 +303,14 @@ export function MultiTfBatchView() {
                 size="sm"
               />
             </div>
-            <div>
-              <label className="text-xs text-dim block mb-1.5">Strategies (CSV ou vide = toutes)</label>
-              <input
-                aria-label="Strategies (CSV ou vide = toutes)"
-                value={strategies}
-                onChange={(e) => setStrategies(e.target.value)}
-                placeholder="trend_rider,breakout"
-                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-              />
-            </div>
           </div>
+          <StrategyPicker
+            strategies={availableStrategies}
+            value={strategies}
+            onChange={setStrategies}
+            spaces={spaces}
+            selectedTfs={selectedTfs}
+          />
 
           <div className="flex items-center gap-6">
             <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -366,7 +366,7 @@ export function MultiTfBatchView() {
           {runReplay.isError && (
             <div className="flex items-center gap-3 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-3">
               <AlertCircle className="w-4 h-4" />
-              <span>Erreur: {(runReplay.error as any)?.message || 'inconnue'}</span>
+              <span>Erreur: {errorMessage(runReplay.error)}</span>
             </div>
           )}
         </CardContent>

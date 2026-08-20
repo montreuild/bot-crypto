@@ -18,7 +18,7 @@ Références :
     - CAPM alpha : Sharpe, W. (1964). "Capital Asset Prices."
 """
 import math
-from statistics import mean, stdev
+from statistics import mean
 from typing import Optional
 
 
@@ -47,7 +47,7 @@ def returns_per_year(n_returns: int, years: Optional[float],
 
 
 def sortino_ratio(returns: list, risk_free_rate: float = 0.0,
-                  periods_per_year: int = 252) -> float:
+                  periods_per_year: float = 252) -> float:
     """Sortino ratio (rendement - sans risque) / volatilité downside.
 
     Parameters
@@ -67,15 +67,15 @@ def sortino_ratio(returns: list, risk_free_rate: float = 0.0,
     if len(returns) < 2:
         return float('nan')
     avg_return = mean(returns)
-    downside_returns = [r for r in returns if r < 0]
-    if not downside_returns:
-        # Pas de rendements négatifs → volatilité downside = 0 → Sortino infini
-        # On plafonne à un nombre élevé pour éviter l'infini
-        return 100.0 if avg_return > 0 else 0.0
-    downside_dev = stdev(downside_returns, xbar=0.0) if len(downside_returns) > 1 \
-                   else abs(downside_returns[0])
-    if downside_dev == 0:
-        return 100.0 if avg_return > 0 else 0.0
+    # F-09 : déviation downside standard = √( (1/N) Σ min(r, 0)² ) sur
+    # TOUTES les observations, pas seulement les négatives, et divisée
+    # par N (moyenne imposée à 0), pas N−1.
+    n = len(returns)
+    downside_ss = sum(min(r, 0.0) ** 2 for r in returns)
+    if downside_ss <= 0:
+        # F-10 : aucun rendement négatif → non mesurable, pas 100.0.
+        return float('nan') if avg_return > 0 else 0.0
+    downside_dev = math.sqrt(downside_ss / n)
     excess = (avg_return * periods_per_year) - risk_free_rate
     downside_annualized = downside_dev * math.sqrt(periods_per_year)
     return round(excess / downside_annualized, 4) if downside_annualized > 0 else float('nan')
@@ -97,7 +97,8 @@ def calmar_ratio(cagr: float, max_drawdown: float) -> float:
         Calmar ratio. NaN si Max DD = 0 (pas de perte → infini).
     """
     if max_drawdown == 0:
-        return 100.0 if cagr > 0 else 0.0
+        # F-10 : drawdown nul → non mesurable, pas 100.0.
+        return float('nan') if cagr > 0 else 0.0
     return round(cagr / abs(max_drawdown), 4)
 
 
@@ -160,9 +161,12 @@ def alpha_vs_buy_hold(strategy_returns: list,
     avg_strat = mean(strat) * periods_per_year
     avg_bench = mean(bench) * periods_per_year
 
+    # F-13 : mean() hors des compréhensions — sinon O(n²).
+    m_s = mean(strat)
+    m_b = mean(bench)
     # β = Cov(Strat, Bench) / Var(Bench)
-    cov_sb = sum((s - mean(strat)) * (b - mean(bench)) for s, b in zip(strat, bench)) / (n - 1)
-    var_b = sum((b - mean(bench)) ** 2 for b in bench) / (n - 1)
+    cov_sb = sum((s - m_s) * (b - m_b) for s, b in zip(strat, bench)) / (n - 1)
+    var_b = sum((b - m_b) ** 2 for b in bench) / (n - 1)
     if var_b == 0:
         beta = 0.0
     else:

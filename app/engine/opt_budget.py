@@ -62,8 +62,8 @@ def effective_n_trials(param_space: Optional[Dict[str, Any]],
 
     n_params = len(param_space or {})
     card = cardinality(param_space)
-    detail = {"base": base, "n_params": n_params, "cardinality": card,
-              "trials_per_param": per_param, "max_trials": plafond}
+    detail: dict = {"base": base, "n_params": n_params, "cardinality": card,
+                    "trials_per_param": per_param, "max_trials": plafond}
 
     if per_param <= 0 or n_params == 0:
         detail["raison"] = "mise à l'échelle désactivée"

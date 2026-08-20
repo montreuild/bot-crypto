@@ -45,6 +45,15 @@ class TestEndpoint:
         assert "text/plain" in r.headers["content-type"]
         assert "cryptobot_" in r.text
 
+    def test_metrics_requires_token_when_configured(self, client, monkeypatch):
+        """S-01 : METRICS_TOKEN refuse les scrapes anonymes."""
+        monkeypatch.setenv("METRICS_TOKEN", "secret-metrics")
+        assert client.get("/metrics").status_code == 403
+        r = client.get("/metrics", headers={"X-API-Key": "secret-metrics"})
+        assert r.status_code == 200
+        r2 = client.get("/metrics", headers={"Authorization": "Bearer secret-metrics"})
+        assert r2.status_code == 200
+
     def test_requests_are_counted_by_route_template(self, client):
         before = _sample("cryptobot_http_requests_total",
                          method="GET", route="/health", status="200")

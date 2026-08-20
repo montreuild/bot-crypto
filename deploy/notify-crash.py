@@ -115,6 +115,9 @@ _SECRET_PATTERNS = [
                 re.IGNORECASE), r'\1[REDACTED]'),
     # Hex strings longues précédées d'un contexte de clé (API key / secret patterns)
     (re.compile(r'(?<=[=:\s])([0-9a-fA-F]{40,})\b'), '[REDACTED_HEX]'),
+    # S-05 : montants / tailles (PnL, notional, size) même si crash_include_log=true
+    (re.compile(r'(?i)\b(pnl|notional|size|capital|equity|balance|qty|amount)\s*[=:]\s*[-+]?\d+(?:\.\d+)?'),
+     r'\1=[REDACTED]'),
 ]
 
 

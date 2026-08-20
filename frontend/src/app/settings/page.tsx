@@ -25,7 +25,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { cn, getStoredTheme, setStoredTheme } from '@/lib/utils';
+import { cn, getStoredTheme, setStoredTheme, errorMessage } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
 import { usePresets, useSetRiskPreset, useSetExpertMode, useBotStatus } from '@/hooks/use-api';
 import { toast } from 'sonner';
 import {
@@ -58,8 +59,8 @@ function TestNotificationButton() {
     try {
       await api.testNotifications();
       toast.success('Notification de test envoyée — vérifiez vos canaux');
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     } finally {
       setLoading(false);
     }
@@ -125,15 +126,15 @@ const PRESETS = [
   },
 ] as const;
 
-function mergePreset(fallback: (typeof PRESETS)[number], remote: any) {
+function mergePreset(fallback: (typeof PRESETS)[number], remote: Record<string, unknown> | undefined) {
   if (!remote) return { ...fallback };
   const pick = (value: unknown, dflt: number | null) =>
     value == null ? dflt : Number(value);
   return {
     ...fallback,
-    label: remote.label || fallback.label,
-    description: remote.description || fallback.description,
-    profile: remote.profile ?? fallback.profile,
+    label: typeof remote.label === 'string' ? remote.label : fallback.label,
+    description: typeof remote.description === 'string' ? remote.description : fallback.description,
+    profile: typeof remote.profile === 'string' ? remote.profile : fallback.profile,
     custom: Boolean(remote.custom ?? fallback.custom),
     trade_risk_pct: pick(remote.trade_risk_pct, fallback.trade_risk_pct),
     daily_dd: pick(remote.daily_drawdown_limit, fallback.daily_dd),
@@ -166,10 +167,11 @@ function SettingsV2Content() {
   const { data: presets } = presetsQuery;
   const currentPreset = presets?.current || 'equilibre';
   const expertMode = presets?.expert_mode || false;
-  const gitCommit = (status as any)?.git_commit as string | null | undefined;
+  const gitCommit = status?.git_commit;
 
   // Lot Réglages — thème et permission de notification, portés depuis
   // /settings. Lus côté client uniquement (localStorage / API Notification).
+  const { locale, setLocale, t } = useI18n();
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [notifPermission, setNotifPermission] =
     useState<'default' | 'granted' | 'denied' | 'unsupported'>('default');
@@ -207,8 +209,8 @@ function SettingsV2Content() {
       } else {
         toast.info('Demande de permission ignorée');
       }
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     }
   };
 
@@ -226,8 +228,8 @@ function SettingsV2Content() {
     try {
       await setPreset.mutateAsync(preset);
       toast.success(`Preset ${preset} appliqué`);
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     }
   };
 
@@ -238,8 +240,8 @@ function SettingsV2Content() {
         localStorage.setItem('expert_mode', String(enabled));
       }
       toast.success(`Mode expert ${enabled ? 'activé' : 'désactivé'}`);
-    } catch (e: any) {
-      toast.error(`Erreur : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur : ${errorMessage(e)}`);
     }
   };
 
@@ -497,7 +499,35 @@ function SettingsV2Content() {
               */}
               <div className="flex items-center justify-between pt-3 border-t border-border gap-4">
                 <div>
-                  <Label>Thème</Label>
+                  <Label htmlFor="locale-fr">{t('settings.language')}</Label>
+                  <p className="text-xs text-muted mt-0.5">
+                    Interface — FR / EN
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    id="locale-fr"
+                    variant={locale === 'fr' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => setLocale('fr')}
+                    aria-pressed={locale === 'fr'}
+                  >
+                    FR
+                  </Button>
+                  <Button
+                    variant={locale === 'en' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => setLocale('en')}
+                    aria-pressed={locale === 'en'}
+                  >
+                    EN
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-border gap-4">
+                <div>
+                  <Label>{t('settings.theme')}</Label>
                   <p className="text-xs text-muted mt-0.5">
                     Sombre / Clair — également accessible depuis la topbar
                   </p>

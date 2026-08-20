@@ -12,6 +12,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import type { OptimizeTrial } from '@/types';
+import { formatPctPoints, formatDrawdownPct } from '@/lib/backend-normalizers';
 
 interface Props {
   trials: OptimizeTrial[];
@@ -80,14 +81,14 @@ export function TopTrialsTable({ trials, bestParams }: Props) {
       key: 'oos_wr',
       header: 'OOS WR',
       align: 'right',
-      render: (t) => <span className="font-mono">{(t.oos_wr * 100).toFixed(1)}%</span>,
+      render: (t) => <span className="font-mono">{formatPctPoints(t.oos_wr)}</span>,
     },
     {
       key: 'oos_dd',
       header: 'OOS DD',
       align: 'right',
       render: (t) => (
-        <span className="font-mono text-rose-400">-{(t.oos_dd * 100).toFixed(1)}%</span>
+        <span className="font-mono text-rose-400">{formatDrawdownPct(t.oos_dd)}</span>
       ),
     },
     {

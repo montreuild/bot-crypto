@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * BT-005 — Card de progression pour le backtest.
  *

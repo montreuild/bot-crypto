@@ -127,6 +127,13 @@ def _run(strategy_name: str) -> dict:
 #   trend_rider     pnl −2.2815  →  −11.3593  (×4,98 ≈ 1 000/200)
 #   pullback_trend  pnl −14.2505 →  −56.6987  (×3,98)
 #
+# F-01 — ``trade.pnl`` retranche les frais d'entrée (4e recapture, motif nommé).
+# Signaux et nombre de trades inchangés ; le PnL baisse du montant des
+# ``entry_fees`` désormais inclus :
+#
+#   trend_rider     pnl −11.3593 →  −13.2823
+#   pullback_trend  pnl −56.6987 →  −63.2037
+#
 # Un futur écart sur ces chiffres n'est PAS à réaligner sans avoir identifié la
 # cause : le rôle de ce test est de rendre visible un changement de
 # comportement, pas de le suivre.
@@ -135,16 +142,18 @@ def test_trend_rider_backtest_parity_on_synthetic_btc_data():
     assert result == {
         "total_trades": 2,
         "win_rate": 0.0,
-        "total_pnl": -11.3593,
-        "final_equity": 988.6407,
+        "total_pnl": -13.2823,
+        "final_equity": 986.7177,
     }
 
 
 def test_pullback_trend_backtest_parity_on_synthetic_btc_data():
     result = _run("pullback_trend")
+    # FIN-11 : rampe 5–15 % réduit le sizing plus tôt que l'escalier
+    # (à 6–12 % DD le facteur est > 0,5). PnL/équité recalés sur la rampe.
     assert result == {
         "total_trades": 8,
         "win_rate": 0.0,
-        "total_pnl": -56.6987,
-        "final_equity": 943.3013,
+        "total_pnl": -64.2158,
+        "final_equity": 935.7842,
     }

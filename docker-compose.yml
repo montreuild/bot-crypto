@@ -42,6 +42,8 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./models:/app/models
+      # SQLite paper/live — sinon le conteneur repart avec une base vide.
+      - ./trades.db:/app/trades.db
       # Config editable (UI → disque) — montée pour le dev local.
       - ./config.yaml:/app/config.yaml
       - ./config:/app/config

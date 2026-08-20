@@ -18,6 +18,8 @@ import {
   TradePlansTable, RealizedTradesTable, type TradePlan, type RealizedTrade,
 } from '@/components/cards/trade-plans-table';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { SymbolSearchInput } from '@/components/ui/symbol-search';
+import { resolveSignalTimestamp } from '@/components/views/smart-graph-helpers';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { toast } from 'sonner';
 import {
@@ -88,6 +90,10 @@ export function SmartReplayView() {
   const { data, isLoading, isError, error } = useSMCReplay(symbol, timeframe, 1600);
   // Plans SMC (analytiques) — même source que Smart Graph
   const { data: smcData } = useSMC(symbol, timeframe, 1200);
+
+  useEffect(() => {
+    setSelectedPlan(null);
+  }, [symbol, timeframe]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -288,7 +294,38 @@ export function SmartReplayView() {
       }
     }
 
-    // Trade actif (position ouverte à currentIndex) — Entry / SL / TP sur le chart
+    // Trade actif (position ouverte à currentIndex) — Entry / SL / TP depuis le signal
+    const visibleTimes = cleanedCandles.slice(0, sliceEnd).map((c) => c.time as number);
+    const lastVisible = visibleTimes.length
+      ? (visibleTimes[visibleTimes.length - 1] as UTCTimestamp)
+      : null;
+    const addLevelFrom = (
+      from: UTCTimestamp | null,
+      price: number,
+      color: string,
+      width: 1 | 2 | 3 | 4,
+      title: string,
+    ) => {
+      if (
+        from == null || lastVisible == null
+        || !Number.isFinite(price) || price <= 0
+        || (lastVisible as number) < (from as number)
+      ) return;
+      const s = chart.addLineSeries({
+        color,
+        lineWidth: width,
+        lineStyle: LineStyle.Solid,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+        title,
+      });
+      s.setData([
+        { time: from, value: price },
+        { time: lastVisible, value: price },
+      ]);
+      overlaysRef.current.push(s);
+    };
     for (const t of (data.trades || [])) {
       const entryBar = typeof t.entry_bar === 'number' ? t.entry_bar
         : typeof t.entry_time === 'number' ? t.entry_time : null;
@@ -297,39 +334,18 @@ export function SmartReplayView() {
       const isOpen = entryBar != null && currentIndex >= entryBar
         && (exitBar == null || currentIndex < exitBar);
       if (!isOpen) continue;
-      const entry = Number(t.entry ?? t.entry_price);
-      const stop = Number(t.stop);
-      const tp = Number(t.tp ?? t.take_profit);
-      if (Number.isFinite(entry) && entry > 0) {
-        priceLinesRef.current.push(candleSeries.createPriceLine({
-          price: entry,
-          color: '#0ea5e9',
-          lineStyle: LineStyle.Solid,
-          lineWidth: 3,
-          axisLabelVisible: true,
-          title: `Entry ${t.side === 'long' ? 'LONG' : 'SHORT'}`,
-        }));
-      }
-      if (Number.isFinite(stop) && stop > 0) {
-        priceLinesRef.current.push(candleSeries.createPriceLine({
-          price: stop,
-          color: '#f87171',
-          lineStyle: LineStyle.Solid,
-          lineWidth: 2,
-          axisLabelVisible: true,
-          title: 'SL',
-        }));
-      }
-      if (Number.isFinite(tp) && tp > 0) {
-        priceLinesRef.current.push(candleSeries.createPriceLine({
-          price: tp,
-          color: '#34d399',
-          lineStyle: LineStyle.Solid,
-          lineWidth: 2,
-          axisLabelVisible: true,
-          title: 'TP',
-        }));
-      }
+      const from = (timeAt(entryBar) ?? resolveSignalTimestamp(visibleTimes, t.signal_time)) as UTCTimestamp | null;
+      addLevelFrom(from, Number(t.entry ?? t.entry_price), '#0ea5e9', 3, `Entry ${t.side === 'long' ? 'LONG' : 'SHORT'}`);
+      addLevelFrom(from, Number(t.stop), '#f87171', 2, 'SL');
+      addLevelFrom(from, Number(t.tp ?? t.take_profit), '#34d399', 2, 'TP');
+    }
+
+    // Plan / trade cliqué dans les tables — mêmes 3 lignes depuis le signal
+    if (selectedPlan && lastVisible != null) {
+      const from = resolveSignalTimestamp(visibleTimes, selectedPlan.signal_time) as UTCTimestamp | null;
+      addLevelFrom(from, Number(selectedPlan.entry), '#0ea5e9', 4, `Entry ${selectedPlan.setup || ''}`.trim());
+      addLevelFrom(from, Number(selectedPlan.stop), '#f87171', 3, 'SL');
+      addLevelFrom(from, Number(selectedPlan.tp), '#34d399', 3, 'TP');
     }
 
     // Structure markers — filter by index when available
@@ -361,7 +377,7 @@ export function SmartReplayView() {
 
     // Keep chart pinned to the latest visible bar
     chart.timeScale().scrollToRealTime();
-  }, [data, currentIndex, cleanedCandles]);
+  }, [data, currentIndex, cleanedCandles, selectedPlan]);
 
   // ── Derived panel data ────────────────────────────────────────────────────
 
@@ -480,13 +496,7 @@ export function SmartReplayView() {
         <CardContent className="flex flex-wrap items-end gap-4">
           <div>
             <label className="text-xs text-dim block mb-1.5">Symbole</label>
-            <input
-              aria-label="Symbole"
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value)}
-              className="w-40 px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-              placeholder="BTC/USDC"
-            />
+            <SymbolSearchInput value={symbol} onChange={setSymbol} id="smart-replay-symbol" />
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Timeframe</label>
@@ -592,7 +602,7 @@ export function SmartReplayView() {
 
       {/* Aligné Smart Graph : recommandés (SMC) + réalisés (backtest replay) */}
       <TradePlansTable
-        plans={smcData?.trade_plans || []}
+        plans={(smcData?.trade_plans || []) as TradePlan[]}
         selectedPlan={selectedPlan}
         onSelectPlan={(p) => setSelectedPlan((prev) =>
           prev && prev.entry === p.entry && prev.setup === p.setup ? null : p)}

@@ -13,12 +13,14 @@ const STORAGE_KEY = 'crypto-bot-locale';
 const translations: Record<Locale, Record<string, string>> = {
   fr: {
     'nav.trading': 'Trading', 'nav.research': 'Recherche', 'nav.data': 'Données',
-    'nav.config': 'Configuration', 'nav.dashboard': 'Dashboard', 'nav.bots': 'Mes Bots',
+    'nav.config': 'Configuration', 'nav.dashboard': 'Dashboard', 'nav.lab': 'Laboratoire',
+    'nav.market': 'Marché', 'nav.bots': 'Mes Bots',
     'nav.trades': 'Trades', 'nav.portfolio': 'Portefeuille', 'nav.backtest': 'Backtest',
     'nav.scanner': 'Scanner', 'nav.replay': 'Replay', 'nav.smartgraph': 'Smart Graph',
     'nav.smartreplay': 'Smart Replay', 'nav.compare': 'Comparatif', 'nav.optimizer': 'Optimiseur',
     'nav.audit': 'Audit OOS', 'nav.audit_log': 'Journal Audit', 'nav.derivatives': 'Dérivées',
-    'nav.data_ohlcv': 'Bougies OHLCV', 'nav.ml': 'Modèles ML', 'nav.settings': 'Réglages',
+    'nav.data_ohlcv': 'Bougies OHLCV', 'nav.models': 'Registre modèles',
+    'nav.ml': 'Modèles ML', 'nav.settings': 'Réglages',
     'topbar.start': 'Démarrer', 'topbar.stop': 'Arrêter', 'topbar.search': 'Rechercher',
     'topbar.capital': 'Capital', 'topbar.pnl_total': 'PnL Total',
     'dashboard.title': 'Dashboard', 'dashboard.subtitle': 'Vue temps réel du trading',
@@ -30,12 +32,14 @@ const translations: Record<Locale, Record<string, string>> = {
   },
   en: {
     'nav.trading': 'Trading', 'nav.research': 'Research', 'nav.data': 'Data',
-    'nav.config': 'Configuration', 'nav.dashboard': 'Dashboard', 'nav.bots': 'My Bots',
+    'nav.config': 'Configuration', 'nav.dashboard': 'Dashboard', 'nav.lab': 'Lab',
+    'nav.market': 'Market', 'nav.bots': 'My Bots',
     'nav.trades': 'Trades', 'nav.portfolio': 'Portfolio', 'nav.backtest': 'Backtest',
     'nav.scanner': 'Scanner', 'nav.replay': 'Replay', 'nav.smartgraph': 'Smart Graph',
     'nav.smartreplay': 'Smart Replay', 'nav.compare': 'Compare', 'nav.optimizer': 'Optimizer',
     'nav.audit': 'Audit OOS', 'nav.audit_log': 'Audit Log', 'nav.derivatives': 'Derivatives',
-    'nav.data_ohlcv': 'OHLCV Data', 'nav.ml': 'ML Models', 'nav.settings': 'Settings',
+    'nav.data_ohlcv': 'OHLCV Data', 'nav.models': 'Model registry',
+    'nav.ml': 'ML Models', 'nav.settings': 'Settings',
     'topbar.start': 'Start', 'topbar.stop': 'Stop', 'topbar.search': 'Search',
     'topbar.capital': 'Capital', 'topbar.pnl_total': 'Total PnL',
     'dashboard.title': 'Dashboard', 'dashboard.subtitle': 'Real-time trading view',
@@ -62,14 +66,19 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem(STORAGE_KEY) as Locale | null;
     if (stored === 'fr' || stored === 'en') {
       setLocaleState(stored);
-    } else if (navigator.language.toLowerCase().startsWith('en')) {
-      setLocaleState('en');
     }
+    // Pas de détection auto via navigator.language : l'UI est rédigée en
+    // français ; un runner CI en en-US basculerait sinon nav/a11y/visuel.
   }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
 
   const setLocale = (newLocale: Locale) => {
     setLocaleState(newLocale);
     localStorage.setItem(STORAGE_KEY, newLocale);
+    document.documentElement.lang = newLocale;
   };
 
   const t = (key: string): string => {

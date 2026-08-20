@@ -49,6 +49,25 @@ def _cfg(capital=1000, paper=True, dd_daily=0.05, dd_global=0.20, risk=0.01):
     }
 
 
+class TestRateTokenIsNotConsumedOnReject:
+    def test_failed_can_trade_does_not_eat_a_token(self):
+        """F-11 : un refus plus loin (ici on ne consomme plus dans can_trade)
+        ne doit pas épuiser le budget anti-spam."""
+        cfg = _cfg()
+        cfg["trading"]["max_trades_per_minute"] = 3
+        rm = RiskManager(cfg)
+        for _ in range(10):
+            ok, _reason = rm.can_trade("long")
+            assert ok
+        assert len(rm._trade_times) == 0
+        rm.consume_rate_token()
+        rm.consume_rate_token()
+        rm.consume_rate_token()
+        ok, reason = rm.can_trade("long")
+        assert not ok
+        assert "anti-spam" in reason.lower() or "minute" in reason.lower()
+
+
 class TestRiskManager:
     def test_initial_state(self):
         rm = RiskManager(_cfg())
@@ -62,15 +81,21 @@ class TestRiskManager:
 
     def test_compute_risk_reduced_above_5pct_dd(self):
         rm = RiskManager(_cfg(capital=1000))
-        rm.equity = 940      # 6% de drawdown
+        rm.equity = 940      # 6 % de drawdown → rampe FIN-11 : ×0,95
         rm.peak_equity = 1000
-        assert rm.compute_risk() == pytest.approx(0.0075)  # 0.01 * 0.75
+        assert rm.compute_risk() == pytest.approx(0.0095)
 
     def test_compute_risk_halved_above_10pct_dd(self):
         rm = RiskManager(_cfg(capital=1000))
-        rm.equity = 880      # 12% de drawdown
+        rm.equity = 880      # 12 % de drawdown → rampe : ×0,65
         rm.peak_equity = 1000
-        assert rm.compute_risk() == pytest.approx(0.005)  # 0.01 * 0.5
+        assert rm.compute_risk() == pytest.approx(0.0065)
+
+    def test_compute_risk_floor_at_15pct_dd(self):
+        rm = RiskManager(_cfg(capital=1000))
+        rm.equity = 850      # 15 % → plancher ×0,5
+        rm.peak_equity = 1000
+        assert rm.compute_risk() == pytest.approx(0.005)
 
     def test_circuit_breaker_daily(self):
         rm = RiskManager(_cfg(dd_daily=0.05))

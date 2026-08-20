@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import app.ml.model_registry as registry
+from app.ml.overfitting_gate import AUC_WEAK
 from app.ml.scoring import (
     resolve_gate_spec,
     resolve_recipe_name,
@@ -111,13 +112,20 @@ class GateResult:
 
 def decide_gate(candidate_metrics: Optional[Dict[str, Any]],
                 incumbent_metrics: Optional[Dict[str, Any]], *,
-                auc_floor: float = 0.55, epsilon: float = 0.01,
+                auc_floor: float | None = None, epsilon: float = 0.01,
                 metric: str = "auc_amp") -> GateResult:
     """Décide promote/keep. ``incumbent_metrics is None`` = aucun sortant
     (cold start) ; ``incumbent_metrics == {}`` = sortant présent mais
     non scorable (holdout dégénéré) — deux cas distincts, cf. docstring
     module. Le plancher ``auc_floor`` s'applique dans tous les cas ;
-    ``epsilon`` ne joue que si un sortant comparable existe."""
+    ``epsilon`` ne joue que si un sortant comparable existe.
+
+    M-05 : le défaut est ``AUC_WEAK`` (0,55) — même constante que
+    ``overfitting_gate``. ``AUC_GOOD`` (0,60) reste un *libellé* de
+    qualité, pas un seuil de promotion.
+    """
+    if auc_floor is None:
+        auc_floor = AUC_WEAK
     if (candidate_metrics or {}).get("unsupported_format"):
         return GateResult(
             "keep",
@@ -161,7 +169,7 @@ class GateConfig:
     holdout_bars: int = 1500
     window_bars: Optional[int] = None       # None = tout ce qui est fourni (borné par l'appelant)
     min_window_bars: int = 2000
-    auc_floor: float = 0.55
+    auc_floor: float = AUC_WEAK  # M-05 : même constante que overfitting_gate
     epsilon: float = 0.01
     metric: str = "auc_amp"
     label_horizons: List[int] = field(default_factory=lambda: [1, 3, 6])
@@ -184,7 +192,7 @@ class GateConfig:
             holdout_bars=int(p.get("gate_holdout_bars", 1500)),
             window_bars=int(wb) if wb else None,
             min_window_bars=int(p.get("gate_min_window_bars", 2000)),
-            auc_floor=float(p.get("gate_auc_floor", 0.55)),
+            auc_floor=float(p.get("gate_auc_floor", AUC_WEAK)),
             epsilon=float(p.get("gate_epsilon", 0.01)),
             metric=str(p.get("gate_metric", p.get("metric", "auc_amp"))),
             label_horizons=list(p.get("label_horizons", [1, 3, 6])),

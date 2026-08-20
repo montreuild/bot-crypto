@@ -111,6 +111,36 @@ def test_freshness_warning_flags_stale_model():
     assert "vieux" in warn
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  cadence TF (pas un timer 6 h unique, pas les recettes)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_scaled_interval_15m_is_much_longer_than_legacy_6h():
+    h = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "15m")
+    assert h > 6.0
+    assert h >= 24.0
+
+
+def test_scaled_interval_grows_with_tf_then_caps():
+    h15 = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "15m")
+    h1h = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "1h")
+    h4h = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "4h")
+    h1d = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "1d")
+    assert h15 < h1h
+    assert h1h <= h4h
+    assert h4h <= 14 * 24
+    assert h1d == h4h  # les deux tapent le plafond 14 j
+
+
+def test_scaled_interval_base_multiplier():
+    a = MLStrategyTrainer._scaled_retrain_interval_h(6.0, "1h")
+    b = MLStrategyTrainer._scaled_retrain_interval_h(12.0, "1h")
+    assert b > a
+
+
+def test_scaled_interval_zero_base_disables():
+    assert MLStrategyTrainer._scaled_retrain_interval_h(0.0, "1h") == 0.0
+
+
 def test_freshness_warning_undated_artifact_is_non_measurable():
     """Sans ``train_end``, la fraîcheur n'est pas mesurable — il faut le DIRE,
     pas retourner None (qui signifierait « modèle frais »)."""
@@ -175,6 +205,53 @@ def test_load_models_serves_a_model_whatever_symbol_it_was_trained_on(tmp_path):
 
     assert strat.is_trained
     assert trainer._retrain_at["opus_omnibus_v11@1h"] > 0   # pas de retrain immédiat
+
+
+def test_loaded_auc_missing_attr_is_zero():
+    """smc_ml_edge (et tout BaseStrategyML hors mixin) n'a pas
+    ``_best_auc_per_tf`` — le log de chargement doit rester à 0."""
+    from app.engine.engine import BaseStrategyML
+
+    class _Bare(BaseStrategyML):
+        name = "bare"
+
+    assert MLStrategyTrainer._loaded_auc(_Bare(), "1h") == 0.0
+
+
+def test_loaded_auc_reads_map_and_ignores_junk():
+    class _WithMap:
+        _best_auc_per_tf = {"1h": 0.62, "4h": "n/a"}
+
+    assert MLStrategyTrainer._loaded_auc(_WithMap(), "1h") == pytest.approx(0.62)
+    assert MLStrategyTrainer._loaded_auc(_WithMap(), "4h") == 0.0
+    assert MLStrategyTrainer._loaded_auc(_WithMap(), "15m") == 0.0
+    assert MLStrategyTrainer._loaded_auc(object(), "1h") == 0.0
+
+
+def test_load_models_survives_strategy_without_auc_map(tmp_path, monkeypatch):
+    """Régression : un load_model réussi + stratégie sans ``_best_auc_per_tf``
+    ne doit plus planter LiveTrader à l'init."""
+    from app.engine.engine import BaseStrategyML
+
+    class _BareML(BaseStrategyML):
+        name = "bare_ml"
+        model_dir = str(tmp_path)
+        timeframes = ["1h"]
+        models = {"signal": "r"}
+
+        def load_model(self, path: str) -> bool:
+            return True
+
+    art = registry.ArtifactRef(
+        path_prefix="x", train_symbol="BTC/USDC", tf="1h",
+        recipe="r", version_id="v1", train_end="2020-01-01T00:00:00",
+    )
+    monkeypatch.setattr(registry, "resolve", lambda *a, **k: art)
+
+    trainer = MLStrategyTrainer({"strategy_params": {}})
+    trainer.load_models({"bare_ml": _BareML()}, ["1h"])
+
+    assert trainer._retrain_at["bare_ml@1h"] > __import__("time").time()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

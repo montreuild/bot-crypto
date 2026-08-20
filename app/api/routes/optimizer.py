@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api import state
 from app.api.helpers import _clean, _discover_strategies, verify_api_key
+from app.api.schemas import OptimizeResultsResponse
 from app.core.candle_store import get_store
 from app.core.exchange import create_exchange
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
@@ -339,15 +340,23 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
     # `optimizer` de façon défensive plutôt que de faire échouer l'apply sur un
     # réglage optionnel.
     _opt_cfg = (state.cfg or {}).get("optimizer", {}) or {}
+    # N-02 : le holdout est déjà dans la fiche de job (auto_optimizer le
+    # stocke). L'auto-apply décide dessus ; le bouton « Appliquer » doit
+    # faire de même, sinon le chemin manuel (le plus fréquent, auto_apply
+    # étant off par défaut) juge encore la tranche de sélection.
+    _h = job.get("holdout") or {}
+    _gate_source = job.get("gate_source") or ("holdout" if _h else "selection")
     ok_quality, reason = beats_baseline(
-        result.get("best_oos_trades", 0), result.get("best_oos_pnl", 0),
-        result.get("best_oos_wr", 0), result.get("best_oos_sharpe", 0),
+        _h.get("trades", result.get("best_oos_trades", 0)),
+        _h.get("pnl",    result.get("best_oos_pnl", 0)),
+        _h.get("wr",     result.get("best_oos_wr", 0)),
+        _h.get("sharpe", result.get("best_oos_sharpe", 0)),
         job.get("baseline", {}),
         # P0 — Deflated Sharpe gate (cf. auto_optimizer.py)
         n_trials=int(job.get("n_trials", 1)) or 1,
         min_deflated_sharpe=(
             float(_opt_cfg.get("deflated_sharpe_min", 0.5))
-            if _opt_cfg.get("deflated_sharpe_gate", True)
+            if _opt_cfg.get("deflated_sharpe_gate", False)
             else None
         ),
     )
@@ -379,7 +388,8 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
             logger.warning(f"[apply] propagation trader KO: {e}")
 
     return {"status": "applied", "strategy": strat, "timeframe": tf, "symbol": symbol,
-            "params": best, "trader_updated": trader_updated}
+            "params": best, "trader_updated": trader_updated,
+            "gate_source": _gate_source}
 
 
 @router.post("/api/optimize/cancel", dependencies=[Depends(verify_api_key)])
@@ -409,7 +419,8 @@ def optimizer_delete_job(request: Request, job_id: str):
     return {"status": "deleted", "job_id": job_id}
 
 
-@router.get("/api/optimize/results", dependencies=[Depends(verify_api_key)])
+@router.get("/api/optimize/results", dependencies=[Depends(verify_api_key)],
+            response_model=OptimizeResultsResponse)
 def optimizer_results():
     """Retourne les résultats d'optimisation classés par (strategy, tf)."""
     if not state.cfg:
@@ -469,6 +480,18 @@ def optimizer_spaces():
         }
         for strat, space in PARAM_SPACES.items()
     }
+
+
+def _with_pnl_pct(by_strategy: dict, capital) -> dict:
+    """Ajoute le gain % de la stratégie (PnL / capital) à chaque régime."""
+    cap = float(capital or 0)
+    out = {}
+    for regime, stats in (by_strategy or {}).items():
+        row = dict(stats)
+        pnl = float(row.get("pnl") or 0)
+        row["pnl_pct"] = round(pnl / cap * 100, 2) if cap else 0.0
+        out[regime] = row
+    return out
 
 
 # ── P1-4 : Route validate (Monte-Carlo + Regime Stress Test post-optimisation) ─
@@ -572,7 +595,10 @@ def optimizer_validate(
                 # Contexte : comportement du sous-jacent par régime.
                 "market": regime_summary(segments),
                 # Réponse à la question posée : tenue de la STRATÉGIE par régime.
-                "by_strategy": strategy_performance_by_regime(segments, res.trades),
+                "by_strategy": _with_pnl_pct(
+                    strategy_performance_by_regime(segments, res.trades),
+                    res.initial_capital,
+                ),
                 "n_trades": len(trades),
             }
         else:
@@ -615,4 +641,6 @@ def optimizer_purge(request: Request, max_age_hours: int = 24, keep_last: int = 
         return {"status": "ok", "purged": purged, "remaining": len(all_jobs) - purged}
     except Exception as e:
         logger.error(f"[API] optimize/purge KO : {e}", exc_info=True)
-        raise HTTPException(500, f"Erreur interne : {e}")
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} optimize/purge : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")

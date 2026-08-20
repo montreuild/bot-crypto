@@ -93,6 +93,54 @@ export function TradesStatsPanel({ trades }: Props) {
 
     const byExit = agreger(closed, (t) => t.exit_reason ?? t.reason ?? '—');
 
+    // §5 — PnL PAR JAMBE de sortie. `byExit` compte des trades ; il ne dit rien
+    // de la façon dont un trade fractionné a gagné son argent. C'est pourtant la
+    // question que pose un mode TP1/TP2/runner : le reliquat paie-t-il les
+    // jambes prises tôt, ou sont-ce elles qui sauvent un reliquat perdant ?
+    //
+    // Le reliquat n'est pas journalisé comme une jambe (il part avec la clôture
+    // du trade) : on le reconstitue par différence, ce qui garantit que la somme
+    // des lignes redonne le PnL des trades fractionnés.
+    const parJambe = new Map<string, { n: number; wins: number; pnl: number }>();
+    const cumule = (cle: string, pnl: number) => {
+      const d = parJambe.get(cle) ?? { n: 0, wins: 0, pnl: 0 };
+      d.n += 1;
+      d.pnl += pnl;
+      if (pnl > 0) d.wins += 1;
+      parJambe.set(cle, d);
+    };
+    for (const t of closed) {
+      const legs = t.exits ?? [];
+      if (legs.length) {
+        let cumulLegs = 0;
+        for (const leg of legs) {
+          const pnl = leg.pnl ?? 0;
+          cumulLegs += pnl;
+          cumule(leg.reason ?? 'jambe', pnl);
+        }
+        cumule('runner', (t.pnl ?? 0) - cumulLegs);
+      } else {
+        // Trade sorti EN UNE FOIS. L'inclure n'est pas un détail : sans lui, le
+        // découpage ne couvrait que les trades fractionnés — tous gagnants par
+        // construction, puisqu'une jambe ne se déclenche qu'en atteignant sa
+        // cible. Mesuré sur ETH/USDC 4 h : 80 trades fractionnés à +1 902
+        // affichés, 89 non fractionnés à −1 629 invisibles, et un tableau qui
+        // annonçait 695 % du PnL réel avec 100 % de réussite partout.
+        cumule(`complet · ${t.exit_reason ?? t.reason ?? 'inconnu'}`, t.pnl ?? 0);
+      }
+    }
+    const totalAbs =
+      [...parJambe.values()].reduce((s2, d) => s2 + Math.abs(d.pnl), 0) || 1;
+    const byLeg = [...parJambe.entries()]
+      .map(([cle, d]) => ({
+        cle,
+        n: d.n,
+        pnl: d.pnl,
+        wr: d.n ? (d.wins / d.n) * 100 : 0,
+        part: (Math.abs(d.pnl) / totalAbs) * 100,
+      }))
+      .sort((x, y) => Math.abs(y.pnl) - Math.abs(x.pnl));
+
     return {
       longs: longs.length,
       shorts: shorts.length,
@@ -103,6 +151,7 @@ export function TradesStatsPanel({ trades }: Props) {
       avecJambes,
       jambes,
       byExit,
+      byLeg,
       axes: AXES.map((a) => ({ ...a, lignes: agreger(closed, a.valeur) })).filter(
         (a) => a.lignes.length > 0,
       ),
@@ -175,6 +224,44 @@ export function TradesStatsPanel({ trades }: Props) {
         </div>
 
         {stats.axes.map((a) => tableau(a.titre, a.couleur, a.lignes))}
+
+        {stats.byLeg.length > 0 && (
+          <div>
+            <div className="text-xs text-muted-foreground mb-1">
+              Par poste de sortie (§5) — d&apos;où vient le PnL (somme = PnL total)
+            </div>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="text-left py-1">Jambe</th>
+                  <th className="text-right py-1 px-2">N</th>
+                  <th className="text-right py-1 px-2">WR%</th>
+                  <th className="text-right py-1 px-2">PnL</th>
+                  <th className="text-right py-1 px-2">Part</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.byLeg.map((l) => (
+                  <tr key={l.cle} className="border-b border-border/50">
+                    <td className="py-1 font-mono text-amber-400">{l.cle}</td>
+                    <td className="text-right py-1 px-2 font-mono">{l.n}</td>
+                    <td className="text-right py-1 px-2 font-mono">{l.wr.toFixed(1)}%</td>
+                    <td
+                      className={`text-right py-1 px-2 font-mono ${
+                        l.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
+                    >
+                      {l.pnl >= 0 ? '+' : ''}${l.pnl.toFixed(2)}
+                    </td>
+                    <td className="text-right py-1 px-2 font-mono text-muted-foreground">
+                      {l.part.toFixed(1)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {stats.byExit.length > 0 &&
           tableau('Par raison de sortie', '', stats.byExit, (k) => {

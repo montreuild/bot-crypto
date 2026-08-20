@@ -1,11 +1,28 @@
 'use client';
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, ReactNode } from 'react';
-import { WebSocketProvider } from '@/lib/ws-provider';
+import { WebSocketProvider, useWebSocket } from '@/lib/ws-provider';
 import { I18nProvider } from '@/lib/i18n';
 import { TooltipProvider } from '@radix-ui/react-tooltip';
 import { getStoredTheme } from '@/lib/utils';
+
+/** U-03 : le WS invalide le sondage plutôt que l'inverse. */
+function WsQueryInvalidator() {
+  const qc = useQueryClient();
+  const { subscribe } = useWebSocket();
+  useEffect(() => {
+    return subscribe((event) => {
+      if (event.type === 'trade_opened' || event.type === 'trade_closed'
+          || event.type === 'cycle.update') {
+        qc.invalidateQueries({ queryKey: ['status'] });
+        qc.invalidateQueries({ queryKey: ['portfolio'] });
+        qc.invalidateQueries({ queryKey: ['trades'] });
+      }
+    });
+  }, [qc, subscribe]);
+  return null;
+}
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -47,6 +64,7 @@ export function Providers({ children }: { children: ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <I18nProvider>
         <WebSocketProvider>
+          <WsQueryInvalidator />
           <TooltipProvider delayDuration={200}>{children}</TooltipProvider>
         </WebSocketProvider>
       </I18nProvider>

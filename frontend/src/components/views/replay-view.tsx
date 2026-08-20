@@ -19,16 +19,18 @@ import { useState, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { SymbolSearchInput } from '@/components/ui/symbol-search';
+import { StrategyPicker } from '@/components/ui/strategy-picker';
 import { toast } from 'sonner';
 import { Loader2, AlertCircle, Play, TrendingUp, Activity, Zap, Eye, Layers, Clock } from 'lucide-react';
-import { useRunBacktest, useCancelBacktest, useBacktestSettings } from '@/hooks/use-api';
+import { useRunBacktest, useCancelBacktest, useBacktestSettings, useOptimizeSpaces } from '@/hooks/use-api';
+import type { OptimizeSpaces } from '@/types';
 import { useReplayEngine, type CandleRow } from '@/hooks/use-replay-engine';
 import { useReplayKeyboard } from '@/hooks/use-replay-keyboard';
 import { monthsToBougies } from '@/lib/limit-hint';
+import { errorMessage } from '@/lib/utils';
 import { ReplayCandlestickChart } from '@/components/charts/replay-candlestick-chart';
 import { PlaybackControls } from '@/components/controls/playback-controls';
 import { ReplaySignalLog } from '@/components/cards/replay-signal-log';
@@ -64,7 +66,7 @@ export function ReplayView() {
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [timeframe, setTimeframe] = useState('1h');
   const [months, setMonths] = useState(3);
-  const [strategy, setStrategy] = useState<string>('');
+  const [strategies, setStrategies] = useState<string[]>([]);
 
   const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
   const [crosshairCandle, setCrosshairCandle] = useState<CandleRow | null>(null);
@@ -80,14 +82,14 @@ export function ReplayView() {
   const runBacktest = useRunBacktest();
   const cancelBacktest = useCancelBacktest();
   const { data: settings } = useBacktestSettings();
+  const { data: spaces } = useOptimizeSpaces();
 
   // Stratégies disponibles (depuis /api/backtest/settings).
   const availableStrategies: string[] = useMemo(() => {
     return settings?.all_strategies ?? settings?.strategies ?? [];
   }, [settings]);
 
-  // Si pas de stratégie sélectionnée, prends la première activée.
-  const effectiveStrategy = strategy || (settings?.strategies_enabled?.[0] ?? availableStrategies[0] ?? '');
+  const selectedSet = useMemo(() => new Set(strategies), [strategies]);
 
   // Convertit le résultat backtest en candles + trades pour le replay.
   const candles: CandleRow[] = useMemo(() => {
@@ -107,10 +109,12 @@ export function ReplayView() {
     if (!backtestResult?.trades) return [];
     // Si multi-stratégies, filtre par effectiveStrategy si possible.
     const all = backtestResult.trades.map(normalizeTrade);
-    if (!effectiveStrategy) return all;
-    const filtered = all.filter((t) => t.strategy === effectiveStrategy || t.strategy_name === effectiveStrategy);
+    if (selectedSet.size === 0) return all;
+    const filtered = all.filter((t) =>
+      selectedSet.has(String(t.strategy || '')) || selectedSet.has(String(t.strategy_name || '')),
+    );
     return filtered.length > 0 ? filtered : all;
-  }, [backtestResult, effectiveStrategy]);
+  }, [backtestResult, selectedSet]);
 
   const engine = useReplayEngine({ candles, trades });
 
@@ -128,8 +132,8 @@ export function ReplayView() {
       toast.error('Symbole requis');
       return;
     }
-    if (!effectiveStrategy) {
-      toast.error('Sélectionnez une stratégie');
+    if (strategies.length === 0) {
+      toast.error('Sélectionnez au moins une stratégie');
       return;
     }
     // Estime le nombre de bougies à partir des mois + TF.
@@ -137,7 +141,7 @@ export function ReplayView() {
     const started = Date.now();
     setLoadLog([]);
     pushLog('info', `${symbol.trim()} · ${timeframe} · ${months} mois → ${limit} bougies demandées`);
-    pushLog('info', `Stratégie overlay : ${effectiveStrategy}`);
+    pushLog('info', `Stratégie overlay : ${strategies.join(', ')}`);
     try {
       toast.info(`Chargement des données (${limit} bougies ${timeframe})…`);
       pushLog('info', 'Backtest en cours côté serveur — fetch OHLCV puis évaluation…');
@@ -145,7 +149,7 @@ export function ReplayView() {
         symbol: symbol.trim(),
         timeframe,
         limit,
-        strategies: effectiveStrategy,
+        strategies: strategies.join(','),
       });
       // Si la réponse est un array (multi-strat), prends la première.
       const result = Array.isArray(r) ? r[0] : r;
@@ -167,9 +171,9 @@ export function ReplayView() {
         pushLog('info', 'Moteur de replay prêt — Espace pour lancer');
         toast.success(`${nCandles} bougies chargées · ${nTrades} trades`);
       }
-    } catch (e: any) {
-      pushLog('error', e?.message ?? 'Erreur inconnue');
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      pushLog('error', errorMessage(e));
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -178,9 +182,9 @@ export function ReplayView() {
       await cancelBacktest.mutateAsync();
       pushLog('warn', 'Chargement annulé par l’utilisateur');
       toast.success('Chargement annulé');
-    } catch (e: any) {
-      pushLog('error', `Annulation KO : ${e?.message ?? 'erreur inconnue'}`);
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      pushLog('error', `Annulation KO : ${errorMessage(e)}`);
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -204,9 +208,10 @@ export function ReplayView() {
           setTimeframe={setTimeframe}
           months={months}
           setMonths={setMonths}
-          strategy={effectiveStrategy}
-          setStrategy={setStrategy}
+          strategies={strategies}
+          setStrategies={setStrategies}
           availableStrategies={availableStrategies}
+          spaces={spaces}
           hintBougies={hintBougies}
           onLoad={handleLoad}
           isLoading={false}
@@ -249,9 +254,10 @@ export function ReplayView() {
           setTimeframe={setTimeframe}
           months={months}
           setMonths={setMonths}
-          strategy={effectiveStrategy}
-          setStrategy={setStrategy}
+          strategies={strategies}
+          setStrategies={setStrategies}
           availableStrategies={availableStrategies}
+          spaces={spaces}
           hintBougies={hintBougies}
           onLoad={handleLoad}
           isLoading
@@ -310,9 +316,10 @@ export function ReplayView() {
             setTimeframe={setTimeframe}
             months={months}
             setMonths={setMonths}
-            strategy={effectiveStrategy}
-            setStrategy={setStrategy}
+            strategies={strategies}
+            setStrategies={setStrategies}
             availableStrategies={availableStrategies}
+            spaces={spaces}
             hintBougies={hintBougies}
             onLoad={handleLoad}
             isLoading={runBacktest.isPending}
@@ -399,9 +406,10 @@ interface ReplayConfigCardProps {
   setTimeframe: (v: string) => void;
   months: number;
   setMonths: (v: number) => void;
-  strategy: string;
-  setStrategy: (v: string) => void;
+  strategies: string[];
+  setStrategies: (v: string[]) => void;
   availableStrategies: string[];
+  spaces?: OptimizeSpaces;
   hintBougies: number;
   onLoad: () => void;
   isLoading: boolean;
@@ -416,9 +424,10 @@ function ReplayConfigCard({
   setTimeframe,
   months,
   setMonths,
-  strategy,
-  setStrategy,
+  strategies,
+  setStrategies,
   availableStrategies,
+  spaces,
   hintBougies,
   onLoad,
   isLoading,
@@ -433,51 +442,36 @@ function ReplayConfigCard({
       <CardContent className={`space-y-3 ${compact ? 'py-3' : ''}`}>
         <div>
           <Label className="text-xs text-dim block mb-1">Symbole</Label>
-          <Input
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-            placeholder="BTC/USDC"
-            className="font-mono text-sm"
-          />
+          <SymbolSearchInput value={symbol} onChange={setSymbol} id="replay-symbol" />
         </div>
         <div>
           <Label className="text-xs text-dim block mb-1">Timeframe</Label>
           <TimeframeButtons value={timeframe} onChange={setTimeframe} size="sm" />
         </div>
         <div>
-          <Label className="text-xs text-dim block mb-1">
+          <Label htmlFor="replay-months" className="text-xs text-dim block mb-1">
             Mois (1-24) · ≈ {hintBougies.toLocaleString('fr-FR')} bougies
           </Label>
           <input
+            id="replay-months"
             type="range"
             min={1}
             max={24}
             value={months}
             onChange={(e) => setMonths(Number(e.target.value))}
             className="w-full accent-cyan-400"
+            aria-label="Nombre de mois à charger"
           />
           <div className="text-xs text-muted-foreground font-mono text-center mt-1">{months} mois</div>
         </div>
         <div>
-          <Label className="text-xs text-dim block mb-1">Stratégie overlay</Label>
-          <Select value={strategy} onValueChange={setStrategy}>
-            <SelectTrigger className="text-sm">
-              <SelectValue placeholder={strategy || 'Sélectionner…'} />
-            </SelectTrigger>
-            <SelectContent>
-              {availableStrategies.length === 0 ? (
-                <SelectItem value="" disabled>
-                  Chargement…
-                </SelectItem>
-              ) : (
-                availableStrategies.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
+          <StrategyPicker
+            strategies={availableStrategies}
+            value={strategies}
+            onChange={setStrategies}
+            spaces={spaces}
+            selectedTfs={[timeframe]}
+          />
         </div>
         <div className="flex gap-2">
           <Button onClick={onLoad} disabled={isLoading} variant="primary" className="flex-1">

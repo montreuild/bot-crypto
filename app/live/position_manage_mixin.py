@@ -40,11 +40,32 @@ from app.live.position_open_mixin import (
     _order_fail_reason,
     _order_failed,
 )
+from app.live.protocols import LiveHost
+
+
+def bars_held_from_ohlcv(df, open_time, tf_secs: float) -> int:
+    """L-16 : nombre de bougies depuis ``open_time``, pas l'horloge murale.
+
+    Un week-end XPAR (vendredi 17:30 → lundi 09:00) n'est pas 62 barres 1h.
+    Repli horloge seulement si le DataFrame est indisponible.
+    """
+    try:
+        ot = float(open_time or 0.0)
+    except (TypeError, ValueError):
+        ot = 0.0
+    fallback = max(0, int((time.time() - ot) / max(float(tf_secs) or 1.0, 1.0)))
+    if df is None or len(df) == 0 or "time" not in getattr(df, "columns", []):
+        return fallback
+    try:
+        epochs = df["time"].dt.epoch(time_unit="s")
+        return max(0, int((epochs >= int(ot)).sum()))
+    except Exception:
+        return fallback
 
 logger = logging.getLogger(__name__)
 
 
-class PositionManageMixin:
+class PositionManageMixin(LiveHost):
     """Gestion des positions ouvertes (voir docstring module)."""
 
     # ── Gestion (suivi tick-by-tick) ──────────────────────────────────────
@@ -59,6 +80,18 @@ class PositionManageMixin:
         if ticker is None:
             return
         price = ticker.get("last", pos["entry"])
+        # L-01 : le stop/TP se jugent sur le range de la bougie en formation
+        # (plus-bas pour un long, plus-haut pour un short). `ticker.last` ne
+        # voit qu'un échantillon ponctuel par cycle — une mèche entre deux
+        # cycles n'était jamais vue.
+        probe = price
+        lo_hi = None
+        cache = getattr(self, "ohlcv_cache", None)
+        if cache is not None and hasattr(cache, "get_forming_range"):
+            lo_hi = cache.get_forming_range(symbol, pos_tf)
+        if lo_hi is not None:
+            lo, hi = lo_hi
+            probe = lo if pos["side"] == "long" else hi
 
         # Récupération ATR (cache → fetch → fallback 1%)
         atr = self.ohlcv_cache.get_cached_atr(symbol)
@@ -73,15 +106,16 @@ class PositionManageMixin:
         if atr is None or atr <= 0:
             atr = price * 0.01  # fallback 1%
 
-        # Détection gap (prix franchit le stop de plus de 2%)
-        if pos["side"] == "long" and price < pos["stop"] * 0.98:
+        # Détection gap (prix franchit le stop de plus que le seuil config)
+        _gap = float(self.cfg["trading"].get("gap_threshold", 0.02))
+        if pos["side"] == "long" and probe < pos["stop"] * (1.0 - _gap):
             logger.warning(
                 f"[Gap] {symbol} prix {price:.4f} < stop {pos['stop']:.4f} "
                 f"— clôture forcée"
             )
             self._close_position(pos_id, price, exit_reason="gap")
             return
-        if pos["side"] == "short" and price > pos["stop"] * 1.02:
+        if pos["side"] == "short" and probe > pos["stop"] * (1.0 + _gap):
             logger.warning(
                 f"[Gap] {symbol} prix {price:.4f} > stop {pos['stop']:.4f} "
                 f"— clôture forcée"
@@ -92,8 +126,10 @@ class PositionManageMixin:
         # ── Take-profit fixe (vérifié sur ticker, en complément du SL) ────────
         tp_val = pos.get("take_profit")
         if tp_val is not None:
-            tp_hit = (pos["side"] == "long"  and price >= tp_val) or \
-                     (pos["side"] == "short" and price <= tp_val)
+            tp_probe = (lo_hi[1] if pos["side"] == "long" else lo_hi[0]) \
+                if lo_hi is not None else price
+            tp_hit = (pos["side"] == "long"  and tp_probe >= tp_val) or \
+                     (pos["side"] == "short" and tp_probe <= tp_val)
             if tp_hit:
                 logger.info(
                     f"[TP] {symbol} {pos['side']} TP={tp_val:.4f} touché @ {price:.4f}"
@@ -150,7 +186,14 @@ class PositionManageMixin:
                     return
 
         _pos_tf_secs = _TF_SECS.get(pos.get("timeframe", "1h"), 3600)
-        bars_held    = int((time.time() - pos["open_time"]) / _pos_tf_secs)
+        # L-16 : compter les bougies depuis open_time, pas l'horloge murale
+        # (un week-end XPAR n'est pas 62 barres 1h).
+        bars_held = bars_held_from_ohlcv(
+            self.ohlcv_cache.get(symbol, pos_tf, self.open_positions)
+            if hasattr(self, "ohlcv_cache") else None,
+            pos.get("open_time"),
+            _pos_tf_secs,
+        )
         trailing     = pos.get("_trailing")
         if trailing is None:
             trail_cfg        = _apply_trail_override(self._trailing_cfg, pos.get("trail_override"))
@@ -214,8 +257,11 @@ class PositionManageMixin:
         elif _calc_unreal_pct(pos["side"], pos["entry"], price) >= 0:
             self._loss_notified.discard(pos_id)
 
-        if trailing.is_triggered(price, new_stop, pos["side"]):
-            self._close_position(pos_id, price, exit_reason=(
+        if trailing.is_triggered(probe, new_stop, pos["side"]):
+            # L-02 : en paper, simuler le stop exchange — fill au niveau
+            # (le slippage paper est appliqué dans _close_position).
+            fill = new_stop if self.cfg["trading"].get("paper_mode", True) else price
+            self._close_position(pos_id, fill, exit_reason=(
                 "stop_loss" if pos.get("disable_trailing") else "trailing_stop"))
 
     # ── Stop-loss / take-profit côté exchange ───────────────────────────────
@@ -239,7 +285,7 @@ class PositionManageMixin:
     # mais déclenche une notification.
 
     def _exchange_stops_enabled(self) -> bool:
-        return (not self.cfg["trading"].get("paper_mode")
+        return (not self.cfg["trading"].get("paper_mode", True)
                 and bool(self.cfg["trading"].get("exchange_stop_orders", True)))
 
     def _exchange_oco_supported(self) -> bool:
@@ -312,9 +358,11 @@ class PositionManageMixin:
             )
 
     def _cancel_exchange_stop(self, pos: dict):
-        """Annule le stop exchange. Retourne l'ordre s'il a DÉJÀ été exécuté
-        (position clôturée côté exchange pendant que le bot ne regardait pas),
-        None sinon."""
+        """Annule le stop exchange.
+
+        Retourne l'ordre s'il a déjà été exécuté, None s'il est annulé.
+        Relève ``RuntimeError`` si l'annulation échoue (l'id est restauré).
+        """
         oid = pos.pop("stop_order_id", None)
         if not oid:
             return None
@@ -330,7 +378,12 @@ class PositionManageMixin:
             if status not in ("canceled", "cancelled", "expired", "rejected"):
                 self.exchange.cancel_order(oid, pos["symbol"])
         except Exception as e:
-            logger.warning(f"[StopExchange] Annulation stop {pos['symbol']} KO : {e}")
+            pos["stop_order_id"] = oid
+            logger.error(
+                f"[StopExchange] Annulation stop {pos['symbol']} KO : {e} "
+                f"— id conservé, nouveau stop non posé"
+            )
+            raise RuntimeError(f"cancel_stop_failed:{oid}") from e
         return None
 
     def _update_exchange_stop(self, pos: dict):
@@ -339,7 +392,20 @@ class PositionManageMixin:
         localement sans nouvel ordre), None sinon."""
         if not self._exchange_stops_enabled():
             return None
-        filled = self._cancel_exchange_stop(pos)
+        try:
+            filled = self._cancel_exchange_stop(pos)
+        except RuntimeError as e:
+            logger.error(
+                f"[StopExchange] Trailing {pos.get('symbol')} : annulation "
+                f"échouée ({e}) — l'ancien stop reste en place"
+            )
+            if hasattr(self, "notif"):
+                self.notif.send(
+                    f"⚠️ *Stop exchange non remplacé* `{pos.get('symbol')}` : {e}\n"
+                    f"L'ancien stop reste en place (niveau plus prudent).",
+                    async_=True,
+                )
+            return None
         if filled is not None:
             return filled
         self._place_exchange_stop(pos)
@@ -410,7 +476,7 @@ class PositionManageMixin:
                          f"{_order_fail_reason(order)}")
             return
         exec_price = order.get("price") or order.get("average") or price
-        if self.cfg["trading"].get("paper_mode"):
+        if self.cfg["trading"].get("paper_mode", True):
             slip = self._paper_slippage_fraction(
                 symbol, pos.get("timeframe", self.tf), part * exec_price)
             exec_price *= (1 - slip) if side == "long" else (1 + slip)
@@ -428,7 +494,7 @@ class PositionManageMixin:
             venue=venue,
         )
         with self._capital_lock:
-            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+            if self.cfg["trading"].get("paper_mode", True) and hasattr(self, "_paper_base"):
                 self._paper_base += pnl
             else:
                 self.capital_display += pnl
@@ -554,7 +620,7 @@ class PositionManageMixin:
                 f"[SCALE-IN] {symbol} : ordre non exécuté — {_order_fail_reason(order)}"
             )
         exec_price = order.get("price") or order.get("average") or price
-        if self.cfg["trading"].get("paper_mode"):
+        if self.cfg["trading"].get("paper_mode", True):
             slip = self._paper_slippage_fraction(
                 symbol, pos.get("timeframe", self.tf), add_notional)
             exec_price *= (1 + slip) if side == "long" else (1 - slip)
@@ -563,7 +629,7 @@ class PositionManageMixin:
         add_fees = venue_trade_cost(exec_price, add_size, fee_rate,
                                     side=side, venue=venue, is_entry=True)
         with self._capital_lock:
-            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+            if self.cfg["trading"].get("paper_mode", True) and hasattr(self, "_paper_base"):
                 self._paper_base -= add_fees
             else:
                 self.capital_display -= add_fees
@@ -581,6 +647,7 @@ class PositionManageMixin:
                            risk=self.risk.engaged_risk(pos["entry"], pos["stop"], pos["size"]),
                            notional=pos["notional"])
         self.ledger.release(add_key)
+        self.risk.consume_rate_token()
         with session_scope(self.SessionLocal) as _sess:
             persist_open_position(_sess, pos)
         # Le stop exchange couvre l'ancienne taille → replacement avec la nouvelle

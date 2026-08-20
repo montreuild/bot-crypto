@@ -125,7 +125,7 @@ class Strategy(BaseStrategy):
         atr, adx = _wilder_atr_adx(df, atr_len)
         return float(atr[-1]), float(adx[-1])
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         ema_len = int(p.get("ema_len", 200))
         bb_len  = int(p.get("bb_len", 20))
@@ -170,7 +170,7 @@ class Strategy(BaseStrategy):
         sigma = float(window.std(ddof=0))
         return mid - bb_mult * sigma, mid + bb_mult * sigma
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get(self.name, {})
         ema_len    = int(p.get("ema_len",    self.fixed_params["ema_len"]))

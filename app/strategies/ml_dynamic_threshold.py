@@ -453,7 +453,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
 
     @classmethod
     def score_holdout(cls, path_prefix: str, holdout_df, *,
-                      gate_cfg: Any = None, params: dict = None) -> Dict[str, Any]:
+                      gate_cfg: Any = None, params: dict | None = None) -> Dict[str, Any]:
         """Scorer dédié — le format de CETTE recette diffère du bundle V4 sur
         les trois plans à la fois :
 
@@ -524,7 +524,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             return {}
         return {"n": int(n_valid), "auc_dir": rank_auc(y, np.asarray(proba, dtype=float))}
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         min_train = int(p.get("min_train", self.fixed_params["min_train"]))
         return min_train + 50
@@ -603,7 +603,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             self._bt_features_len = 0
             self._bt_preds.clear()
 
-    def _get_or_build_features(self, df: pl.DataFrame, offset: int = None) -> pl.DataFrame:
+    def _get_or_build_features(self, df: pl.DataFrame, offset: int | None = None) -> pl.DataFrame:
         if self._bt_features is not None and len(df) <= self._bt_features_len:
             if offset is not None and offset + len(df) <= self._bt_features_len:
                 return self._bt_features.slice(offset, len(df))
@@ -664,7 +664,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         return value_at(arr, idx)
 
     # ── Interface principale ───────────────────────────────────
-    def score(self, df: pl.DataFrame, params: dict = None, df_htf=None, symbol: str = "") -> Dict[str, Any]:
+    def score(self, df: pl.DataFrame, params: dict | None = None, df_htf=None, symbol: str = "") -> Dict[str, Any]:
         if params:
             p = params.get(self.name, {})
             if p:
@@ -930,7 +930,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
 
     # ── Contrat BaseStrategyML ─────────────────────────────────────────────
 
-    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
+    def fit(self, df: pl.DataFrame, params: dict | None = None) -> None:
         """Entraîne le modèle pour le TF détecté depuis df."""
         if params:
             p = params.get(self.name, {})
@@ -940,7 +940,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         tf = _detect_tf(df)
         self._fit(df, tf)
 
-    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
+    def predict(self, df: pl.DataFrame, params: dict | None = None) -> Dict[str, Any]:
         """Génère un signal sans réentraîner (modèle déjà chargé en mémoire)."""
         return self._predict(df)
 

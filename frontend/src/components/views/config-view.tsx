@@ -17,21 +17,32 @@
 // onglets différents sans faire remonter l'état dans `/settings`.
 
 import { useConfig } from '@/hooks/use-api';
+import type { AppConfig } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { QueryBoundary } from '@/components/ui/query-state';
 import { PaperLiveSwitch } from '@/components/cards/paper-live-switch';
+import { toast } from 'sonner';
+import { errorMessage } from '@/lib/utils';
 
 /**
  * S6-12 : le titre reste monté même sans config chargée, et l'échec est
  * affiché/réessayable au lieu d'un spinner qui ne s'arrête jamais.
  */
-function ConfigGate({ title, children }: { title: string; children: (config: any) => ReactNode }) {
+function ConfigGate({ title, children }: { title: string; children: (config: AppConfig) => ReactNode }) {
   const configQuery = useConfig();
-  const { data: config } = configQuery;
+  const { data: config, isLoading, isError, error } = configQuery;
 
-  if (!config) {
+  // UX-03 : un échec de lecture ne reste pas un spinner. Les POST
+  // (PaperLiveSwitch, strategy-params, enveloppes) toastent déjà via sonner.
+  useEffect(() => {
+    if (isError && error) {
+      toast.error(`Configuration : ${errorMessage(error)}`);
+    }
+  }, [isError, error]);
+
+  if (isLoading || isError || !config) {
     return (
       <QueryBoundary
         title={<h2 className="text-lg font-semibold tracking-tight">{title}</h2>}
@@ -95,7 +106,7 @@ export function ConfigTimeframesView() {
 // couvrent le besoin, et correctement.
 
 /** Capital de la venue par défaut — plus de trading.capital global. */
-function defaultVenueCapital(config: any): number {
+function defaultVenueCapital(config: AppConfig): number {
   const envelopes = config?.risk?.envelopes || {};
   const names = Object.keys(envelopes);
   if (names.length === 0) return 0;
@@ -105,7 +116,7 @@ function defaultVenueCapital(config: any): number {
 }
 
 /** Taux de risque par trade depuis risk.profile, jamais trading.risk_per_trade. */
-function effectiveTradeRiskPct(config: any): number {
+function effectiveTradeRiskPct(config: AppConfig): number {
   const risk = config?.risk || {};
   const profile = risk.profile || 'normal';
   const profiles = risk.profiles || { prudent: 0.01, normal: 0.025, agressif: 0.05 };
@@ -222,11 +233,11 @@ export function ConfigExchangeView() {
         const defs = venues.defs || {};
         const venueNames: string[] = Object.keys(defs);
         const defaultVenueName: string = venues.default || '';
-        const defaultDef = (defaultVenueName && defs[defaultVenueName]) || {};
+        const defaultDef = defaultVenueName ? defs[defaultVenueName] : undefined;
         // Source de vérité = venue (market_type / max_leverage), pas le legacy
         // exchange.margin qui ne fait plus que du repli.
-        const marketType = String(defaultDef.market_type || '').toLowerCase();
-        const venueLeverage = Number(defaultDef.max_leverage ?? config.trading?.max_leverage ?? 1);
+        const marketType = String(defaultDef?.market_type || '').toLowerCase();
+        const venueLeverage = Number(defaultDef?.max_leverage ?? config.trading?.max_leverage ?? 1);
         const isSpotLike = marketType === 'spot' || (marketType === 'margin' && venueLeverage <= 1);
         const badgeLabel = !marketType
           ? (config.exchange?.margin ? 'Margin' : 'Spot')
@@ -249,7 +260,7 @@ export function ConfigExchangeView() {
           <Card>
             <CardHeader>
               <CardTitle>Configuration Exchange &amp; données</CardTitle>
-              <Badge variant={badgeVariant as any}>{badgeLabel}</Badge>
+              <Badge variant={badgeVariant}>{badgeLabel}</Badge>
             </CardHeader>
             <CardContent>
               <div className="space-y-2 text-sm">
@@ -266,7 +277,7 @@ export function ConfigExchangeView() {
                   <span className="text-muted">Type de marché</span>
                   <span className="font-mono text-xs">
                     {marketType || '—'}
-                    {defaultDef.margin_mode ? ` · ${defaultDef.margin_mode}` : ''}
+                    {defaultDef?.margin_mode ? ` · ${defaultDef.margin_mode}` : ''}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -276,7 +287,7 @@ export function ConfigExchangeView() {
                 <div className="flex justify-between">
                   <span className="text-muted">Short autorisé</span>
                   <span className="font-mono text-xs">
-                    {defaultDef.allow_short === false ? 'non' : defaultDef.allow_short === true ? 'oui' : '—'}
+                    {defaultDef?.allow_short === false ? 'non' : defaultDef?.allow_short === true ? 'oui' : '—'}
                   </span>
                 </div>
                 <div className="flex justify-between">

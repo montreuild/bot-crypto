@@ -316,14 +316,37 @@ def test_ws_cookie_auth_accepted(monkeypatch):
             assert msg["type"] == "connected"
 
 
-def test_ws_query_param_fallback_when_no_cookie(monkeypatch):
-    """?api_key= reste un fallback pour les clients sans cookie jar."""
+def test_ws_api_key_query_never_accepted(monkeypatch):
+    """SEC-02 : la clé permanente n'est plus acceptée en query string."""
     _setup_hub_loop()
     monkeypatch.setattr(state, "cfg", {"web": {"api_key": "secret123"}})
     with TestClient(app) as client:
-        with client.websocket_connect("/ws?api_key=secret123") as ws:
-            msg = ws.receive_json()
-            assert msg["type"] == "connected"
+        try:
+            with client.websocket_connect("/ws?api_key=secret123") as ws:
+                ws.receive_json()
+            assert False, "connexion aurait dû être refusée"
+        except Exception:
+            pass
+
+
+def test_ws_ephemeral_ticket_accepted_once(monkeypatch):
+    """SEC-02 : POST /api/ws/ticket puis ?ticket= une seule fois."""
+    _setup_hub_loop()
+    monkeypatch.setattr(state, "cfg", {"web": {"api_key": "secret123"}})
+    with TestClient(app) as client:
+        client.cookies.set("api_key", "secret123")
+        issued = client.post("/api/ws/ticket")
+        assert issued.status_code == 200
+        ticket = issued.json()["ticket"]
+        client.cookies.clear()
+        with client.websocket_connect(f"/ws?ticket={ticket}") as ws:
+            assert ws.receive_json()["type"] == "connected"
+        try:
+            with client.websocket_connect(f"/ws?ticket={ticket}") as ws:
+                ws.receive_json()
+            assert False, "le jeton ne doit servir qu'une fois"
+        except Exception:
+            pass
 
 
 def test_ws_wrong_key_rejected(monkeypatch):

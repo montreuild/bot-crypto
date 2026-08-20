@@ -103,3 +103,18 @@ def test_trusted_proxy_recognized_when_mapped(monkeypatch):
     monkeypatch.setenv("TRUSTED_PROXIES", "127.0.0.1")
     req = _FakeReq("::ffff:127.0.0.1", headers={"x-forwarded-for": "198.51.100.9"})
     assert _extract_client_ip(req) == "198.51.100.9"
+
+
+def test_limiter_key_honors_trusted_proxies(monkeypatch):
+    """S-02 : le seau de rate-limit utilise la même règle XFF que l'auth."""
+    from app.api.state import _rate_limit_key
+    monkeypatch.setenv("TRUSTED_PROXIES", "10.0.0.1")
+    req = _FakeReq("10.0.0.1", headers={"x-forwarded-for": "198.51.100.9"})
+    assert _rate_limit_key(req) == "198.51.100.9"
+
+
+def test_limiter_key_ignores_xff_without_trusted_proxies(monkeypatch):
+    from app.api.state import _rate_limit_key
+    monkeypatch.delenv("TRUSTED_PROXIES", raising=False)
+    req = _FakeReq("203.0.113.5", headers={"x-forwarded-for": "127.0.0.1"})
+    assert _rate_limit_key(req) == "203.0.113.5"

@@ -2,6 +2,10 @@
 
 Historique des versions du Crypto Bot.
 
+> X-07 : l'état **actuel** des constats d'audit est dans
+> [`audit/20-REVISION-2026-08-18.md`](audit/20-REVISION-2026-08-18.md),
+> pas dans ce fichier (narratif historique, parfois en retard).
+
 ---
 
 ## [Non publié]
@@ -30,6 +34,443 @@ Le rapport imprime `α`, `→` et les tableaux polars (`┌`, `─`, `┆`), don
 n'existe en cp1252 — l'encodage d'un stdout redirigé sous Windows. Le script
 mourait sur `UnicodeEncodeError` **après** avoir fait tout le calcul, sans rien
 écrire. `main()` force désormais UTF-8 sur stdout/stderr.
+
+### 🔧 CI
+
+- Actions GitHub sur runtime Node 24 : `checkout@v5`, `setup-python@v6`,
+  `setup-node@v6`, `upload-artifact@v6` (plus d'avertissement Node 20).
+- `eslint.config.mjs` : tableau nommé avant `export default`.
+
+### 📚 Docs
+
+- Tracker `20-REVISION` : FIN-11, vues FE-03, API-03, UX-02, PERF-05
+  passés en livré. Constats sources de la revue-complete annotés.
+
+### 🐛 PERF-05
+
+- `smart_money` 1 h : `prepare_for_backtest` indexe sweeps/OB/breakers
+  par barre et résout premium/discount + trendlines par `searchsorted`
+  (plus de scan O(n) à chaque événement). Cause mesurée : 73 % du
+  backtest 8 k barres était ce prepare, pas `_manage_open_position`.
+
+### 🐛 UX-02
+
+- Nombres et devises en `fr-FR` (`1 234,56`, `12,50 %`). Masques Playwright
+  élargis aux montants français.
+
+### 🐛 API-03
+
+- `POST /api/risk/envelopes` : chaque venue validée par `VenueEnvelopeBody`
+  (`capital > 0`, pct dans les bornes disque). `min_slot_weight` et
+  `max_drawdown_global` bornés.
+
+### 🐛 FE-03 vues
+
+- `BacktestResult`, `OptimizeJob` et les types ML sortent de `index.ts`
+  vers `frontend/src/types/views.ts` (trop hétérogènes pour un miroir
+  Pydantic strict). `index.ts` reste un barrel.
+
+### 🐛 FIN-11
+
+- Courbe de dé-risquage : rampe linéaire 5 % → 15 % (×1 → ×0,5) à la
+  place de l'escalier ×1 / ×0,75 / ×0,5. Mesure : saut max 0,25 → < 0,01.
+
+### 🐛 ARCH-04 + FE-03 (PR #256)
+
+- **ARCH-04** : mypy bloquant sur `app/core` + `app/engine` **sans**
+  `ignore_errors`. Shims ARCH-03 en import statique + `copy_privates`.
+  Mixins annotés (`LifecycleHost`, `OptimizerHost`, `RiskNotifier`,
+  `BacktestResult`, `BaseStrategy`).
+- **FE-03** : contrats API (BotStatus, Position, CostModel, Risk*, Trade,
+  StrategyStats, recos) générés depuis `app.api.schemas`. `index.ts`
+  réexporte `generated.ts` ; WS + chart SMC dans `types/ui.ts`.
+
+### 🐛 TEST-05 / PERF-03 / FE-01 / ML-04
+
+- **TEST-05 / PERF-03** : fixture `gapped_ohlcv` (trous) ; test `slow` de
+  débit `trend` sur parquet réel ou série trouée (seuil 150 barres/s).
+- **FE-01** : tests `apiFetch` (204, 503, schéma non bloquant, POST config)
+  et hooks `useBotStatus` / `useHealth` / `useUpdateTradingConfig`.
+- **ML-04** : early-stop + isotonie sur la tranche **calib** ; AUC publiée
+  (`auc_amp` / `auc_dir`) mesurée sur **eval**. `auc_source=eval`.
+
+### 🐛 ML-03 / UX-01 / FE-02 / ARCH-04 / FE-03
+
+- **ML-03** : `fit_trace` sur les entraînements inline. Mesure : le repli
+  `frozen` → inline est **causal** (`aligned_train_window(ctx.window)`), pas
+  un fit sur toute la série. `any_full_series` irait en P0.
+- **UX-01** : `quoteCurrency()` + `formatMoney` câblés (backtest, compare,
+  portefeuille, positions, trades, topbar, bandeau).
+- **FE-02 / UX-03 / UX-04** : toast config en lecture ; POST config déjà
+  toasts ; compare / backtest-results distinguent en cours / vide / erreur.
+- **ARCH-04** : 5 modules mypy de plus (33 `ignore_errors` restants).
+- **FE-03** : `scripts/gen_frontend_types.py` régénère `types/generated.ts`
+  (dont `TradeRow.quote_currency`).
+
+### 🐛 ARCH-04 suite + ML-05 + FE-03
+
+- **ARCH-04** : RUF013 sur `app/` ; mypy CI = `app/core` + `app/engine`
+  (38 modules encore exclus).
+- **FE-03** : les 5 contrats sont réexportés depuis `types/generated.ts`.
+- **ML-05** : un `fit()` qui échoue n'est pas relancé à chaque barre.
+
+### 🐛 ARCH / SEC / API (revue-complete)
+
+- **SEC-02** : `?api_key=` retiré ; `POST /api/ws/ticket` + `?ticket=`.
+- **ARCH-01** : `BacktestPayload` dataclass ; `to_dict()` en dérive.
+- **ARCH-02** : `_evaluer_sorties` / `_appliquer_jambes` / `_mettre_a_jour_trailing`.
+- **API-01 / FE-03** : `response_model` sur backtest, portfolio, trades, risk,
+  optimize/results ; types dans `frontend/src/types/generated.ts`.
+- **ARCH-03** : `app/core/smc/` et `app/core/risk/` ; shims aux anciens chemins.
+- **ARCH-04 / TEST-03** : `OptimizerHost` / `LifecycleHost` ; mypy CI élargi
+  et bloquant.
+
+### 📝 Backlog revue-complete
+
+- État courant et reste à faire : `audit/20-REVISION-2026-08-18.md` §2.
+- README pointe cette révision.
+
+### 🐛 Revue 2026-08-18 (75 constats)
+
+- **FIN-01..10** : `entry_fees` ; early/time taker+spread ; borrow accumulé ;
+  `update_risk` / `resize` ; plafond slot cumulé (slot par stratégie) ;
+  pyramidage sous courbe de DD ; BE venue ; `cible` dans `round_trip_cost` ;
+  `venue=None` → levier 1.
+- **OPT-01..06** : DSR off par défaut ; `dd_factor` sans saturation ;
+  holdout/WF non évaluable bloquent l'auto-apply ; WR seul insuffisant.
+- **BT-01..10** : warmup OOS ; `realistic_risk` hérité ; folds échoués
+  comptés ; MTM / B&H alignés ; MC renommé + hypothèse ; OOS vide signalé.
+- **LIVE-01..06** : 3 issues d'annulation stop ; fill nul refusé ; paper
+  `partial_fill` ; `paper_mode` défaut sûr ; ScoreFactor retiré ; logs
+  rollback.
+- **PERF-01** : repli HTF irrégulier mémoïsé. **ML-01/02/03** : IC AUC ;
+  embargo ; `fallback_to_inline` racine.
+- **TEST-01/02/06** : cov 64 % ; vitest coverage en CI ; eslint ignore
+  coverage. **ARCH-04** : `LiveHost`. **UX-01** : `formatMoney`.
+- Commentaires réduits aux contraintes non lisibles dans le code.
+
+### 🐛 U-08 optimizer + U-05 contrats restants
+
+- **U-08** : formulaire → `optimizer-config-form.tsx` ; jobs →
+  `optimizer-jobs-panel.tsx`. `optimizer-view.tsx` ~88 L.
+- **U-05** : portfolio, presets, univers, AppConfig, recettes ML typés.
+  Plus de `catch (e: any)` métier.
+- Commentaires réduits aux contraintes non lisibles dans le code.
+
+### 🐛 U-08 vues + U-05 types restants
+
+- **U-08** : Verdict / résultats → `backtest-results.tsx`. Chart SMC →
+  `use-smart-graph-chart.ts`. `backtest-view` ~525 L, `smart-graph-view` ~556 L.
+- **U-05** : session backtest, OOS, forward-test, audit, cache bougies,
+  enveloppes, start optimize typés. `errorMessage` sur les catch métier.
+- Commentaires réduits aux contraintes non lisibles dans le code.
+
+### 🐛 X-03 optimizer/SMC, U-08 Smart Graph, U-05
+
+- **X-03** : `OptimizerFreezeMixin` (`opt_freeze.py`) + `OptimizerBayesianMixin`
+  (`opt_bayesian.py`). `from app.engine.optimizer_search import
+  OptimizerSearchEngine` inchangé. Checkers SMC → `smart_money_setups.py` ;
+  `_signal_at` reste dans `smart_money_signals.py`.
+- **U-08** : tables SMC → `smart-graph-tables.tsx` ; types `ChartIndicators` /
+  `SmcZoneRow`.
+- **U-05** : TF depuis `BotStatus` typé, `runBacktest`/`runReplay` typés,
+  `git_commit`, Fast Analyse typé, `errorMessage` sur Smart Graph.
+- Commentaires réduits aux contraintes non lisibles dans le code.
+
+### 🐛 U-05 / U-08 / X-03 (#244)
+
+- **X-03** : `BacktestResult` → `app/engine/backtest_result.py` ;
+  cycle de vie (`_close_at` / `_try_enter` / scale-in) →
+  `PositionLifecycleMixin`. `from app.engine.backtest import Backtester,
+  BacktestResult` inchangé. `bar_to_days` dans `core/timeframes.py`.
+- **U-08** : `/lab` = shell + `next/dynamic` par onglet. Backtest dans
+  `views/backtest-view.tsx`. Optimizer : `JobCard` / `LiveProgress` /
+  `optimizer/status.ts`. Smart Graph : `smart-graph-helpers.ts`.
+- **U-05** : `Bot.tf`, `edge.mean_pct` / `avg_return_pct`, types
+  `walk_forward` / `monte_carlo` / `runs` / `by_strategy`. Plus de `as any`
+  métier sur bots, lab, data, optimize. Zod non bloquant.
+- Commentaires des fichiers touchés réduits aux contraintes non lisibles
+  dans le code.
+- CI : `npm run lint` = `eslint` (plus `next lint`) ; Node 22 ; test
+  `_risk_multiplier` lit aussi `position_lifecycle.py` ; types backfill /
+  `by_strategy` / `limit` / `n_bars`.
+
+### 🐛 R-01 / R-02 / X-01 / U-05 / P-01
+
+- **R-01** : Sharpe live = `None` sous 10 trades (`MIN_SIGNIFICANT_TRADES`),
+  plus `0.0` dès 3. `/portfolio` affiche `MetricValue` (pas de `.toFixed` sur
+  null). `/api/trades` slot : même plancher.
+- **R-02** : le backtest réserve via `RiskLedger` (min_notional, slot, symbole,
+  venue) ; `release` à la clôture ; scale-in via `reserve` + `resize`.
+- **X-01** : `app/core/deflated_sharpe.py` (heuristique morte) supprimé. Les
+  cinq autres modules listés étaient déjà câblés.
+- **U-05** : `sharpe: number \| null`, types `sim`/`live`/`monte_carlo`,
+  `errorMessage()`, `scripts/export_openapi.py`.
+- **P-01** : `BaseStrategy.prepare_for_backtest` mémorise le frame (O(n) une
+  fois) pour les EMA / HTF causaux.
+
+### 🐛 Type-check CI
+
+- Walk-forward : clé de ligne sans ``fold`` / ``start`` (absents de ``FoldResult``).
+
+### 🐛 a11y contraste thème clair
+
+- `--dim` light : `#475569` (AA 4.5:1 sur fond blanc).
+- Lien nav actif : `text-primary-800` en clair (plus de cyan-400 sur cyan pâle).
+- Bouton primary : texte `slate-900` sur `primary-500` (le `text-background`
+  devenait blanc cassé en thème clair).
+
+### 🐛 Reste d'audit (hors X-01 / X-02 / X-06)
+
+- **P-03** : `_find_strategy` en dict O(1).
+- **P-05** : `df.slice` zéro-copie + `ctx.bar_index`.
+- **P-06** : taille IPC mémoïsée dans `_safe_worker_count`.
+- **P-07** : `fetch_my_trades(..., limit=50)`.
+- **P-09** : cache mtime pour la découverte des stratégies.
+- **P-08 / U-04** : `dynamic()` equity / donut / enveloppes sur `/portfolio`.
+- **U-09** : clés stables (WF, activity, warnings, trades).
+- **X-04** : `_sf` = `safe_float` unique.
+- **X-07** : le changelog pointe vers la révision d'audit.
+- **S-06 / T-06** : job mypy (non bloquant) sur 3 modules purs.
+- **S-09** : `GIT_COMMIT` env, un subprocess max.
+- **M-08** : hash de recette typé (plus de collision datetime/str).
+- **T-03** : `--cov-fail-under=25` en CI.
+- **T-05** : workflow hebdo `slow.yml`.
+- **T-07** : ruff / mypy ciblent Python 3.14.
+
+### 🐛 CI après #235–#237
+
+- Tests : chemin FeatureStore hashé (D-04), F-01 dans le journal / parité
+  golden, ``realistic_risk`` sur les fakes d'optimiseur, early-stop O-08
+  (moitié du budget).
+- E2E : heading replay = « Replay interactif » ; onglet ``batch`` pour le
+  multi-TF.
+- i18n : plus de bascule auto ``navigator.language`` (CI en-US).
+
+### 🐛 Audit A-02 / ML / UI / données
+
+- **A-02** : backtest / replay / WF / MC tournent dans un ProcessPool spawn
+  (`app/engine/compute_pool.py`). Le fetch OHLCV reste dans le process API.
+  Sous pytest : calcul in-process (`CRYPTO_BOT_INLINE_COMPUTE`).
+- **M-01** : `auc_*_earlystop` + `auc_*_report` ; `ArtifactRef` expose
+  `auc_holdout` / `auc_source`.
+- **M-03** : `n_train_effective` / `n_valid_effective` = n / H.
+- **M-04** : isotonie ajustée sur la 1re moitié de val, `cal_err` sur la 2e.
+- **M-05** : `policy.auc_floor` = `AUC_WEAK` (0,55). `AUC_GOOD` n'est qu'un
+  libellé.
+- **M-06** : un modèle frozen qui chevauche la fenêtre backtest est invalidé
+  (repli inline).
+- **U-01 / U-11** : i18n branché (nav + sélecteur FR/EN) ; `lang` suit la locale.
+- **U-02** : sentinelles PF / n insuffisant → `n/a` / `∞`.
+- **U-03** : sondage 15–30 s, pause onglet caché, invalidation WS.
+- **U-07** : plus de `dangerouslySetInnerHTML` sur les warnings opti.
+- **U-12** : `?tab=` inconnu remplacé dans l'URL.
+- **D-03** : trous détectés à l'écriture via le calendrier ; `completeness`
+  dans `/api/data/status`.
+- **D-04** : features `{tf}_{catalog_hash8}.parquet` + éviction.
+- **D-05** : `oos_tracker.json` écriture atomique, une fois par passe.
+- **L-16** : `bars_held` live = nombre de bougies, pas l'horloge murale.
+- **A-11** : `Sunset` / `Deprecation` sur les alias HTML (retrait 2026-12-31).
+- **CI GitLab** : `.gitlab-ci.yml` (lint / test / pip-audit / frontend).
+
+### 🐛 Hygiene audit
+
+- **A-05 / B-14** : OHLCV sous-échantillonné (~4k pts) ; folds WF sans trades ni equity.
+- **B-12** : rejets ventilés (`rejected_stop` / `size` / `venue` / `min_notional`).
+- **B-13** : Buy & Hold démarre à `open[warmup+1]`, comme le bot.
+- **S-05** : le log de crash caviardé aussi les montants (pnl/size/capital).
+- **L-12 / L-13** : volatility brake sans « ATR BTC » ; sérialisation sous verrou.
+
+
+
+### 🐛 Suite audit (après merge #232)
+
+- **A-04 / P-02** : tickers en budget court (2 × 0,5 s), cache 3 s, prefetch
+  groupé par cycle. `/api/status` ne touche plus l'exchange.
+- **D-01** : `drop_forming_candle` unique — le Parquet n'écrit plus la barre
+  en formation.
+- **D-02** : `unique(time, keep=last)` à l'incrémental, `keep=first` au
+  backfill historique.
+- **L-09** : en paper, le notionnel suit le prix slippé.
+- **L-08** : persist `pending_open` avant l'ordre ; nettoyage si le fill échoue.
+- **L-11** : `DailyStats.fees` porte entrée + sortie.
+- **L-10** : le log dit `ScoreFactor`, plus un faux « Sizing % ».
+- **L-15** : seuil de gap configurable (`trading.gap_threshold`, défaut 2 %).
+- **O-12** : `_perturb` change toujours au moins une valeur (bornes comprises).
+- **A-07** : `session_scope` commit / rollback.
+- **A-13** : ping frontend en thread (plus de `connect()` bloquant).
+- **B-02** : le backtest gère plusieurs positions (un slot par stratégie).
+- **B-06** : le pyramidage passe par le risk gate.
+
+
+
+Bilan d'audit de la branche : [`audit/14-REVISION-2026-08-18.md`](audit/14-REVISION-2026-08-18.md).
+
+`data/oos_tracker.json` et `data/backtest_history.json` sont vidés : les
+runs antérieurs à F-01 / F-04 / B-01 (Sharpe à 1 000, PnL hors frais
+d'entrée, stops au niveau) ne doivent plus être comparés aux nouveaux.
+
+### 🐛 Audit sprint 1 — arrêter de mentir aux chiffres
+
+- **F-03** : `max_dd_p95` du Monte-Carlo prenait le 95ᵉ percentile de drawdowns
+  *négatifs* — le meilleur cas, pas le pire. C'est désormais le percentile 5.
+- **F-02** : le Sharpe n'est plus calculé sous 10 observations (`None` au lieu
+  d'un ratio à ±1 000). `beats_baseline` n'accepte plus un Sharpe non mesurable
+  comme amélioration de qualité.
+- **L-05** : `RiskLedger.reserve` refuse une clé déjà réservée (`deja_reserve`)
+  au lieu d'écraser et de fuir du budget.
+- **N-02** : le bouton « Appliquer » de l'UI juge le holdout, plus la tranche
+  de sélection. `gate_source` est renvoyé dans la réponse.
+- **N-01** : `required_total_bars` réserve aussi les 20 % de holdout ; un
+  holdout refusé se journalise en WARNING.
+- **F-12 / L-06** : suppression du plafond caché à 25 % du capital en live.
+  Un refus de pré-check laisse désormais une trace (`capital_insuffisant`).
+- **A-01** : clôture en une seule transaction (delete + save_trade +
+  daily_stats). Un crash ne peut plus perdre un trade exécuté.
+- **F-13** : `alpha_vs_buy_hold` n'est plus en O(n²).
+- **F-14** : `RejectionCounter` réinitialisé à chaque `run()`.
+- **B-03** : le walk-forward transmet le `timeframe` au `Backtester`.
+- **B-05** : `min_notional` jugé après `partial_fill` et quantification.
+- **B-09** : warmup unique (`WARMUP_BARS_DEFAULT`) pour backtest, WF, forward-test.
+- **B-10** : clôture de fin de série en taker, avec spread.
+- **B-11** : `capital_before` du gate tient compte des sorties partielles.
+- **N-03** : le paramètre `df_full` de `_run_one_job` s'appelle `df_recherche`.
+- **F-11** : le jeton anti-spam n'est consommé qu'après un fill réussi.
+
+### 🐛 F-01 — `total_pnl` porte enfin les frais d'entrée
+
+Le PnL de chaque trade retranche désormais les frais d'entrée (déjà prélevés
+sur le capital à l'ouverture). `Σ trade.pnl == final_equity − initial_capital`,
+et l'optimiseur / `composite_score` lisent `net_profit`. Les résultats
+persistés portent `schema_version` + `git_commit` (D-06).
+
+### 🐛 F-04 — emprunt sur le notionnel réellement emprunté
+
+Un **long** à levier 1 n'emprunte rien. Un **short** à levier 1 emprunte
+l'actif entier (le garde « taux = 0 si levier ≤ 1 » l'avait effacé à
+tort). Un long à levier L n'emprunte que `1 − 1/L` du notionnel.
+
+### 🐛 Suite du plan d'audit
+
+- **F-05** : plafond notionnel au niveau venue (`enveloppe_venue`).
+- **F-06** : drawdown calculé sur l'équité mark-to-market barre par barre.
+- **F-07** : gate Deflated Sharpe câblé sur la formule Bailey & LdP
+  (probabilité ∈ [0,1]), plus l'heuristique maison.
+- **B-07** : `realistic_risk=True` sur optimiseur, walk-forward, forward-test.
+- **B-08** : `purge_bars` / `embargo_bars` sur `split_is_oos` (défaut 0).
+- **L-03 / L-04** : reprise live — `fetch_positions` seulement en perp ;
+  un désaccord marque orphelin, ne supprime plus.
+- **F-08** : `by_strategy` cohérent avec le run (après F-01).
+- **F-09** : Sortino = √(moyenne des carrés downside sur N), plus n−1.
+- **F-10** : profit factor / Sortino / Calmar non mesurables → `None`, plus 999/100.
+- **B-08** : embargo 1 % (+ lookahead ML) branché sur le split d'optimisation.
+- **O-01** : alias `val_*` à côté de `oos_*` (tranche de sélection).
+- **O-04** : l'optimiseur mesure sur l'enveloppe du slot, plus 1 000 € globaux.
+- **O-06** : seed Optuna configurable (`optimizer.seed`, défaut None).
+- **O-05** : gel seulement si assez d'essais par valeur et impact < bruit.
+- **O-08** : early-stop jamais avant la moitié du budget.
+- **O-10** : modèle ML final entraîné sur l'IS seul par défaut (`is_only`).
+- **O-11** : un trial en timeout est rejoué in-process, plus ignoré.
+- **B-04** : le walk-forward s'annonce comme analyse de stabilité (`kind`,
+  `reoptimizes: false`, `avg_fold_pnl`).
+- **S-01** : `/metrics` exige `METRICS_TOKEN` ou `web.api_key` s'ils sont posés.
+- **S-02 / A-06** : le rate-limit honore `TRUSTED_PROXIES` (même règle que
+  `_extract_client_ip`) — plus un seau global derrière nginx.
+- **S-03 / A-10** : `?api_key=` sur le WebSocket seulement si
+  `ALLOW_WS_QUERY_KEY=1` (WARNING à chaque usage).
+- **S-04** : cookie `api_key` `Secure` si `x-forwarded-proto: https`.
+- **A-03** : une plage de dates passe par `CandleStore.fetch_range` — backfill
+  jusqu'à la profondeur habituelle (50k / 5k en `1d`, persisté une fois),
+  puis lecture Parquet filtrée. Le backtest ne matérialise que la fenêtre.
+- **UI** : walk-forward annoncé comme analyse de stabilité ; l'optimiseur
+  affiche `val_*` et `gate_source` (holdout vs sélection).
+- **A-08** : `entry_time` vient de `open_time` (live) ou de l'ISO backtest,
+  plus d'une reconstruction `duration_bars` qui traverse les week-ends.
+- **A-12 / S-07** : le 500 global renvoie le `correlation_id`, plus le nom
+  de classe de l'exception.
+
+### 🐛 Alignement d'exécution backtest / paper / live
+
+- **B-01** : un stop/TP gappé se remplit à l'ouverture, plus au niveau
+  exact. Motif `gap` exposé dans `by_exit_reason`.
+- **L-01 / L-02** : le stop live se juge sur le high/low de la bougie en
+  formation ; en paper, fill au niveau du stop (plus slippage).
+- **N-04** : `apply_exit_mode` est appelé à l'ouverture live, même
+  résolution que le backtest.
+
+### 🐛 L'overfit résiduel n'existait pas — c'était la métrique
+
+`docs/RECALIBRATION_HTF.md` signalait cinq couples « surappris malgré
+110 trades ». Vérifié : **`overfit = 10,0` ne mesure aucun degré de
+surapprentissage.** Le garde `max(oos_score, 0.01)` fait saturer le ratio dès
+que le score OOS est non positif — les cinq couples sont exactement ceux dont le
+score OOS est négatif, fait déjà lisible dans la colonne « PnL OOS ».
+
+En creusant, **deux vrais défauts** :
+
+**`0.0` était la meilleure valeur de l'échelle, et signalait un échec.** Quand
+le score IS était ≤ 0, la fonction rendait `0.0` — « aucun surapprentissage » —
+pour une configuration qui ne marche nulle part. `multi_tf_sr` ETH 4 h (PnL OOS
+**+371,7**, Sharpe 1,35) et `fear_momentum` BTC 1 h (**−168,4**, Sharpe −2,48)
+recevaient la même note.
+
+**La pénalité récompensait les scores négatifs.** `_penalized_score` appliquait
+`oos × (2.5 / overfit)` sans regarder le signe : sur un score négatif, multiplier
+par 0,25 le **rapproche de zéro**. `fear_momentum` BTC 4 h passait de −0,433 brut
+à −0,108 « pénalisé », donc **devant** `supertrend_macd` ETH 1 h (−0,099) qui est
+quatre fois meilleur. Sur les huit perdantes, l'ordre réel et l'ordre utilisé
+divergent dès le 4ᵉ rang.
+
+Corrigé : `overfitting_ratio` rend `NaN` sur les trois cas dégénérés (run non
+significatif, IS ≤ 0, OOS ≤ 0) au lieu de `0.0` et de la saturation ; la pénalité
+ne s'applique qu'à un score positif. Les deux consommateurs traitaient déjà
+`NaN` correctement — aucun avertissement n'apparaît ni ne disparaît à tort.
+
+**Aucun candidat retenu ne change** : `beats_baseline` exige un PnL OOS positif,
+donc aucun des quinze n'était concerné. Détail :
+`docs/DEFAUT_METRIQUE_OVERFIT.md`.
+### 🎯 Conversion signal → trade : le mode de sortie est le levier dominant
+
+Mesure sur l'**historique complet** (15 769 barres en 4 h, 51 909 en 1 h), avec
+les modes de sortie comme dimension — ce qui rend enfin l'effet de la gestion de
+position attribuable.
+
+**Le résultat qui compte**, `smart_money` sur ETH/USDC 4 h, à signal identique :
+
+| mode | PnL | win |
+|---|---:|---:|
+| `as_declared` | −8.68 % | 35.98 % |
+| **`trailing`** | **+52.90 %** | 37.04 % |
+| `tp1_tp2_runner` | +27.36 % | **47.34 %** |
+
+Passer de `as_declared` à `trailing` fait basculer de −8.68 % à +52.90 % **sans
+toucher au signal**. Aucun ajout de feature du dossier SMC n'avait produit un
+écart comparable — cela confirme le diagnostic de
+`docs/STRATEGY_SMC_ML_EDGE.md` §4 : le problème n'était pas la détection.
+
+**Jugé hors-échantillon** (40 essais par mode, sélection sur l'IS) : sur BTC,
+`sl_tp` sort à **+472.5 de PnL OOS, Sharpe 1.10, surapprentissage 0.60** ; sur
+ETH, quatre modes sur cinq **saturent le ratio de surapprentissage à 10.0** et
+seul `tp1_tp2_runner` échappe au diagnostic (+7.3 OOS, ratio 0.87).
+
+**Un défaut de conception trouvé par la mesure.** La première passe donnait
+`jambes = 0` partout et `tp1_tp2_runner` rendait un backtest identique à
+`as_declared` : le moteur teste la cible fixe **avant** les cibles partielles, et
+`smc_ml_edge` place la sienne exactement à 1R. Les trois modes « laisser courir »
+retirent désormais la cible fixe — un mode qui promet un runner tout en gardant
+une cible à 1R se contredit lui-même.
+
+⚠️ **Trois réserves, qui pèsent autant que le résultat.** Buy & hold fait
++1 739 % sur BTC 4 h contre +472 au mieux hors-échantillon — aucune de ces
+stratégies ne justifie d'être préférée à l'achat-conservation sur ces fenêtres.
+`sl_tp` sur BTC a un profil de loterie (20 trades, 10 % de réussite, PF 9.53). Et
+le meilleur mode diffère selon le symbole, ce qui est exactement le motif qui
+s'était révélé être du bruit plus tôt dans ce dossier — BTC et ETH corrèlent à
+0.835.
+
+Détail et suite : `docs/CONVERSION_SIGNAL_TRADE.md`.
+
+
 
 ### 🎯 Recalibration HTF terminée — 15 candidats sur 27, zéro optimum dégénéré
 
@@ -933,10 +1374,14 @@ pas eu lieu :
 Un module sans appelant ne factorise rien : il ajoute un chemin d'import qui
 dérive dès que quelqu'un modifie l'original, et il fait croire le travail fait.
 
-**L'état réel reste donc :** `types/index.ts` 911 lignes, `use-api.ts` 727,
+**L'état réel à l'époque :** `types/index.ts` 911 lignes, `use-api.ts` 727,
 `optimizer_search.py` 1 292, `scanner_service.py` 778, `lab/page.tsx` 1 481,
-`optimizer-view.tsx` ~1 565. 26 fichiers Python et 16 fichiers TS/TSX dépassent
-500 lignes. Le découpage est à faire, pas à déclarer.
+`optimizer-view.tsx` ~1 565.
+
+> **Caduc depuis #244** : `lab/page.tsx` ~175 L (shell) ; `backtest.py` ~686 L
+> + `backtest_result.py` + `position_lifecycle.py` ; optimizer découpé
+> (`job-card`, `live-progress`). Restent gros : `optimizer_search.py`,
+> `smart_money_signals.py`, `smart-graph-view.tsx`. Voir `audit/16`.
 
 ### 🩹 Corrections du lot backtest — sept fonctionnalités qui ne calculaient rien
 

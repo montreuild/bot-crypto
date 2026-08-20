@@ -2,7 +2,7 @@
 # line-length=120 aligné sur la convention documentée dans CONTRIBUTING.md
 # (PEP 8, line length 120 chars) pour éviter un reformatage de masse.
 line-length = 120
-target-version = "py312"
+target-version = "py314"
 
 extend-exclude = [
     "__pycache__",
@@ -18,3 +18,7 @@ select = ["F", "W", "E", "I"]
 # les imports "inutilisés" y sont intentionnels et déjà marqués `# noqa: F401`.
 [lint.per-file-ignores]
 "app/core/indicators.py" = ["F401"]
+"app/core/smc/__init__.py" = ["F401", "F403"]
+"app/core/risk/__init__.py" = ["F401", "F403"]
+"app/core/smc_*.py" = ["F401", "F403"]
+"app/core/risk_*.py" = ["F401", "F403"]

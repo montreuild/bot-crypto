@@ -12,8 +12,9 @@ import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatUSD, formatPct } from '@/lib/utils';
-import { useBacktestSettings } from '@/hooks/use-api';
+import { cn, formatMoney, formatPct, errorMessage, quoteCurrency } from '@/lib/utils';
+import { LoadingState, EmptyState, ErrorState } from '@/components/ui/query-state';
+import { useBacktestSettings, useOptimizeSpaces } from '@/hooks/use-api';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import {
@@ -25,6 +26,8 @@ import {
 } from 'recharts';
 import type { BacktestResult } from '@/types';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { SymbolSearchInput } from '@/components/ui/symbol-search';
+import { StrategyPicker } from '@/components/ui/strategy-picker';
 import { limitHint } from '@/lib/limit-hint';
 
 const LIMITS = [100, 500, 1000, 2000];
@@ -79,7 +82,7 @@ const COLUMNS: Array<{ key: SortKey; label: string; numeric: boolean; higherBett
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmtCell(key: SortKey, value: any): string {
+function fmtCell(key: SortKey, value: ResultRow[SortKey] | undefined, currency = 'USD'): string {
   if (value == null) return '—';
   switch (key) {
     case 'strategy': return String(value);
@@ -90,7 +93,7 @@ function fmtCell(key: SortKey, value: any): string {
     case 'best_trade':
     case 'worst_trade':
     case 'equity_final':
-      return (key !== 'total_pnl' && Number(value) >= 0 ? '+' : '') + formatUSD(Number(value));
+      return (key !== 'total_pnl' && Number(value) >= 0 ? '+' : '') + formatMoney(Number(value), currency);
     case 'sharpe': return Number(value).toFixed(2);
     case 'max_drawdown': return `${Number(value).toFixed(2)}%`;
     case 'profit_factor': return Number(value) === 999 ? '∞' : Number(value).toFixed(2);
@@ -98,7 +101,7 @@ function fmtCell(key: SortKey, value: any): string {
   }
 }
 
-function cellColor(key: SortKey, value: any): string {
+function cellColor(key: SortKey, value: ResultRow[SortKey] | undefined): string {
   if (value == null) return 'text-muted';
   switch (key) {
     case 'win_rate': return Number(value) >= 50 ? 'text-emerald-400' : 'text-red-400';
@@ -120,26 +123,22 @@ function cellColor(key: SortKey, value: any): string {
 
 export function CompareView() {
   const { data: settings } = useBacktestSettings();
+  const { data: spaces } = useOptimizeSpaces();
   const availableStrategies = settings?.strategies || DEFAULT_STRATEGIES;
 
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [timeframe, setTimeframe] = useState('1h');
   const [limit, setLimit] = useState(500);
-  const [selected, setSelected] = useState<string[]>(['pullback_trend', 'trend_rider', 'breakout']);
+  const [selected, setSelected] = useState<string[]>([]);
 
   const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [attempted, setAttempted] = useState(false);
+  const [currency, setCurrency] = useState('USD');
   const [rows, setRows] = useState<ResultRow[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>('total_pnl');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
-  const toggleStrategy = (s: string) => {
-    setSelected((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
-  };
-
-  // CMP-004 — raccourcis de sélection : Toutes / Aucune / Omnibus (sélectionne
-  // uniquement les stratégies `opus_omnibus*` si présentes, sinon rien).
-  const selectAll = () => setSelected(availableStrategies.slice());
-  const selectNone = () => setSelected([]);
   const selectOmnibus = () => {
     const omnibus = availableStrategies.filter((s: string) => s.startsWith('opus_omnibus'));
     if (omnibus.length === 0) {
@@ -155,6 +154,8 @@ export function CompareView() {
       return;
     }
     setRunning(true);
+    setAttempted(true);
+    setRunError(null);
     setRows([]);
     try {
       const settled = await Promise.allSettled(
@@ -167,6 +168,8 @@ export function CompareView() {
         if (res.status === 'fulfilled') {
           const r: BacktestResult | BacktestResult[] = res.value;
           const bt: BacktestResult = Array.isArray(r) ? r[0] : r;
+          const ccy = quoteCurrency(bt);
+          if (ccy && ccy !== 'USD') setCurrency(ccy);
           return {
             strategy,
             total_trades: bt.total_trades ?? 0,
@@ -183,7 +186,7 @@ export function CompareView() {
             equity_curve: bt.equity_curve || [],
           };
         }
-        const reason = (res.reason as any)?.message || 'échec';
+        const reason = errorMessage(res.reason, 'échec');
         return {
           strategy,
           total_trades: 0, win_rate: 0, total_pnl: 0, sharpe: 0,
@@ -201,8 +204,10 @@ export function CompareView() {
       } else {
         toast.error('Tous les backtests ont échoué');
       }
-    } catch (e: any) {
-      toast.error(`Erreur: ${e?.message || 'inconnue'}`);
+    } catch (e) {
+      const msg = errorMessage(e);
+      setRunError(msg);
+      toast.error(`Erreur: ${msg}`);
     } finally {
       setRunning(false);
     }
@@ -217,7 +222,7 @@ export function CompareView() {
     const lines = [headers.join(',')];
     for (const r of sortedRows) {
       const cells = COLUMNS.map((c) => {
-        const v = (r as any)[c.key];
+        const v = r[c.key];
         if (v == null) return '';
         if (c.key === 'strategy') return `"${String(v).replace(/"/g, '""')}"`;
         return String(v);
@@ -240,8 +245,8 @@ export function CompareView() {
   const sortedRows = useMemo(() => {
     const copy = [...rows];
     copy.sort((a, b) => {
-      const av = (a as any)[sortKey];
-      const bv = (b as any)[sortKey];
+      const av = a[sortKey];
+      const bv = b[sortKey];
       let cmp: number;
       if (typeof av === 'string' || typeof bv === 'string') {
         cmp = String(av).localeCompare(String(bv));
@@ -269,7 +274,7 @@ export function CompareView() {
     const map: Record<string, number> = {};
     for (const col of COLUMNS) {
       if (!col.numeric) continue;
-      const vals = rows.map((r) => (r as any)[col.key]).filter((v) => typeof v === 'number' && Number.isFinite(v));
+      const vals = rows.map((r) => r[col.key]).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
       if (vals.length === 0) continue;
       map[col.key] = col.higherBetter ? Math.max(...vals) : Math.min(...vals);
     }
@@ -340,13 +345,7 @@ export function CompareView() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <label className="text-xs text-dim block mb-1.5">Symbole</label>
-              <input
-                aria-label="Symbole"
-                value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
-                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-                placeholder="BTC/USDC"
-              />
+              <SymbolSearchInput value={symbol} onChange={setSymbol} id="compare-symbol" />
             </div>
             <div>
               <label className="text-xs text-dim block mb-1.5">Timeframe</label>
@@ -381,53 +380,22 @@ export function CompareView() {
             </div>
           </div>
 
-          {/* CMP-004 — raccourcis de sélection en haut des chips. */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" onClick={selectAll} className="h-7 text-xs">
-              Toutes ({availableStrategies.length})
-            </Button>
-            <Button size="sm" variant="outline" onClick={selectNone} className="h-7 text-xs">
-              Aucune
-            </Button>
-            <Button size="sm" variant="outline" onClick={selectOmnibus} className="h-7 text-xs">
-              Omnibus
-            </Button>
-          </div>
-
-          {/* Strategy chips */}
-          <div>
-            <div className="text-xs text-dim mb-2">
-              Stratégies ({selected.length} sélectionnée{selected.length > 1 ? 's' : ''})
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {availableStrategies.map((s: string, i: number) => {
-                const isSel = selected.includes(s);
-                const color = STRATEGY_COLORS[i % STRATEGY_COLORS.length];
-                return (
-                  <button
-                    key={s}
-                    onClick={() => toggleStrategy(s)}
-                    className={cn(
-                      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
-                      isSel
-                        ? 'bg-card-hover border-border-hi text-foreground'
-                        : 'bg-transparent border-border text-muted hover:text-foreground hover:border-border-hi',
-                    )}
-                  >
-                    {isSel ? (
-                      <span
-                        className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: color }}
-                      />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full border border-border-hi" />
-                    )}
-                    {s}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <StrategyPicker
+            strategies={availableStrategies}
+            value={selected}
+            onChange={setSelected}
+            spaces={spaces}
+            selectedTfs={[timeframe]}
+            extra={
+              <button
+                type="button"
+                onClick={selectOmnibus}
+                className="px-2 py-0.5 rounded text-[10px] border border-border text-muted hover:text-foreground hover:border-border-hi"
+              >
+                Omnibus
+              </button>
+            }
+          />
 
           {/* Loading indicator */}
           {running && (
@@ -440,6 +408,22 @@ export function CompareView() {
           )}
         </CardContent>
       </Card>
+
+      {/* UX-04 : en cours / vide / cassé ne se ressemblent plus. */}
+      {running && (
+        <LoadingState label={`Comparaison en cours — ${selected.length} backtest(s)…`} className="min-h-[240px]" />
+      )}
+      {!running && !attempted && rows.length === 0 && (
+        <EmptyState
+          label="Aucune comparaison lancée"
+          description="Sélectionnez des stratégies puis cliquez sur Comparer. Un écran vide ici n'est pas un plantage."
+        />
+      )}
+      {!running && attempted && rows.length === 0 && (
+        <ErrorState
+          error={runError || 'La comparaison n’a renvoyé aucun résultat.'}
+        />
+      )}
 
       {/* Results table */}
       {rows.length > 0 && !running && (
@@ -497,7 +481,7 @@ export function CompareView() {
                           {rank != null ? `#${rank}` : '—'}
                         </td>
                         {COLUMNS.map((col) => {
-                          const v = (r as any)[col.key];
+                          const v = r[col.key];
                           const isBest = col.numeric
                             && bestValues[col.key] != null
                             && Number(v) === bestValues[col.key]
@@ -525,7 +509,7 @@ export function CompareView() {
                               ) : r.error ? (
                                 <span className="text-dim">—</span>
                               ) : (
-                                fmtCell(col.key, v)
+                                fmtCell(col.key, v, currency)
                               )}
                             </td>
                           );
@@ -556,11 +540,11 @@ export function CompareView() {
                   <YAxis
                     stroke="#6b7280"
                     fontSize={10}
-                    tickFormatter={(v) => `$${Number(v).toFixed(0)}`}
+                    tickFormatter={(v) => formatMoney(Number(v), currency, { decimals: 0 })}
                   />
                   <Tooltip
                     contentStyle={{ backgroundColor: '#141a23', border: '1px solid #1f2937', borderRadius: '8px' }}
-                    formatter={(v: any, name: string) => [`$${Number(v).toFixed(2)}`, name]}
+                    formatter={(v: any, name: string) => [formatMoney(Number(v), currency), name]}
                     labelFormatter={(l) => `Trade ${l}`}
                   />
                   <Legend

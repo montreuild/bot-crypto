@@ -70,7 +70,7 @@ class Strategy(BaseStrategy):
         self._bt_params: dict = None
         self._bt_votes: Dict[str, List[Tuple[str, float, str, float]]] = {}
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         # La plus contraignante : EMA200 + marge pour les stratégies sous-jacentes
         return 250
 
@@ -242,7 +242,7 @@ class Strategy(BaseStrategy):
         )
         return {"score": 0.0, "side": "none", "name": self.name, "reason": reason}
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("signal_consensus", {})
         min_consensus   = int(p.get("min_consensus",   2))

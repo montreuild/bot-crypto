@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn, timeAgo, formatDateTime } from '@/lib/utils';
 import { useNotifications } from '@/hooks/use-api';
+import type { NotificationItem } from '@/types';
 import { AlertCircle, Bell, ShieldAlert } from 'lucide-react';
 
 const LEVEL_VARIANT: Record<string, 'info' | 'warning' | 'danger' | 'default'> = {
@@ -30,7 +31,7 @@ const LEVEL_COLOR: Record<string, string> = {
   critical: 'text-red-400',
 };
 
-export function ActivityFeedList({ items }: { items: any[] }) {
+export function ActivityFeedList({ items }: { items: NotificationItem[] }) {
   if (!items || items.length === 0) {
     return <div className="text-sm text-muted text-center py-6">Aucune activité récente</div>;
   }
@@ -40,7 +41,7 @@ export function ActivityFeedList({ items }: { items: any[] }) {
         const level = n.level || 'info';
         return (
           <div
-            key={i}
+            key={String(n.id ?? n.ts ?? n.message ?? i)}
             className="flex items-start gap-3 p-3 rounded-lg bg-card-hover border border-border"
           >
             <div className={cn('mt-0.5', LEVEL_COLOR[level] || 'text-muted')}>
@@ -75,7 +76,7 @@ export function ActivityFeedList({ items }: { items: any[] }) {
 }
 
 /** Carte autonome : fait sa propre requête. */
-export function ActivityFeed({ fallbackItems }: { fallbackItems?: any[] }) {
+export function ActivityFeed({ fallbackItems }: { fallbackItems?: NotificationItem[] }) {
   const { data } = useNotifications(30, 'info');
   return (
     <Card>

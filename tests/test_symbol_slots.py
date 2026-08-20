@@ -105,6 +105,13 @@ def test_parse_slot_key():
     assert parse_slot_key("") == ("", "", "")
 
 
+def test_parse_pos_key():
+    from app.core.bot_identity import parse_pos_key
+    assert parse_pos_key("BTC/USDC::breakout::4h") == ("BTC/USDC", "breakout", "4h")
+    assert parse_pos_key("ETH/USDC::trend_rider::30m") == ("ETH/USDC", "trend_rider", "30m")
+    assert parse_pos_key("") == ("", "", "")
+
+
 # ── BT-01 : apply_best_params par symbole (coexistence, pas d'écrasement) ─────
 
 def test_apply_best_params_per_symbol_coexist(tmp_path):

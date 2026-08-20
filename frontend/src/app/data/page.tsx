@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn, formatDateTime } from '@/lib/utils';
+import { cn, formatDateTime, errorMessage } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useDataStatus, useRefetchData } from '@/hooks/use-api';
 import { api } from '@/lib/api';
@@ -33,36 +33,58 @@ interface DatasetRow {
   size: number;
 }
 
-function flattenDatasets(data: any): DatasetRow[] {
+interface DatasetInfo {
+  symbol?: string;
+  tf?: string;
+  timeframe?: string;
+  bars?: number;
+  count?: number;
+  from?: string;
+  first?: string;
+  to?: string;
+  last?: string;
+  size_bytes?: number;
+  size_kb?: number;
+}
+
+interface DataStatusPayload {
+  datasets?: DatasetInfo[];
+  store?: Record<string, Record<string, DatasetInfo>>;
+}
+
+function flattenDatasets(data?: DataStatusPayload | DatasetInfo[] | null): DatasetRow[] {
   if (!data) return [];
-  // Backend `/api/data/status` → { datasets: [{ symbol, tf, bars, from, to, size_kb }] }
-  const mapRow = (d: any): DatasetRow => ({
-    symbol: d.symbol,
-    tf: d.timeframe || d.tf,
+  const mapRow = (d: DatasetInfo): DatasetRow => ({
+    symbol: d.symbol ?? '',
+    tf: d.timeframe || d.tf || '',
     count: Number(d.bars ?? d.count ?? 0),
     first: d.from ?? d.first ?? '',
     last: d.to ?? d.last ?? '',
-    // size_kb (API) ou size_bytes (legacy)
     size: d.size_bytes != null
       ? Number(d.size_bytes)
       : Math.round(Number(d.size_kb ?? 0) * 1024),
   });
-  if (Array.isArray(data.datasets)) {
-    return data.datasets.map(mapRow);
-  }
-  if (data.store && typeof data.store === 'object') {
-    const rows: DatasetRow[] = [];
+  let rows: DatasetRow[] = [];
+  if (!Array.isArray(data) && Array.isArray(data.datasets)) {
+    rows = data.datasets.map(mapRow);
+  } else if (!Array.isArray(data) && data.store && typeof data.store === 'object') {
     for (const [symbol, tfs] of Object.entries(data.store)) {
-      for (const [tf, info] of Object.entries(tfs as any)) {
-        rows.push(mapRow({ symbol, tf, ...(info as any) }));
+      for (const [tf, info] of Object.entries(tfs)) {
+        rows.push(mapRow({ symbol, tf, ...info }));
       }
     }
-    return rows;
+  } else if (Array.isArray(data)) {
+    rows = data.map(mapRow);
   }
-  if (Array.isArray(data)) {
-    return data.map(mapRow);
+  const seen = new Set<string>();
+  const unique: DatasetRow[] = [];
+  for (const row of rows) {
+    const k = `${row.symbol}|${row.tf}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    unique.push(row);
   }
-  return [];
+  return unique;
 }
 
 // ── Main page ───────────────────────────────────────────────────────────────
@@ -77,7 +99,16 @@ export default function DataPage() {
   // ── Backfill des actions (S5 — équivalent du bouton Jinja2 /data) ────────
   const [backfillTf, setBackfillTf] = useState('1d');
   const [backfillYears, setBackfillYears] = useState(20);
-  const [backfillJob, setBackfillJob] = useState<any>(null);
+  const [backfillJob, setBackfillJob] = useState<{
+    job_id: string;
+    status: string;
+    error?: string | null;
+    tf?: string;
+    years?: number;
+    univers?: string[];
+    progress?: { done?: number; total?: number; current_symbol?: string | null };
+    results?: Array<{ symbol: string; tf: string; bars: number; ok: boolean; error?: string }>;
+  } | null>(null);
   const [backfillPolling, setBackfillPolling] = useState(false);
 
   const pollBackfill = useCallback(async (jobId: string) => {
@@ -96,9 +127,9 @@ export default function DataPage() {
           toast.error(`Backfill échoué : ${status.error}`);
         }
       }
-    } catch (e: any) {
+    } catch (e) {
       setBackfillPolling(false);
-      toast.error(`Suivi backfill échoué : ${e.message}`);
+      toast.error(`Suivi backfill échoué : ${errorMessage(e)}`);
     }
   }, []);
 
@@ -112,8 +143,8 @@ export default function DataPage() {
       );
       // Démarre le polling
       setTimeout(() => pollBackfill(res.job_id), 2000);
-    } catch (e: any) {
-      toast.error(`Backfill échoué : ${e.message}`);
+    } catch (e) {
+      toast.error(`Backfill échoué : ${errorMessage(e)}`);
     }
   };
 
@@ -126,8 +157,8 @@ export default function DataPage() {
       toast.info(`Refetch ${symbol} ${tf}...`);
       await refetchData.mutateAsync({ symbol, tf });
       toast.success(`Refetch terminé: ${symbol} ${tf}`);
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur: ${errorMessage(e)}`);
     }
   };
 
@@ -268,10 +299,10 @@ export default function DataPage() {
                     </span>
                   </div>
                   <Badge variant="info">
-                    {backfillJob.progress.done}/{backfillJob.progress.total || '?'}
+                    {backfillJob.progress?.done ?? 0}/{backfillJob.progress?.total || '?'}
                   </Badge>
                 </div>
-                {backfillJob.progress.current_symbol && (
+                {backfillJob.progress?.current_symbol && (
                   <div className="text-xs text-muted font-mono">
                     En cours : {backfillJob.progress.current_symbol}
                   </div>
@@ -281,13 +312,12 @@ export default function DataPage() {
                     Univers : {backfillJob.univers.join(', ')} — TF {backfillJob.tf}, {backfillJob.years} ans
                   </div>
                 )}
-                {/* Barre de progression */}
-                {backfillJob.progress.total > 0 && (
+                {(backfillJob.progress?.total ?? 0) > 0 && (
                   <div className="w-full bg-card rounded-full h-1.5 overflow-hidden">
                     <div
                       className="h-full bg-primary-400 transition-all"
                       style={{
-                        width: `${(backfillJob.progress.done / backfillJob.progress.total) * 100}%`,
+                        width: `${((backfillJob.progress?.done ?? 0) / (backfillJob.progress?.total ?? 1)) * 100}%`,
                       }}
                     />
                   </div>
@@ -296,15 +326,15 @@ export default function DataPage() {
                 {backfillJob.status === 'done' && backfillJob.results && (
                   <div className="text-xs text-muted">
                     <span className="text-emerald-400 font-medium">
-                      {backfillJob.results.filter((r: any) => r.ok).length} OK
+                      {backfillJob.results.filter((r) => r.ok).length} OK
                     </span>
                     {' · '}
                     <span className="text-red-400 font-medium">
-                      {backfillJob.results.filter((r: any) => !r.ok).length} échoués
+                      {backfillJob.results.filter((r) => !r.ok).length} échoués
                     </span>
                     {' · '}
                     <span>
-                      {backfillJob.results.reduce((s: number, r: any) => s + r.bars, 0).toLocaleString()} bougies
+                      {backfillJob.results.reduce((s, r) => s + r.bars, 0).toLocaleString()} bougies
                     </span>
                   </div>
                 )}

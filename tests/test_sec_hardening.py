@@ -150,6 +150,20 @@ class TestSchemas:
             RiskConfigBody(consecutive_loss_limit=0)
         with pytest.raises(ValidationError):
             RiskConfigBody(slot_daily_dd_limit=0.9)
+        with pytest.raises(ValidationError):
+            RiskConfigBody(min_slot_weight=1.5)
+
+    def test_venue_envelope_bounds(self):
+        from pydantic import ValidationError
+
+        from app.api.schemas import VenueEnvelopeBody
+        VenueEnvelopeBody(capital=1000, symbol_risk_pct=0.05)
+        with pytest.raises(ValidationError):
+            VenueEnvelopeBody(capital=0)
+        with pytest.raises(ValidationError):
+            VenueEnvelopeBody(symbol_risk_pct=0.2)
+        with pytest.raises(ValidationError):
+            VenueEnvelopeBody(venue_risk_pct=0.5)
 
     def test_routes_import_schemas(self):
         """Les routes d'écriture critiques reçoivent bien un modèle Pydantic."""

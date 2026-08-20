@@ -351,7 +351,7 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
         logger.warning(f"[MLBackend] {tf_key} : aucune feature exploitable")
         return False
 
-    from app.ml.splitting import chrono_split, label_embargo
+    from app.ml.splitting import chrono_split, label_embargo, val_eval_cut
 
     close = feats["close"].to_numpy().astype(np.float64)
     multi = bool(cfg.label_horizons and len(cfg.label_horizons) > 1)
@@ -425,16 +425,26 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
 
     boosters: Dict[str, Any] = {}
     aucs: Dict[str, float] = {}
+    aucs_earlystop: Dict[str, float] = {}
+    aucs_report: Dict[str, float] = {}
     cal_err: Dict[str, float] = {}
+    cal_err_source: Dict[str, str] = {}
     calibrators: Dict[str, Any] = {}
     importances: Dict[str, List[tuple]] = {}
     raw_va_by_target: Dict[str, np.ndarray] = {}
+
+    # ML-04 : early-stop + isotonie sur la 1re moitié de val (calib) ;
+    # AUC publiée sur la 2e (eval). Trop petit → une seule tranche.
+    n_va_global = n - split
+    cut_global = val_eval_cut(n_va_global)
 
     for target, y in (("amp", y_amp), ("dir", y_dir)):
         spw = (y[:train_end] == 0).sum() / max((y[:train_end] == 1).sum(), 1)
         ds_tr = lgb.Dataset(X_train, label=y[:train_end], feature_name=feature_cols,
                             free_raw_data=False)
-        ds_va = lgb.Dataset(X_valid, label=y[split:n], reference=ds_tr,
+        y_stop = y[split:split + cut_global] if cut_global else y[split:n]
+        X_stop = X_valid[:cut_global] if cut_global else X_valid
+        ds_va = lgb.Dataset(X_stop, label=y_stop, reference=ds_tr,
                             feature_name=feature_cols, free_raw_data=False)
         try:
             try:
@@ -447,7 +457,10 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
             except Exception as e:
                 logger.warning(f"[MLBackend] {tf_key} : entraînement {target} KO ({e})")
                 return False
-            aucs[target] = float(booster.best_score.get("valid_0", {}).get("auc", 0.0))
+            # M-01 : best_score["valid_0"]["auc"] est le MAXIMUM sur les
+            # itérations d'early-stopping — pas une mesure indépendante.
+            aucs_earlystop[target] = float(
+                booster.best_score.get("valid_0", {}).get("auc", 0.0))
             boosters[target] = booster
 
             # Prédictions brutes de validation — réutilisées par la calibration
@@ -455,16 +468,34 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
             raw_va = booster.predict(X_valid)
             raw_va_by_target[target] = raw_va
 
-            # Calibration isotone sur le set de validation.
+            y_va = y[split:n]
+            cut = cut_global
+            report_auc = None
+            if cut is not None:
+                report_auc = rank_auc(y_va[cut:], raw_va[cut:])
+            aucs_report[target] = (
+                float(report_auc) if report_auc is not None
+                else aucs_earlystop[target])
+            # ML-04 : l'AUC publiée est celle de l'eval, pas l'early-stop.
+            aucs[target] = aucs_report[target]
+
             if cfg.calibrate:
                 try:
                     from app.ml.backend.isotonic import IsotonicRegression
-                    y_va = y[split:n]
-                    if len(np.unique(y_va)) >= 2:
+                    if len(np.unique(y_va[:cut] if cut else y_va)) >= 2:
                         iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
-                        iso.fit(raw_va, y_va)
-                        cal_va = iso.predict(raw_va)
-                        cal_err[target] = round(float(np.mean(np.abs(cal_va - y_va))), 4)
+                        if cut is not None:
+                            iso.fit(raw_va[:cut], y_va[:cut])
+                            cal_hat = iso.predict(raw_va[cut:])
+                            cal_err[target] = round(
+                                float(np.mean(np.abs(cal_hat - y_va[cut:]))), 4)
+                            cal_err_source[target] = "eval"
+                        else:
+                            iso.fit(raw_va, y_va)
+                            cal_va = iso.predict(raw_va)
+                            cal_err[target] = round(
+                                float(np.mean(np.abs(cal_va - y_va))), 4)
+                            cal_err_source[target] = "val_insample"
                         calibrators[target] = iso
                 except Exception as ce:
                     logger.debug(f"[MLBackend] {tf_key} calibration {target} KO : {ce}")
@@ -524,6 +555,7 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
                 kept_set.add(c)
     kept_features = [c for c in feature_cols if c in kept_set]
 
+    H = max(int(h) for h in (horizons or [1])) or 1
     auc_combined = (aucs.get("amp", 0.0) + aucs.get("dir", 0.0)) / 2.0
     top_feats = {
         tgt: [c for c, _ in importances.get(tgt, [])[:cfg.importance_top_n]]
@@ -540,10 +572,23 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
     meta = {
         "n_train":      int(train_end),
         "n_valid":      int(n - split),
+        "n_calib":      int(cut_global or 0),
+        "n_eval":       int((n - split) - (cut_global or 0)),
+        # M-03 : n effectif = n / H — les fenêtres de label se chevauchent.
+        "n_train_effective": round(train_end / H, 2),
+        "n_valid_effective": round((n - split) / H, 2),
+        "label_horizon": H,
         "embargo":      int(plan.embargo),
         "n_features":   len(feature_cols),
+        # ML-04 : auc_* = eval (tranche jamais vue par early-stop / isotonie).
         "auc_amp":      round(aucs.get("amp", 0.0), 4),
         "auc_dir":      round(aucs.get("dir", 0.0), 4),
+        "auc_amp_earlystop": round(aucs_earlystop.get("amp", 0.0), 4),
+        "auc_dir_earlystop": round(aucs_earlystop.get("dir", 0.0), 4),
+        "auc_amp_report":    round(aucs_report.get("amp", 0.0), 4),
+        "auc_dir_report":    round(aucs_report.get("dir", 0.0), 4),
+        "auc_source":   "eval" if cut_global else "earlystop",
+        "cal_err_source": cal_err_source,
         "auc_dir_by_regime": auc_dir_by_regime,
         "feature_importance_dir_by_regime": fi_by_regime,
         "regime_feature_similarity": regime_similarity,

@@ -145,6 +145,10 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
         self.open_positions: Dict[str, dict] = {}
         self._positions_lock  = threading.Lock()
         self._capital_lock    = threading.Lock()
+        # A-04 : tickers partagés cycle / API. TTL court — l'API ne doit pas
+        # appeler l'exchange (un 30 s de retry gèle les stops).
+        self._ticker_cache: Dict[str, tuple] = {}
+        self._ticker_ttl = 3.0
         self.running          = False
         self.cycle_count      = 0
         # S12 : le capital appartient à la venue par défaut, plus à `trading.*`.
@@ -373,6 +377,11 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
 
         # 2. Volatility brake (ATR BTC/USDC 1h)
         self.ohlcv_cache.update_volatility_brake()
+        # A-04 : un fetch_tickers groupé par cycle, pas N × retry 30 s.
+        try:
+            self._prefetch_tickers()
+        except Exception as e:
+            logger.debug(f"[Cycle] prefetch tickers KO : {e}")
 
         # 3. Gestion des positions ouvertes
         # Marché fermé ne veut pas dire position oubliée : le trailing continue
@@ -458,7 +467,7 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
             )
 
         # 6. Synchro solde + rapport périodique
-        if self.cfg["trading"].get("paper_mode"):
+        if self.cfg["trading"].get("paper_mode", True):
             self._sync_paper_balance()
         elif self._margin_enabled and time.time() >= self._margin_next_sync:
             self._sync_margin_account()
@@ -483,9 +492,33 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
 
     # ── Utilitaires ────────────────────────────────────────────────────────
 
-    def _safe_ticker(self, symbol: str) -> Optional[dict]:
+    def _prefetch_tickers(self) -> None:
+        """Remplit le cache à partir d'un seul ``fetch_tickers`` (A-04 / P-02)."""
+        symbols = {p.get("symbol") for p in self.open_positions.values() if p.get("symbol")}
+        if not symbols or not hasattr(self.exchange, "fetch_tickers"):
+            return
+        now = time.monotonic()
         try:
-            return self.exchange.fetch_ticker(symbol)
+            batch = self.exchange.fetch_tickers(list(symbols)) or {}
+        except Exception as e:
+            logger.debug(f"[LiveTrader] fetch_tickers KO : {e}")
+            return
+        for sym, ticker in batch.items():
+            if ticker:
+                self._ticker_cache[sym] = (now, ticker)
+
+    def _safe_ticker(self, symbol: str, *, allow_network: bool = True) -> Optional[dict]:
+        now = time.monotonic()
+        cached = self._ticker_cache.get(symbol)
+        if cached and (now - cached[0]) < self._ticker_ttl:
+            return cached[1]
+        if not allow_network:
+            return cached[1] if cached else None
+        try:
+            ticker = self.exchange.fetch_ticker(symbol)
         except Exception as e:
             logger.warning(f"[LiveTrader] fetch_ticker {symbol} : {e}")
-            return None
+            return cached[1] if cached else None
+        if ticker:
+            self._ticker_cache[symbol] = (now, ticker)
+        return ticker

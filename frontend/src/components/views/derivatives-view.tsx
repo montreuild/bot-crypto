@@ -23,6 +23,7 @@ import {
   CartesianGrid, Tooltip, ReferenceLine,
 } from 'recharts';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { HelpTip } from '@/components/ui/tooltip';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import type { TimeSeries } from '@/types';
 
@@ -138,6 +139,7 @@ function mergePrice(
 
 interface MetricChartProps {
   title: string;
+  hint?: string;
   series?: TimeSeries;
   color: string;
   icon: React.ReactNode;
@@ -156,6 +158,7 @@ interface MetricChartProps {
 
 function MetricChart({
   title,
+  hint,
   series,
   color,
   icon,
@@ -186,6 +189,7 @@ function MetricChart({
         <CardTitle className="flex items-center gap-2">
           {icon}
           {title}
+          {hint && <HelpTip text={hint} label={`Aide : ${title}`} />}
         </CardTitle>
         <Badge variant="default">{count} pts</Badge>
       </CardHeader>
@@ -342,7 +346,7 @@ export function DerivativesView() {
     metrics[k] = filterSeriesByDepth(v as TimeSeries, depthDays);
   }
   const priceData = filterPriceByDepth(data?.price || null, depthDays);
-  const isEnabled = (statusData as any)?.enabled ?? (data as any)?.enabled ?? true;
+  const isEnabled = statusData?.enabled ?? data?.enabled ?? true;
 
   // Plage X partagée (min/max timestamps après filtre profondeur)
   const sharedX = (() => {
@@ -496,6 +500,7 @@ export function DerivativesView() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <MetricChart
             title="Funding Rate"
+            hint="Taux périodique échangé entre longs et shorts pour coller le perp au spot. Positif : les longs paient les shorts (marché surchauffé). Négatif : l'inverse. Un funding extrême précède souvent un mean-reversion ; un retournement de funding peut confirmer un changement de régime."
             series={metrics.funding_rate}
             color="#f59e0b"
             icon={<Activity className="w-3.5 h-3.5 text-amber-400" />}
@@ -510,6 +515,7 @@ export function DerivativesView() {
           />
           <MetricChart
             title="Open Interest"
+            hint="Notionnel des contrats dérivés encore ouverts. OI qui monte avec le prix = nouvelle conviction (tendance saine). OI qui monte contre le prix = squeeze potentiel. OI qui chute = débouclage, la tendance s'essouffle."
             series={metrics.open_interest}
             color="#8b5cf6"
             icon={<Coins className="w-3.5 h-3.5 text-purple-400" />}
@@ -522,6 +528,7 @@ export function DerivativesView() {
           />
           <MetricChart
             title="Long/Short Ratio"
+            hint="Ratio comptes/positions long vs short. > 1 = plus de longs que de shorts. Les extrêmes signalent un crowding : trop de longs + prix qui stalle → risque de long squeeze (lecture souvent contrarian)."
             series={metrics.long_short_ratio}
             color="#22d3ee"
             icon={<Scale className="w-3.5 h-3.5 text-cyan-400" />}
@@ -536,6 +543,7 @@ export function DerivativesView() {
           />
           <MetricChart
             title="Taker Buy/Sell Ratio"
+            hint="Volume taker acheteur / taker vendeur. > 1 = agressivité acheteuse (le marché « lève »). < 1 = pression vendeuse. Une divergence prix vs taker (prix qui fait un plus haut, ratio qui fléchit) est un signal d'épuisement."
             series={metrics.taker_buy_sell_ratio}
             color="#10b981"
             icon={<BarChart2 className="w-3.5 h-3.5 text-emerald-400" />}

@@ -23,6 +23,7 @@
  * Si `recommendations` est vide ou absent, le panneau ne s'affiche pas.
  */
 
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type {
@@ -31,6 +32,7 @@ import type {
 } from '@/types';
 import {
   AlertOctagon, AlertTriangle, Info, CheckCircle2, ExternalLink,
+  ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -40,6 +42,8 @@ interface Props {
   /** Nom de la stratégie (affiché dans le titre). */
   strategy?: string;
   className?: string;
+  /** Replié par défaut (cartes KPI). */
+  defaultCollapsed?: boolean;
 }
 
 // ── Mapping sévérité → { icon, color, badge variant } ────────────────────────
@@ -86,7 +90,9 @@ export function RecommendationsPanel({
   summary,
   strategy,
   className,
+  defaultCollapsed = false,
 }: Props) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   // Ne pas afficher le panneau si aucune recommandation
   if (!recommendations || recommendations.length === 0) {
     return null;
@@ -99,8 +105,11 @@ export function RecommendationsPanel({
 
   return (
     <Card className={cn(className, verdictBorder)}>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between">
+      <CardHeader
+        className="cursor-pointer flex-col items-stretch gap-1"
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        <CardTitle className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-2">
             💡 Recommandations
             {strategy && (
@@ -109,6 +118,7 @@ export function RecommendationsPanel({
               </span>
             )}
           </span>
+          <span className="flex items-center gap-2">
           <Badge variant={
             verdict === 'critical' ? 'danger'
             : verdict === 'risky' ? 'warning'
@@ -117,6 +127,8 @@ export function RecommendationsPanel({
           }>
             {verdictLabel}
           </Badge>
+          {collapsed ? <ChevronDown className="w-4 h-4 text-muted" /> : <ChevronUp className="w-4 h-4 text-muted" />}
+          </span>
         </CardTitle>
         {/* Compteurs synthétiques par sévérité */}
         <div className="flex items-center gap-3 text-[11px]">
@@ -146,6 +158,7 @@ export function RecommendationsPanel({
           )}
         </div>
       </CardHeader>
+      {collapsed ? null : (
       <CardContent className="space-y-2">
         {recommendations.map((reco, idx) => {
           const cfg = SEVERITY_CONFIG[reco.severity] ?? SEVERITY_CONFIG.info;
@@ -196,6 +209,7 @@ export function RecommendationsPanel({
           );
         })}
       </CardContent>
+      )}
     </Card>
   );
 }

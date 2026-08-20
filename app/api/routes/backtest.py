@@ -1,20 +1,15 @@
 """Route backtest — POST /api/backtest."""
-import importlib
 import logging
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
 
 from app.api import state
 from app.api.helpers import _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps, verify_api_key
+from app.api.schemas import BacktestRunResponse
 from app.core.candle_store import get_store
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.risk_gate import _default_venue_capital
-from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer, run_dual_pass
-from app.engine.engine import Engine
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -81,7 +76,9 @@ def backtest_range(request: Request, symbol: str, timeframe: str = "1h"):
         }
     except Exception as e:
         logger.warning(f"[API] backtest/range KO ({symbol}/{timeframe}) : {e}")
-        raise HTTPException(500, f"Erreur interne : {e}")
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} backtest/range : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
 @router.post("/api/backtest/cancel", dependencies=[Depends(verify_api_key)])
@@ -89,6 +86,8 @@ def backtest_range(request: Request, symbol: str, timeframe: str = "1h"):
 def cancel_backtest(request: Request):
     """Annule le backtest en cours en levant le signal d'arrêt."""
     state._bt_cancel_event.set()
+    from app.engine.compute_pool import request_cancel
+    request_cancel()
     return {"status": "cancelling"}
 
 
@@ -142,14 +141,27 @@ def _pass_summary(res) -> dict:
 
 
 def _envelope_payload(env) -> dict | None:
-    if env is None:
-        return None
-    return {"venue": env.venue, "symbol": env.symbol, "currency": env.currency,
-            "slot_envelope": round(env.slot_envelope, 4),
-            "weight": round(env.weight, 4),
-            "trade_risk_pct": env.trade_risk_pct,
-            "risk_amount": round(env.slot_risk_amount, 4),
-            "min_notional": env.min_notional}
+    # Une seule définition : le dual-pass UI passe par compute_jobs.
+    from app.engine.compute_jobs import _envelope_payload as _payload
+    return _payload(env)
+
+
+def _parse_ohlcv_bound(raw: str, end_of_day: bool):
+    """Parse une date ISO en datetime NAÏF (UTC implicite).
+
+    La colonne ``time`` du CandleStore est un ``datetime[ms]`` sans
+    timezone (UTC implicite). Comparer une colonne naïve à un littéral
+    tz-aware lève un ``SchemaError`` polars — d'où le parsing naïf ici.
+    """
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        dt = datetime.fromisoformat(
+            raw + ("T23:59:59" if end_of_day else "T00:00:00")
+        )
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def _filter_df_by_date_range(df, start_date: str = "", end_date: str = ""):
@@ -178,39 +190,19 @@ def _filter_df_by_date_range(df, start_date: str = "", end_date: str = ""):
         return df, "", ""
     import polars as pl
 
-    def _parse(raw: str, end_of_day: bool):
-        """Parse une date ISO en datetime NAÏF (UTC implicite).
-
-        La colonne ``time`` du CandleStore est un ``datetime[ms]`` sans
-        timezone (UTC implicite). Comparer une colonne naïve à un littéral
-        tz-aware lève un ``SchemaError`` polars — d'où le parsing naïf ici.
-        """
-        try:
-            dt = datetime.fromisoformat(raw)
-        except ValueError:
-            # Date seule ("2024-01-01") → borne basse à 00:00, haute à 23:59:59
-            dt = datetime.fromisoformat(
-                raw + ("T23:59:59" if end_of_day else "T00:00:00")
-            )
-        # Une date fournie avec un offset ("2024-01-01T00:00+02:00") est
-        # ramenée en UTC puis dénaturalisée, pour rester comparable.
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-        return dt
-
     used_start = ""
     used_end = ""
     mask = pl.lit(True)
     if start_date:
         try:
-            start_dt = _parse(start_date, end_of_day=False)
+            start_dt = _parse_ohlcv_bound(start_date, end_of_day=False)
         except Exception as _e:
             raise HTTPException(400, f"start_date '{start_date}' invalide (ISO 8601 attendu) : {_e}")
         mask = mask & (pl.col("time") >= start_dt)
         used_start = start_dt.isoformat()[:16]
     if end_date:
         try:
-            end_dt = _parse(end_date, end_of_day=True)
+            end_dt = _parse_ohlcv_bound(end_date, end_of_day=True)
         except Exception as _e:
             raise HTTPException(400, f"end_date '{end_date}' invalide (ISO 8601 attendu) : {_e}")
         mask = mask & (pl.col("time") <= end_dt)
@@ -281,7 +273,8 @@ def _apply_cost_override(cfg: dict, cost_override: dict) -> dict:
     return new_cfg
 
 
-@router.post("/api/backtest", dependencies=[Depends(verify_api_key)])
+@router.post("/api/backtest", dependencies=[Depends(verify_api_key)],
+             response_model=BacktestRunResponse)
 @state.limiter.limit("10/minute")
 def run_backtest(
     request:       Request,
@@ -353,11 +346,14 @@ def run_backtest(
             logger.warning(f"[backtest] rechargement config KO : {e}")
 
         tf    = timeframe.strip() or state.cfg["trading"].get("timeframe", "1h")
-        # QW-2 : si start_date/end_date fournis, on prend un maximum de bougies
-        # (50k) puis on filtre par date. Sinon, comportement historique (limit).
+        # A-03 : le backfill reste celui du CandleStore (50k, 5k en 1d) —
+        # persisté une fois, ça approfondit l'historique. La plage de dates
+        # ne change que ce qui est renvoyé au backtest (scan Parquet filtré).
         use_date_range = bool(start_date.strip() or end_date.strip())
         if use_date_range:
-            limit = 50000  # max possible
+            limit = 50000
+            if tf == "1d":
+                limit = 5000
         else:
             limit = max(100, min(limit, 50000))
             if tf == "1d":
@@ -383,8 +379,24 @@ def run_backtest(
 
         # QW-3 : refresh force prefer_cache=False
         exchange = _get_bt_exchange(effective_cfg)
-        df       = get_store().fetch(exchange, symbol, tf, total=limit,
-                                      prefer_cache=not refresh)
+        store = get_store()
+        if use_date_range:
+            try:
+                start_dt = (
+                    _parse_ohlcv_bound(start_date.strip(), False) if start_date.strip() else None
+                )
+                end_dt = (
+                    _parse_ohlcv_bound(end_date.strip(), True) if end_date.strip() else None
+                )
+            except Exception as _e:
+                raise HTTPException(400, f"plage de dates invalide (ISO 8601 attendu) : {_e}")
+            df = store.fetch_range(
+                exchange, symbol, tf, start=start_dt, end=end_dt,
+                total=limit, prefer_cache=not refresh,
+            )
+        else:
+            df = store.fetch(exchange, symbol, tf, total=limit,
+                             prefer_cache=not refresh)
         if df is None or len(df) == 0:
             raise HTTPException(400, f"Aucune donnée disponible pour {symbol}/{tf}")
 
@@ -399,13 +411,26 @@ def run_backtest(
                     f"Vérifiez le cache (GET /api/backtest/range?symbol={symbol}&timeframe={tf})."
                 )
 
+        # A-05 : le graphique n'affiche pas 50k points — sous-échantillonner.
+        _n = len(df)
+        _step = max(1, _n // 4000)
+        _times = df["time"].dt.epoch(time_unit="s").to_list()
+        _open = df["open"].to_list()
+        _close = df["close"].to_list()
+        _high = df["high"].to_list()
+        _low = df["low"].to_list()
+        _vol = df["volume"].to_list()
+        _idx = list(range(0, _n, _step))
+        if _idx[-1] != _n - 1:
+            _idx.append(_n - 1)
         ohlcv_payload = {
-            "time":   df["time"].dt.epoch(time_unit="s").to_list(),
-            "open":   [round(float(v), 6) for v in df["open"].to_list()],
-            "close":  [round(float(v), 6) for v in df["close"].to_list()],
-            "high":   [round(float(v), 6) for v in df["high"].to_list()],
-            "low":    [round(float(v), 6) for v in df["low"].to_list()],
-            "volume": [round(float(v), 2) for v in df["volume"].to_list()],
+            "time":   [int(_times[i]) for i in _idx],
+            "open":   [round(float(_open[i]), 6) for i in _idx],
+            "close":  [round(float(_close[i]), 6) for i in _idx],
+            "high":   [round(float(_high[i]), 6) for i in _idx],
+            "low":    [round(float(_low[i]), 6) for i in _idx],
+            "volume": [round(float(_vol[i]), 2) for i in _idx],
+            "step":   _step,
         }
 
         _ALLOWED_STRATS = _discover_strategies()
@@ -431,115 +456,47 @@ def run_backtest(
 
         by_strategy = {}
 
-        def _run_one(name: str) -> tuple:
-            try:
-                if state._bt_cancel_event.is_set():
-                    return name, {"error": "Backtest annulé", "trades": []}
-                mod  = importlib.import_module(f"app.strategies.{name}")
-                inst = mod.Strategy()
-                # Pass cancel event to ML strategies so they can abort training
-                if hasattr(inst, '_cancel_event'):
-                    inst._cancel_event = state._bt_cancel_event
-                eng = Engine()
-                eng.register(inst, silent=True)
-                env = _slot_envelope(name, tf, symbol) if dual_pass else None
-                runs_payload = None
-                if env is not None:
-                    # La passe LIVE fait foi : c'est l'échelle qui tradera
-                    # réellement, donc celle qui pilote la promotion (§5.1).
-                    # `realistic_risk` doit suivre les deux passes : sans lui,
-                    # la réponse annoncerait `realistic_risk: true` alors que
-                    # les circuit breakers n'auraient pas tourné.
-                    runs = run_dual_pass(eng, effective_cfg, df, env, symbol=symbol,
-                                         timeframe=tf,
-                                         cancel_event=state._bt_cancel_event,
-                                         realistic_risk=realistic_risk)
-                    res = runs["live"]
-                    runs_payload = {k: _pass_summary(r) for k, r in runs.items()}
-                    runs_payload["ecart_pnl_pct"] = round(
-                        runs_payload["live"]["pnl_pct"] - runs_payload["reference"]["pnl_pct"], 4)
-                else:
-                    bt  = Backtester(eng, effective_cfg,
-                                      cancel_event=state._bt_cancel_event,
-                                      realistic_risk=realistic_risk)
-                    res = bt.run(df, symbol, timeframe=tf)
-                d   = res.to_dict()
-                strat_key  = next(iter(res.by_strategy.keys()), name) if res.by_strategy else name
-                strat_data = res.by_strategy.get(strat_key, {})
-                all_trades = strat_data.get("trades", [])
-                entry = {
-                    "total_trades":     strat_data.get("total_trades",  d["total_trades"]),
-                    "win_rate":         strat_data.get("win_rate",      d["win_rate"]),
-                    "total_pnl":        strat_data.get("total_pnl",     d["total_pnl"]),
-                    "total_fees":       strat_data.get("total_fees",    d["total_fees"]),
-                    # QW-3 : agrégats de coûts pour analyse what-if frais/levier
-                    "total_borrow_cost": d.get("total_borrow_cost", 0.0),
-                    "total_slippage_cost": d.get("total_slippage_cost", 0.0),
-                    "max_drawdown":     strat_data.get("max_drawdown",  d["max_drawdown"]),
-                    "sharpe":           strat_data.get("sharpe",        d["sharpe"]),
-                    # QW-6 : diagnostics des circuit breakers. Chaque stratégie
-                    # a SON `Backtester`, donc son propre gate : les
-                    # diagnostics sont par stratégie, pas globaux. Sans cette
-                    # recopie ils ne quittaient jamais le backend, et le
-                    # panneau de l'UI restait vide en permanence.
-                    "realistic_risk_diagnostics": d.get("realistic_risk_diagnostics"),
-                    # QW-1 : métriques étendues (S3-07 — branchement)
-                    "sortino":          d.get("sortino", 0.0),
-                    "calmar":           d.get("calmar", 0.0),
-                    "cagr":             d.get("cagr", 0.0),
-                    "alpha_vs_bh":      d.get("alpha_vs_bh", 0.0),
-                    "expectancy":       strat_data.get("expectancy",    d["expectancy"]),
-                    "profit_factor":    strat_data.get("profit_factor", d["profit_factor"]),
-                    "avg_win":          strat_data.get("avg_win",       d.get("avg_win", 0)),
-                    "avg_loss":         strat_data.get("avg_loss",      d.get("avg_loss", 0)),
-                    "initial_capital":  d["initial_capital"],
-                    "final_equity":     strat_data.get("final_equity",  d["final_equity"]),
-                    "equity_curve":     strat_data.get("equity_curve",  d.get("equity_curve", [])),
-                    "buy_and_hold_pnl": d.get("buy_and_hold_pnl"),
-                    "buy_and_hold_pct": d.get("buy_and_hold_pct"),
-                    "alpha":            d.get("alpha"),
-                    "trades":           all_trades,
-                    "days_covered":     days_covered,
-                    "bars_warning":     _bars_warning,
-                    "diagnostics":      d.get("diagnostics"),
-                    # S12 : motifs de refus, vocabulaire partagé avec le live.
-                    "rejections":       d.get("rejections"),
-                    "envelope":         _envelope_payload(env),
-                    "runs":             runs_payload,
-                }
-                if walk_forward and len(df) >= 200:
-                    wf = WalkForwardAnalyzer(
-                        eng, effective_cfg,
-                        n_folds=effective_cfg.get("backtest", {}).get("walk_forward_folds", 5)
-                    )
-                    entry["walk_forward"] = wf.run(df, symbol)
-                if monte_carlo and all_trades:
-                    mc = MonteCarlo(
-                        n_runs=effective_cfg.get("backtest", {}).get("monte_carlo_runs", 200)
-                    )
-                    entry["monte_carlo"] = mc.run(all_trades,
-                                                  _default_venue_capital(effective_cfg))
-                # Persiste le résumé du dernier backtest pour ce slot (strategy::tf)
-                # → consommé par la page Audit OOS. Non bloquant.
+        # A-02 : calcul lourd hors process API (ProcessPool spawn). Le fetch
+        # OHLCV ci-dessus reste ici ; record_backtest / recos restent ici
+        # (I/O, pas de GIL).
+        from app.engine.compute_pool import clear_cancel, map_jobs
+        clear_cancel()
+        bt_cfg = effective_cfg.get("backtest") or {}
+        payloads = []
+        for name in strats_to_run:
+            env = _slot_envelope(name, tf, symbol) if dual_pass else None
+            payloads.append({
+                "name": name,
+                "cfg": effective_cfg,
+                "df": df,
+                "symbol": symbol,
+                "timeframe": tf,
+                "realistic_risk": realistic_risk,
+                "dual_pass": bool(dual_pass and env is not None),
+                "envelope": env,
+                "walk_forward": walk_forward,
+                "monte_carlo": monte_carlo,
+                "days_covered": days_covered,
+                "bars_warning": _bars_warning,
+                "wf_folds": bt_cfg.get("walk_forward_folds", 5),
+                "mc_runs": bt_cfg.get("monte_carlo_runs", 200),
+            })
+        computed = map_jobs(payloads, max_workers=min(len(strats_to_run), 4))
+        if state._bt_cancel_event.is_set():
+            raise HTTPException(499, "Backtest annulé par l'utilisateur")
+        for name, entry in computed:
+            if "error" not in entry:
                 try:
                     from app.core.backtest_history import record_backtest
                     record_backtest(name, tf, symbol, entry, n_bars=len(df))
                 except Exception as _rec_e:
                     logger.debug(f"[backtest] record_backtest({name}) KO : {_rec_e}")
-
-                # QW-5 : génération des recommandations post-backtest (exigence 8)
-                # Le moteur applique ~15 règles (échantillon, PnL, outliers,
-                # frais, Sharpe, DD, alpha, win-rate, borrow, régimes, points
-                # forts) et produit une liste ordonnée + une synthèse verdict.
                 try:
-                    from app.engine.recommendations import generate_recommendations, summarize_recommendations
-                    # Construire le contexte complet pour le moteur : on inclut
-                    # ohlcv (pour l'analyse par régime) + les métriques agrégées.
-                    reco_ctx = {
-                        **entry,
-                        "ohlcv": ohlcv_payload,
-                    }
-                    recos = generate_recommendations(reco_ctx)
+                    from app.engine.recommendations import (
+                        generate_recommendations,
+                        summarize_recommendations,
+                    )
+                    recos = generate_recommendations({**entry, "ohlcv": ohlcv_payload})
                     entry["recommendations"] = recos
                     entry["recommendations_summary"] = summarize_recommendations(recos)
                 except Exception as _reco_e:
@@ -549,25 +506,9 @@ def run_backtest(
                         "counts": {}, "verdict": "neutral",
                         "verdict_label": "Analyse indisponible", "total": 0,
                     }
-                return name, entry
-            except InterruptedError:
-                return name, {"error": "Backtest annulé", "trades": []}
-            except Exception as e:
-                logger.error(f"[API] Backtest {name} : {e}", exc_info=True)
-                return name, {"error": str(e), "trades": []}
+            by_strategy[name] = entry
 
-        with ThreadPoolExecutor(max_workers=min(len(strats_to_run), 4)) as pool:
-            futures = {pool.submit(_run_one, n): n for n in strats_to_run}
-            for fut in as_completed(futures):
-                if state._bt_cancel_event.is_set():
-                    # Cancel remaining futures
-                    for f in futures:
-                        f.cancel()
-                    raise HTTPException(499, "Backtest annulé par l'utilisateur")
-                name, result = fut.result()
-                by_strategy[name] = result
-
-        ohlcv_gaps   = detect_ohlcv_gaps(df, tf)
+        ohlcv_gaps   = detect_ohlcv_gaps(df, tf, symbol=symbol)
         gaps_warning = None
         if ohlcv_gaps:
             total_missing = sum(g["gap_bars"] for g in ohlcv_gaps)
@@ -605,7 +546,7 @@ def run_backtest(
             # puisqu'il ne dépend que du couple (symbole, timeframe).
             "cost_model":      _cost_model_for(symbol, tf),
         }
-        return JSONResponse(content=_clean(payload))
+        return _clean(payload)
     except HTTPException:
         raise
     except Exception as e:

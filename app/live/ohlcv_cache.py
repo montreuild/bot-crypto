@@ -28,7 +28,7 @@ from typing import Dict, Optional, Tuple
 
 import polars as pl
 
-from app.core.candle_store import epoch_ms, get_store
+from app.core.candle_store import drop_forming_candle, epoch_ms, get_store
 from app.core.indicators import atr_val as _compute_atr
 from app.core.indicators import precompute_df
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
@@ -45,7 +45,6 @@ _OHLCV_TTL: Dict[str, int] = {
 # Durée d'un timeframe en millisecondes — source unique (V4-A).
 # (_OHLCV_TTL ci-dessus reste local : c'est un intervalle de POLLING, pas
 # une durée de timeframe.)
-from app.core.timeframes import TF_MS as _TF_MS  # noqa: E402
 
 
 class OHLCVCache:
@@ -126,33 +125,24 @@ class OHLCVCache:
     # ── Bougie en cours de formation ───────────────────────────────────────
 
     def _drop_forming_candle(self, df: pl.DataFrame, tf: str) -> pl.DataFrame:
-        """Retire la dernière bougie si elle n'est pas encore clôturée.
+        """D-01 : même élagage que ``CandleStore.drop_forming_candle``."""
+        return drop_forming_candle(df, tf)
 
-        Une bougie d'ouverture ``t`` couvre l'intervalle ``[t, t+Δ)`` ; elle est
-        close dès que ``t + Δ <= now``. Si la dernière bougie est encore ouverte,
-        son ``close`` est provisoire (repaint) — on la retire pour que le scoring
-        live se fasse sur des bougies clôturées, comme le backtest. No-op si le TF
-        est inconnu ou si l'élagage viderait le DataFrame.
+    def get_forming_range(self, symbol: str, tf: str):
+        """``(low, high)`` de la bougie en formation, ou ``None``.
+
+        L-01 : le stop live doit se juger sur le plus-bas/plus-haut de
+        l'intervalle, pas sur ``ticker.last``. La bougie en formation est
+        retirée du cache de scoring ; on la relit ici, brute.
         """
-        tf_ms = _TF_MS.get(tf)
-        if not tf_ms or df is None or df.height <= 1:
-            return df
         try:
-            # `epoch_ms` et non `.timestamp()` : la colonne `time` est naïve
-            # mais porte de l'UTC. Lue en heure locale, la dernière bougie
-            # paraissait plus vieille d'un fuseau — à Paris, une bougie 15 m /
-            # 30 m / 1 h en formation n'était donc JAMAIS élaguée, et le live
-            # scorait sur un `close` provisoire (repaint) que le backtest, lui,
-            # ne voit pas.
-            last_ms = epoch_ms(df["time"][-1])
-            if last_ms is None:
-                return df
-            now_ms = int(time.time() * 1000)
-            if last_ms + tf_ms > now_ms:   # bougie encore en formation
-                return df.head(df.height - 1)
+            df = get_store().fetch(self._exchange, symbol, tf, total=2)
+            if df is None or df.height == 0:
+                return None
+            return float(df["low"][-1]), float(df["high"][-1])
         except Exception as e:
-            logger.debug(f"[OHLCVCache] élagage bougie en cours {tf} KO : {e}")
-        return df
+            logger.debug(f"[OHLCVCache] forming range {symbol}/{tf} KO : {e}")
+            return None
 
     # ── Accès principal ──────────────────────────────────────────────────
 

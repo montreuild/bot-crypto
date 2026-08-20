@@ -88,6 +88,28 @@ def test_close_position_fee_split_is_all_taker(tmp_path):
         assert rec.fee_maker == pytest.approx(0.0)
 
 
+def test_close_is_a_single_transaction(tmp_path, monkeypatch):
+    """A-01 : si save_trade échoue, la position ouverte n'est pas perdue."""
+    from app.core.database import OpenPosition, persist_open_position
+
+    h, SessionLocal = _harness(tmp_path)
+    pos = _open_pos()
+    h.open_positions["p1"] = pos
+    with session_scope(SessionLocal) as sess:
+        persist_open_position(sess, pos)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("app.live.position_close_mixin.save_trade", _boom)
+    with pytest.raises(RuntimeError, match="db down"):
+        h._close_position("p1", 101.0, exit_reason="take_profit")
+
+    with session_scope(SessionLocal) as sess:
+        assert sess.get(OpenPosition, "p1") is not None
+        assert sess.query(Trade).count() == 0
+
+
 def test_close_position_defaults_to_unknown_when_unspecified(tmp_path):
     h, SessionLocal = _harness(tmp_path)
     h.open_positions["p1"] = _open_pos()

@@ -63,6 +63,48 @@ function toSec(t: string | number | null | undefined): number | null {
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
 }
 
+/** Recale un timestamp (entry/exit) sur la bougie UI la plus proche. */
+function nearestCandleTime(
+  rows: CandleRow[],
+  rawTime: string | number | null | undefined,
+): UTCTimestamp | undefined {
+  if (!rows.length) return undefined;
+  const sec = toSec(rawTime);
+  if (sec == null) return undefined;
+  let lo = 0;
+  let hi = rows.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (Number(rows[mid].time) < sec) lo = mid + 1;
+    else hi = mid;
+  }
+  const cand = rows[lo];
+  const prev = lo > 0 ? rows[lo - 1] : undefined;
+  if (prev && Math.abs(Number(prev.time) - sec) <= Math.abs(Number(cand.time) - sec)) {
+    return prev.time;
+  }
+  return cand.time;
+}
+
+function resolveBarTime(
+  rows: CandleRow[],
+  timeMap: Record<number, UTCTimestamp>,
+  bar: number | undefined,
+  rawTime: string | number | null | undefined,
+  step?: number,
+): UTCTimestamp | undefined {
+  const fromTime = nearestCandleTime(rows, rawTime);
+  if (fromTime != null) return fromTime;
+  const bi = bar != null ? Number(bar) : NaN;
+  if (!Number.isFinite(bi) || bi < 0) return undefined;
+  if (timeMap[bi]) return timeMap[bi];
+  if (step && step > 1 && rows.length) {
+    const idx = Math.max(0, Math.min(rows.length - 1, Math.round(bi / step)));
+    return rows[idx]?.time;
+  }
+  return undefined;
+}
+
 // F2 : CandleRow étend le type partagé avec un champ `volume?` optionnel
 // (la version factorisée dans lib/ohlcv.ts ne l'a pas — harmonisation future).
 interface CandleRow extends SharedCandleRow {
@@ -154,6 +196,8 @@ const ChartCanvas = forwardRef<ChartCanvasHandle, ChartCanvasProps>(function Cha
     candleRows.forEach((r, i) => { m[i] = r.time; });
     return m;
   }, [candleRows]);
+
+  const ohlcvStep = Number((candles as { step?: number } | null | undefined)?.step) || 1;
 
   useImperativeHandle(ref, () => ({
     resetZoom: () => {
@@ -248,16 +292,18 @@ const ChartCanvas = forwardRef<ChartCanvasHandle, ChartCanvasProps>(function Cha
     // ── Markers entrée + sortie ────────────────────────────────────────────
     // Fusionnés puis triés chronologiquement : LightweightCharts EXIGE l'ordre
     // croissant pour `setMarkers`, sinon il lève une erreur au runtime.
+    // OHLCV UI est sous-échantillonné (`step = n//4000`) : `trade.bar` indexe
+    // la série complète — on recale via entry_time / exit_time, sinon step.
+    const step = ohlcvStep;
     const markers: SeriesMarker<Time>[] = [];
     for (const t of trades) {
-      const bi = t.bar != null ? Number(t.bar) : NaN;
-      const ei = t.exit_bar != null ? Number(t.exit_bar) : NaN;
       const isLong = t.side === 'long';
+      const tEntry = resolveBarTime(candleRows, timeMap, t.bar, t.entry_time ?? t.time, step);
+      const tExit = resolveBarTime(candleRows, timeMap, t.exit_bar, t.exit_time, step);
 
-      // Entrée ▲ (Long) / ▼ (Short) — skip si `bar` absent/hors plage.
-      if (Number.isFinite(bi) && bi >= 0 && timeMap[bi]) {
+      if (tEntry) {
         markers.push({
-          time: timeMap[bi],
+          time: tEntry,
           position: isLong ? 'belowBar' : 'aboveBar',
           color: isLong ? UP_COLOR : DOWN_COLOR,
           shape: isLong ? 'arrowUp' : 'arrowDown',
@@ -265,13 +311,12 @@ const ChartCanvas = forwardRef<ChartCanvasHandle, ChartCanvasProps>(function Cha
         });
       }
 
-      // Sortie ● — position inverse de l'entrée ; couleur selon PnL.
-      if (Number.isFinite(ei) && ei >= 0 && timeMap[ei]) {
+      if (tExit) {
         const badge = exitReasonBadge(t.exit_reason);
         const isWin = (t.pnl ?? 0) >= 0;
         const text = badge.emoji ? `${badge.emoji} ${badge.abbr}` : badge.abbr;
         markers.push({
-          time: timeMap[ei],
+          time: tExit,
           position: isLong ? 'aboveBar' : 'belowBar',
           color: isWin ? EXIT_WIN_COLOR : EXIT_LOSS_COLOR,
           shape: 'circle',
@@ -291,18 +336,23 @@ const ChartCanvas = forwardRef<ChartCanvasHandle, ChartCanvasProps>(function Cha
     for (const t of trades) {
       const bi = t.bar != null ? Number(t.bar) : NaN;
       const ei = t.exit_bar != null ? Number(t.exit_bar) : NaN;
-      if (!Number.isFinite(bi) || !Number.isFinite(ei)) continue;
-      const t0 = timeMap[bi];
-      const t1 = timeMap[ei];
+      const t0 = resolveBarTime(candleRows, timeMap, t.bar, t.entry_time ?? t.time, step);
+      const t1 = resolveBarTime(candleRows, timeMap, t.exit_bar, t.exit_time, step);
       if (!t0 || !t1 || Number(t0) >= Number(t1)) continue;
 
       // Stop trail filtré sur [bi, ei] (points hors plage ignorés).
       const trail = Array.isArray(t.stop_trail) ? t.stop_trail : [];
       const trailInRange = trail
-        .map((p) => ({ bar: Number(p?.bar), stop: Number(p?.stop) }))
+        .map((p) => ({
+          bar: Number(p?.bar),
+          stop: Number(p?.stop),
+          time: resolveBarTime(candleRows, timeMap, Number(p?.bar), undefined, step),
+        }))
         .filter(
           (p) => Number.isFinite(p.bar) && Number.isFinite(p.stop)
-            && p.bar >= bi && p.bar <= ei && !!timeMap[p.bar],
+            && (!Number.isFinite(bi) || p.bar >= bi)
+            && (!Number.isFinite(ei) || p.bar <= ei)
+            && !!p.time,
         );
 
       // ── Stop initial (amber dashed) ──────────────────────────────────────
@@ -310,7 +360,7 @@ const ChartCanvas = forwardRef<ChartCanvasHandle, ChartCanvasProps>(function Cha
       // trailing). Valeur : `stop_initial ?? stop` (alias backend).
       const initialStop = t.stop_initial ?? t.stop;
       const firstTrailTime = trailInRange.length > 0
-        ? timeMap[trailInRange[0].bar]
+        ? trailInRange[0].time
         : t1;
       if (
         initialStop != null && Number.isFinite(initialStop)
@@ -338,10 +388,12 @@ const ChartCanvas = forwardRef<ChartCanvasHandle, ChartCanvasProps>(function Cha
       // dernier update du trail).
       if (trailInRange.length >= 2) {
         try {
-          const trailData = trailInRange.map((p) => ({
-            time: timeMap[p.bar],
-            value: p.stop,
-          }));
+          const trailData = trailInRange
+            .filter((p) => p.time != null)
+            .map((p) => ({
+              time: p.time as UTCTimestamp,
+              value: p.stop,
+            }));
           const lastPt = trailData[trailData.length - 1];
           if (Number(lastPt.time) < Number(t1)) {
             trailData.push({ time: t1, value: lastPt.value });
@@ -360,7 +412,7 @@ const ChartCanvas = forwardRef<ChartCanvasHandle, ChartCanvasProps>(function Cha
     }
 
     try { chart.timeScale().fitContent(); } catch { /* noop */ }
-  }, [candleRows, trades, timeMap, chartType]);
+  }, [candleRows, trades, timeMap, chartType, ohlcvStep]);
 
   return (
     <div className="relative w-full" style={{ height }}>

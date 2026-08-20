@@ -19,9 +19,11 @@ const variantClasses: Record<Variant, string> = {
   // sur presque toutes les pages. Le cyan est trop clair pour du texte blanc.
   // Texte sombre dessus : 7.97:1 au repos, 5.25:1 au survol — et la couleur de
   // marque est préservée.
-  primary: 'bg-primary-500 text-background hover:bg-primary-600',
-  success: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20',
-  danger: 'bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20',
+  // Clair : texte slate-900 sur cyan-500 (≥ 7:1). Sombre : même texte sombre
+  // (le fond page n'est plus utilisable — en light c'est #f8fafc, 2.3:1).
+  primary: 'bg-primary-500 text-slate-900 hover:bg-primary-400 hover:text-slate-900',
+  success: 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20',
+  danger: 'bg-red-500/10 text-red-700 dark:text-red-400 border border-red-500/30 hover:bg-red-500/20',
   ghost: 'bg-transparent text-muted hover:bg-card-hover hover:text-foreground',
   outline: 'bg-transparent text-foreground border border-border hover:border-border-hi',
 };

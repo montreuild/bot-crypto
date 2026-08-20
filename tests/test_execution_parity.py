@@ -42,7 +42,8 @@ def test_close_pnl_combines_all():
                                   fee_rate=0.001, daily_rate=0.00072,
                                   hours_held=24, periods_per_day=3)
     assert fees == pytest.approx(110 * 2 * 0.001)
-    assert borrow == pytest.approx(200 * ((1 + 0.00072 / 3) ** 3 - 1))
+    # FIN-10 : sans venue, un long à levier 1 n'emprunte rien.
+    assert borrow == pytest.approx(0.0)
     assert pnl == pytest.approx(20 - fees - borrow)
 
 
@@ -74,6 +75,9 @@ def _backtest_close_pnl() -> float:
         "strategy_params": {},
     }
     bt = Backtester(Engine(), cfg)
+    from app.core.bot_identity import Venue
+    bt._venue = Venue(name="margin-isolated", market_type="margin",
+                      margin_mode="isolated", max_leverage=3)
     position = {
         "side": "long", "entry": ENTRY, "size": SIZE,
         "notional": ENTRY * SIZE, "bar": 0, "stop": 95.0,
@@ -115,7 +119,7 @@ def _live_close_pnl(margin: bool = True) -> float:
                 "taker_fee": FEE_RATE, "borrow_rate_daily": BORROW_RATE,
                 "borrow_periods_per_day": PERIODS,
                 "reentry_cooldown_bars": 0,
-                **({"margin_mode": "isolated"} if margin else {}),
+                **({"margin_mode": "isolated", "max_leverage": 3} if margin else {}),
             }, "exchange": {"name": "okx", "margin": margin}}
             self.exchange = MagicMock()
             self.exchange.create_order.return_value = {"price": EXIT, "id": "x"}
@@ -155,12 +159,51 @@ def _live_close_pnl(margin: bool = True) -> float:
     return h._paper_base - base_before
 
 
+def test_borrowed_notional_distinguishes_long_and_short():
+    """F-04 : long à 1× = 0 ; short à 1× = notionnel entier ; long à 3× = 2/3."""
+    from app.core.execution import borrowed_notional
+    assert borrowed_notional(500.0, "long", max_leverage=1.0) == 0.0
+    assert borrowed_notional(500.0, "short", max_leverage=1.0) == 500.0
+    assert borrowed_notional(500.0, "long", max_leverage=3.0) == pytest.approx(500.0 * 2 / 3)
+    assert borrowed_notional(500.0, "short", max_leverage=3.0) == 500.0
+    assert borrowed_notional(500.0, "long", own_funds=500.0) == 0.0
+    assert borrowed_notional(500.0, "long", own_funds=200.0) == 300.0
+
+
+def test_close_pnl_long_at_leverage_one_has_no_borrow():
+    from app.core.bot_identity import Venue
+    from app.core.execution import close_pnl
+    v = Venue(name="m1", market_type="margin", max_leverage=1.0)
+    args = dict(side="long", entry=100.0, exit_price=110.0, size=2.0,
+                notional=200.0, fee_rate=0.001, daily_rate=0.00072,
+                hours_held=24.0)
+    _, _, borrow_long = close_pnl(**args, venue=v)
+    _, _, borrow_short = close_pnl(**{**args, "side": "short"}, venue=v)
+    assert borrow_long == 0.0
+    assert borrow_short > 0.0
+
+
+def test_no_borrow_rate_on_spot():
+    from app.core.bot_identity import Venue
+    from app.core.execution import venue_borrow_rate
+    spot = Venue(name="spot")
+    margin_1x = Venue(name="m1", market_type="margin", max_leverage=1.0)
+    assert venue_borrow_rate(0.00072, spot) == 0.0
+    # Le taux margin reste non nul à 1× : c'est le montant emprunté qui est 0
+    # sur un long, pas le taux (un short en a besoin).
+    assert venue_borrow_rate(0.00072, margin_1x) == pytest.approx(0.00072)
+
+
 def test_backtest_and_live_close_same_net_pnl():
     """Même trade (entrée/sortie/taille/frais/durée) ⇒ même PnL net."""
     pnl_bt = _backtest_close_pnl()
     pnl_live = _live_close_pnl()
+    from app.core.bot_identity import Venue
+    _v = Venue(name="margin-isolated", market_type="margin",
+               margin_mode="isolated", max_leverage=3)
     pnl_ref, _, _ = close_pnl("long", ENTRY, EXIT, SIZE, ENTRY * SIZE,
-                              FEE_RATE, BORROW_RATE, HOURS_HELD, PERIODS)
+                              FEE_RATE, BORROW_RATE, HOURS_HELD, PERIODS,
+                              venue=_v)
     # Le chemin live mesure la durée par horloge → tolérance d'une seconde
     # d'intérêts ; tout le reste doit être identique.
     assert pnl_bt == pytest.approx(pnl_ref, abs=1e-9)
@@ -280,7 +323,11 @@ def test_spot_venue_charges_no_borrow_on_the_live_path():
     """
     pnl_margin = _live_close_pnl(margin=True)
     pnl_spot   = _live_close_pnl(margin=False)
-    expected_borrow = borrow_cost(ENTRY * SIZE, BORROW_RATE, HOURS_HELD, PERIODS)
+    # Live margin du harness est à levier 3 : un long n'emprunte que 2/3.
+    from app.core.execution import borrowed_notional
+    expected_borrow = borrow_cost(
+        borrowed_notional(ENTRY * SIZE, "long", max_leverage=3),
+        BORROW_RATE, HOURS_HELD, PERIODS)
 
     assert expected_borrow > 0
     assert pnl_spot > pnl_margin

@@ -24,11 +24,12 @@ from app.core.trailing import TrailingStopManager
 
 # Helpers partagés (ARCH-003 : centralisés dans position_open_mixin.py)
 from app.live.position_open_mixin import _apply_trail_override
+from app.live.protocols import LiveHost
 
 logger = logging.getLogger(__name__)
 
 
-class PositionRestoreMixin:
+class PositionRestoreMixin(LiveHost):
     """Restauration après redémarrage (voir docstring module)."""
 
     # ── Restauration au démarrage ──────────────────────────────────────────
@@ -47,20 +48,32 @@ class PositionRestoreMixin:
         n = len(positions)
         logger.warning(f"[Reprise] {n} position(s) trouvée(s) en BDD — restauration...")
 
-        # En mode live : vérifier les positions réelles sur l'exchange
+        # En mode live : vérifier les positions réelles sur l'exchange.
+        # L-03 : fetch_positions() est l'API dérivés. Sur spot/margin OKX
+        # une liste vide n'est pas « aucune position » — c'est « on ne sait
+        # pas ». On ne l'utilise donc que pour les perps.
         exchange_symbols_with_pos = None
-        if not self.cfg["trading"].get("paper_mode"):
+        if not self.cfg["trading"].get("paper_mode", True):
             try:
-                ex_positions = self.exchange.fetch_positions() or []
-                exchange_symbols_with_pos = set()
-                for ep in ex_positions:
-                    contracts = float(ep.get("contracts") or ep.get("size") or 0)
-                    if contracts > 0:
-                        exchange_symbols_with_pos.add(ep.get("symbol", ""))
-                logger.info(
-                    f"[Reprise] {len(exchange_symbols_with_pos)} position(s) active(s) "
-                    f"sur l'exchange : {exchange_symbols_with_pos}"
-                )
+                from app.core.bot_identity import resolve_venue
+                _v = resolve_venue(self.cfg)
+                if getattr(_v, "market_type", "") == "perp":
+                    ex_positions = self.exchange.fetch_positions() or []
+                    exchange_symbols_with_pos = set()
+                    for ep in ex_positions:
+                        contracts = float(ep.get("contracts") or ep.get("size") or 0)
+                        if contracts > 0:
+                            exchange_symbols_with_pos.add(ep.get("symbol", ""))
+                    logger.info(
+                        f"[Reprise] {len(exchange_symbols_with_pos)} position(s) "
+                        f"perp active(s) : {exchange_symbols_with_pos}"
+                    )
+                else:
+                    logger.info(
+                        f"[Reprise] venue {getattr(_v, 'market_type', '?')} : "
+                        f"pas de détection de fantômes via fetch_positions — "
+                        f"toutes les positions BDD sont restaurées."
+                    )
             except Exception as _ep_err:
                 logger.warning(
                     f"[Reprise] Impossible de vérifier les positions exchange : {_ep_err} "
@@ -71,17 +84,28 @@ class PositionRestoreMixin:
             pos_id = pos["id"]
             symbol = pos["symbol"]
 
-            # Écarter les positions fantômes (absentes de l'exchange)
+            # L-03 / L-04 : un désaccord n'est pas une preuve. On marque
+            # orphelin et on restaure — une suppression est irréversible.
             if (exchange_symbols_with_pos is not None
-                    and not self.cfg["trading"].get("paper_mode")
+                    and not self.cfg["trading"].get("paper_mode", True)
                     and symbol not in exchange_symbols_with_pos):
                 logger.warning(
                     f"[Reprise] Position {pos_id} ({symbol}) absente de l'exchange "
-                    f"— ignorée (probablement clôturée hors-bot)."
+                    f"— marquée orpheline, conservée (pas de suppression)."
                 )
-                with session_scope(self.SessionLocal) as _sess:
-                    delete_open_position(_sess, pos_id)
-                continue
+                pos["_orphaned"] = True
+                notif = getattr(self, "notif", None)
+                if notif is not None:
+                    try:
+                        notif.send(
+                            f"⚠️ Reprise : `{symbol}` absente de l'exchange "
+                            f"— position {pos_id} conservée (orpheline).",
+                            async_=False,
+                        )
+                    except Exception as _nerr:
+                        logger.error(
+                            f"[Reprise] notification orpheline {symbol} KO : {_nerr}"
+                        )
 
             # Validate entry price is sane
             if pos.get("entry", 0) <= 0:
@@ -97,7 +121,7 @@ class PositionRestoreMixin:
             # crashé entre l'exécution de l'ordre et la persistance, la BDD
             # peut contenir un prix d'entrée pré-exécution ou une taille non
             # ajustée du remplissage partiel → stops/PnL faux à la reprise.
-            if not self.cfg["trading"].get("paper_mode") and pos.get("order_id"):
+            if not self.cfg["trading"].get("paper_mode", True) and pos.get("order_id"):
                 self._verify_restored_position(pos)
 
             # Validate stop is not already breached (if we can get a ticker)
@@ -137,7 +161,7 @@ class PositionRestoreMixin:
                 f"| strat={pos['strategy']}"
             )
 
-        if not self.cfg["trading"].get("paper_mode"):
+        if not self.cfg["trading"].get("paper_mode", True):
             self._sync_spot_balance()
 
         self.notif.send(

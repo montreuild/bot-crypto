@@ -64,12 +64,18 @@ variables), pas des formules.
    - HTTPS (`FORCE_HTTPS=1` + reverse proxy TLS) et CORS adapté au domaine
      via la variable d'env `ALLOWED_ORIGINS` (liste séparée par des virgules,
      ex. `ALLOWED_ORIGINS=https://bot.mondomaine.com` — défaut : localhost).
-   - **`X-Forwarded-For`** n'est désormais honoré que si la connexion provient
-     d'un proxy déclaré dans `TRUSTED_PROXIES` (IP séparées par des virgules,
-     ex. `TRUSTED_PROXIES=127.0.0.1`). **Derrière un reverse proxy, définissez
-     cette variable** avec l'IP du proxy ; sinon le header est ignoré
-     (anti-spoofing : un client distant ne peut plus se faire passer pour
-     localhost et contourner l'auth quand `web.api_key` est vide).
+   - **`X-Forwarded-For`** n'est honoré (auth **et** rate-limit, S-02) que si
+     la connexion provient d'un proxy déclaré dans `TRUSTED_PROXIES` (IP
+     séparées par des virgules, ex. `TRUSTED_PROXIES=127.0.0.1`). **Derrière
+     un reverse proxy, définissez cette variable** ; sinon le header est
+     ignoré (anti-spoofing).
+   - WebSocket : cookie HttpOnly `api_key` (chemin nominal). `?api_key=` n'est
+     plus honoré (SEC-02). Un client sans cookie obtient un jeton éphémère via
+     `POST /api/ws/ticket` (authentifié, usage unique, 30 s).
+   - **`METRICS_TOKEN`** (ou `web.api_key`) : requis pour `GET /metrics` dès
+     qu'une des deux est posée. Configurer `bearer_token` côté Prometheus.
+   - Cookie `api_key` : `HttpOnly; SameSite=Lax` et `Secure` dès que
+     `x-forwarded-proto: https` (TLS terminé devant Next).
 4. **Supervision** : activer Telegram (`notifications.telegram_enabled`),
    le service systemd avec `Restart=on-failure` (déjà dans `deploy/`), et le
    healthcheck `/health` dans un monitoring externe (UptimeRobot ou cron).
@@ -82,7 +88,7 @@ variables), pas des formules.
 |---|---|---|
 | ~~Haute~~ ✅ fait | **Idempotence des ordres** | `create_order` attache un `newClientOrderId` stable entre tentatives ; après un timeout réseau, l'ordre est recherché par `origClientOrderId` et réutilisé s'il existe (pas de doublon). Tests : `test_order_idempotency.py`. |
 | ~~Haute~~ ✅ fait | **Réconciliation des frais/emprunts réels** | Après chaque clôture live, frais du fill (fetch_my_trades) et intérêts margin réels remplacent les estimations dans le PnL/BDD ; warning si écart > 5 %. Opt-out `trading.reconcile_real_costs`. Tests : `test_reconcile_costs.py`. |
-| ~~Haute~~ ✅ fait | **Gate Deflated Sharpe au naissance** | `app/core/deflated_sharpe.py` (López de Prado 2014) câblé dans `beats_baseline()` (opt_scoring.py). Corrige le biais de sélection multiple : une stratégie optimisée avec 50 essais et Sharpe 0.3 est refusée à l'apply. Activable via `optimizer.deflated_sharpe_gate` (défaut `true`). Tests : `test_deflated_sharpe_gate.py` (12 tests). |
+| ~~Haute~~ ✅ fait | **Gate Deflated Sharpe au naissance** | `opt_scoring.deflated_sharpe_ratio` (Bailey & López de Prado 2014) dans `beats_baseline()`. `app/core/deflated_sharpe.py` (heuristique) retiré (X-01). Activable via `optimizer.deflated_sharpe_gate` (défaut `true`). Tests : `test_deflated_sharpe_gate.py`. |
 | ~~Haute~~ ✅ fait | **Overfitting gate ML** | `app/ml/overfitting_gate.validate_model_quality` câblé dans `policy.maybe_refresh`. Enrichit les diagnostics avec un `level` (block/warn/good/strong) exposé dans `ArtifactRef.to_dict().overfitting_gate` et affiché via `OverfittingGateBadge` dans `/models`. |
 | ~~Haute~~ ✅ fait | **Backtest realistic_risk** | `app/engine/backtest_risk_gate.py` réplique les 6 circuit breakers du `RiskGate` live en backtest (pertes consécutives, DD journalier par slot, trades/jour, DD journalier global, DD depuis le pic, volatility brake). Lit les mêmes clés de config que le gate live (`trading.daily_drawdown_limit`, `trading.max_drawdown_global`, `risk.*`) — sans quoi backtest et live ne se comparent pas. Opt-in via `realistic_risk=True`. Tests : `test_backtest_risk_gate.py` (21 tests). |
 | ~~Haute~~ ✅ fait | **Routes de lecture non authentifiées** | `GET /api/risk`, `GET /api/risk/diagnostics` et `GET /api/ws/status` étaient servies sans `verify_api_key` — la première exposant capital, enveloppes et risque engagé à un visiteur anonyme, alors que l'écriture (`POST /api/risk/envelopes`) était protégée. Les trois sont fermées, et `tests/test_api_auth_invariant.py` fait échouer la suite si une route de `app/api/routes/` est déclarée sans authentification. |
@@ -107,9 +113,10 @@ variables), pas des formules.
 - **Ouverture atomique** : réservation de slot sous verrou + rollback si
   l'ordre échoue (la réservation est correctement supprimée par le `except`).
 - **Sécurité API** : auth `X-API-Key` en `hmac.compare_digest`, fallback
-  localhost-only sans clé, rate-limit 60/min, `/api/config` redacte les
-  sections `exchange` et `notifications`, validation des noms de stratégies
-  (anti-injection de module), whitelist d'exchanges.
+  localhost-only sans clé, rate-limit 300/min **par IP cliente** (S-02 :
+  `TRUSTED_PROXIES`), `/metrics` authentifié (S-01), `/api/config` redacte
+  les sections `exchange` et `notifications`, validation des noms de
+  stratégies (anti-injection de module), whitelist d'exchanges.
 - **Cohérence backtest/live des paramètres** : `resolve_strategy_params` est
   la source unique des params (base YAML + overlay optimizer) des deux côtés.
 

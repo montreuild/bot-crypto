@@ -76,11 +76,11 @@ class Strategy(BaseStrategy):
         self._sig: Optional[Dict[int, dict]] = None
         self._close_ref: Optional[np.ndarray] = None
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         p = (params or {}).get(self.name, {})
         return max(int(p.get("ema_trend", 200)) + 20, 220)
 
-    def _p(self, params: dict = None) -> Dict[str, Any]:
+    def _p(self, params: dict | None = None) -> Dict[str, Any]:
         p = dict(self.fixed_params)
         for k, v in ((params or {}).get(self.name, {}) or {}).items():
             if k in p and v is not None:
@@ -210,7 +210,7 @@ class Strategy(BaseStrategy):
         ref = self._close_ref
         return 0 <= idx < len(ref) and abs(float(df["close"][-1]) - ref[idx]) < 1e-9
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = self._p(params)
         if len(df) < self.min_bars_required(params):

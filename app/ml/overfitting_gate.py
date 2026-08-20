@@ -19,9 +19,32 @@ logger = logging.getLogger(__name__)
 
 # ── Seuils ──────────────────────────────────────────────────────────────────
 AUC_RANDOM = 0.50        # performance aléatoire (classifier binaire)
-AUC_WEAK = 0.55          # edge faible mais détectable (à surveiller)
-AUC_GOOD = 0.60          # edge acceptable pour production
+# M-05 : AUC_WEAK est AUSSI le plancher de promotion (policy.auc_floor).
+# AUC_GOOD n'est qu'un libellé de qualité — il ne bloque pas la promotion.
+AUC_WEAK = 0.55          # edge faible mais détectable = plancher de promotion
+AUC_GOOD = 0.60          # libellé « acceptable pour production » (pas un gate)
 AUC_STRONG = 0.70        # edge solide
+
+
+def auc_hanley_ci_low(auc: float, n: int, z: float = 1.96) -> float:
+    """Borne basse 95 % (Hanley–McNeil, classes équilibrées — ML-01).
+
+    Sans scores bruts on ne peut pas faire DeLong ; cette approximation
+    suffit à refuser une AUC ponctuelle statistiquement compatible avec
+    le hasard.
+    """
+    if n <= 1 or auc <= 0.0 or auc >= 1.0:
+        return float(auc)
+    n1 = n0 = max(n / 2.0, 1.0)
+    q1 = auc / (2.0 - auc)
+    q2 = 2.0 * auc * auc / (1.0 + auc)
+    var = (
+        auc * (1.0 - auc)
+        + (n1 - 1.0) * (q1 - auc * auc)
+        + (n0 - 1.0) * (q2 - auc * auc)
+    ) / (n1 * n0)
+    se = var ** 0.5 if var > 0.0 else 0.0
+    return max(0.0, float(auc) - z * se)
 
 
 def validate_model_quality(auc_oos: float,
@@ -54,10 +77,12 @@ def validate_model_quality(auc_oos: float,
     """
     # Seuil minimal d'échantillons OOS (10 trades minimum — cf. MIN_SIGNIFICANT_TRADES)
     MIN_SAMPLES = 10
+    ci_low = auc_hanley_ci_low(float(auc_oos), int(n_oos_samples))
     if n_oos_samples < MIN_SAMPLES:
         return {
             'ok': False,
             'auc': auc_oos,
+            'auc_ci_low': ci_low,
             'level': 'block',
             'reason': (
                 f"Pas assez d'échantillons OOS ({n_oos_samples} < {MIN_SAMPLES}) "
@@ -113,6 +138,26 @@ def validate_model_quality(auc_oos: float,
             'min_significant_samples': MIN_SAMPLES,
         }
 
+    # ML-01 : une AUC ponctuelle ≥ 0,55 dont l'IC 95 % recouvre 0,50 n'est
+    # pas distinguable du hasard — bloquer (borne basse < aléatoire).
+    if ci_low < AUC_RANDOM:
+        logger.warning(
+            f"[ML Overfitting Gate] {strategy_name} AUC OOS = {auc_oos:.3f} "
+            f"mais IC95 bas = {ci_low:.3f} < {AUC_RANDOM} "
+            f"(n={n_oos_samples}) — MODÈLE BLOQUÉ."
+        )
+        return {
+            'ok': False,
+            'auc': auc_oos,
+            'auc_ci_low': ci_low,
+            'level': 'block',
+            'reason': (
+                f"AUC OOS {auc_oos:.3f} (IC95 bas {ci_low:.3f}) "
+                f"indistinguable du hasard — n={n_oos_samples}"
+            ),
+            'min_significant_samples': MIN_SAMPLES,
+        }
+
     # AUC ≥ 0.55 < 0.60 → edge faible mais acceptable → warning, ok=True
     if auc_oos < AUC_GOOD:
         logger.info(
@@ -123,6 +168,7 @@ def validate_model_quality(auc_oos: float,
         return {
             'ok': True,
             'auc': auc_oos,
+            'auc_ci_low': ci_low,
             'level': 'good',
             'reason': f"AUC OOS {auc_oos:.3f} — edge acceptable (faible)",
             'min_significant_samples': MIN_SAMPLES,
@@ -137,6 +183,7 @@ def validate_model_quality(auc_oos: float,
         return {
             'ok': True,
             'auc': auc_oos,
+            'auc_ci_low': ci_low,
             'level': 'good',
             'reason': f"AUC OOS {auc_oos:.3f} — edge bon",
             'min_significant_samples': MIN_SAMPLES,
@@ -150,6 +197,7 @@ def validate_model_quality(auc_oos: float,
     return {
         'ok': True,
         'auc': auc_oos,
+        'auc_ci_low': ci_low,
         'level': 'strong',
         'reason': f"AUC OOS {auc_oos:.3f} — edge fort (vérifier pas d'overfitting)",
         'min_significant_samples': MIN_SAMPLES,

@@ -1,6 +1,7 @@
 # Audit — Moteur de backtest
 
-> Périmètre : `app/engine/backtest.py` (1 809 lignes), `backtest_risk_gate.py`,
+> Périmètre : `app/engine/backtest.py` (~686 L, `run()`),
+> `backtest_result.py`, `position_lifecycle.py` (X-03 / #244), `backtest_risk_gate.py`,
 > `walk_forward.py`, `monte_carlo.py`, `forward_test.py`, `regime_stress_test.py`,
 > `app/core/is_oos.py`, `app/api/routes/backtest.py`.
 >
@@ -11,22 +12,24 @@
 
 ## Tableau de bord
 
-| # | Sévérité | Titre | Fichier |
-|---|----------|-------|---------|
-| B-01 | 🔴 Critique | Les stops et TP sont remplis au niveau, jamais au gap | `backtest.py:928-944` |
-| B-02 | 🔴 Critique | Une seule position à la fois : le backtest ne simule pas le portefeuille | `backtest.py:1611-1613` |
-| B-03 | 🟠 Majeur | Walk-forward : `timeframe` jamais transmis au `Backtester` | `walk_forward.py:103-104` |
-| B-04 | 🟠 Majeur | Walk-forward ne réoptimise rien — ce n'est pas un walk-forward | `walk_forward.py:82-110` |
-| B-05 | 🟠 Majeur | `min_notional` vérifié avant `partial_fill`, jamais après | `backtest.py:1184-1210` |
-| B-06 | 🟠 Majeur | Le pyramidage ignore la courbe de dé-risquage et le circuit breaker | `backtest.py:1022-1050` |
-| B-07 | 🟡 Moyen | `realistic_risk` désactivé par défaut : les circuit breakers ne sont jamais simulés | `backtest.py:563,581` |
-| B-08 | 🟡 Moyen | Aucun embargo entre IS et OOS | `core/is_oos.py:29-40` |
-| B-09 | 🟡 Moyen | Trois constantes de warmup indépendantes (210 / 220 / 250) | 3 fichiers |
-| B-10 | 🟡 Moyen | Clôture de fin de série sans spread ni frais taker | `backtest.py:1643-1645` |
-| B-11 | 🟡 Moyen | `capital_before` incohérent après sorties partielles | `backtest.py:788-790` |
-| B-12 | 🔵 Mineur | `rejected_notional` agrège trois causes distinctes | `backtest.py:1154,1186,1202` |
-| B-13 | 🔵 Mineur | Buy & Hold démarre au `close[warmup]`, le bot à `open[warmup+1]` | `backtest.py:1723` |
-| B-14 | 🔵 Mineur | Walk-forward renvoie l'intégralité des trades de chaque fold | `walk_forward.py:126-127` |
+| # | Sévérité | Titre | Fichier | État au 18/08 |
+|---|----------|-------|---------|---------------|
+| B-01 | 🔴 Critique | Les stops et TP sont remplis au niveau, jamais au gap | `backtest.py:928-944` | ✅ résolu — fill à l'open (`gap`) |
+| B-02 | 🔴 Critique | Une seule position à la fois : le backtest ne simule pas le portefeuille | `backtest.py:1611-1613` | ✅ + R-02 — `RiskLedger.reserve` / `release` |
+| B-03 | 🟠 Majeur | Walk-forward : `timeframe` jamais transmis au `Backtester` | `walk_forward.py:103-104` | ✅ résolu |
+| B-04 | 🟠 Majeur | Walk-forward ne réoptimise rien — ce n'est pas un walk-forward | `walk_forward.py:82-110` | ✅ honnête — `kind: stability`, `reoptimizes: false` (pas de re-opt par fold) |
+| B-05 | 🟠 Majeur | `min_notional` vérifié avant `partial_fill`, jamais après | `backtest.py:1184-1210` | ✅ résolu |
+| B-06 | 🟠 Majeur | Le pyramidage ignore la courbe de dé-risquage et le circuit breaker | `backtest.py:1022-1050` | ✅ résolu — `can_slot_trade` avant scale-in |
+| B-07 | 🟡 Moyen | `realistic_risk` désactivé par défaut : les circuit breakers ne sont jamais simulés | `backtest.py:563,581` | ✅ résolu — `True` sur opt / WF / FT |
+| B-08 | 🟡 Moyen | Aucun embargo entre IS et OOS | `core/is_oos.py:29-40` | ✅ résolu — `purge_bars` / `embargo_bars` |
+| B-09 | 🟡 Moyen | Trois constantes de warmup indépendantes (210 / 220 / 250) | 3 fichiers | ✅ résolu — `WARMUP_BARS_DEFAULT` |
+| B-10 | 🟡 Moyen | Clôture de fin de série sans spread ni frais taker | `backtest.py:1643-1645` | ✅ résolu |
+| B-11 | 🟡 Moyen | `capital_before` incohérent après sorties partielles | `backtest.py:788-790` | ✅ résolu |
+| B-12 | 🔵 Mineur | `rejected_notional` agrège trois causes distinctes | `backtest.py:1154,1186,1202` | ✅ résolu — compteurs séparés |
+| B-13 | 🔵 Mineur | Buy & Hold démarre au `close[warmup]`, le bot à `open[warmup+1]` | `backtest.py:1723` | ✅ résolu — `open[warmup+1]` |
+| B-14 | 🔵 Mineur | Walk-forward renvoie l'intégralité des trades de chaque fold | `walk_forward.py:126-127` | ✅ résolu — résumé fold seulement |
+
+> Détail : [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
 
 ---
 

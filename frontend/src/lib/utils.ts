@@ -5,31 +5,108 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** U-05 : extraire un message d'erreur sans `catch (e: any)`. */
+export function errorMessage(err: unknown, fallback = 'Erreur inconnue'): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === 'string' && err) return err;
+  if (err && typeof err === 'object' && 'message' in err) {
+    const m = (err as { message?: unknown }).message;
+    if (typeof m === 'string' && m) return m;
+  }
+  return fallback;
+}
+
 // ── Formatage ───────────────────────────────────────────────────────────────
 
+export function formatMoney(
+  value: number,
+  currency = 'USD',
+  opts: { decimals?: number; sign?: boolean; locale?: string } = {},
+): string {
+  const { decimals = 2, sign = false, locale = 'fr-FR' } = opts;
+  const code = (currency || 'USD').replace('USDC', 'USD').replace('USDT', 'USD');
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: code.length === 3 ? code : 'USD',
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+      signDisplay: sign ? 'always' : 'auto',
+    }).format(value);
+  } catch {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency', currency: 'USD',
+      minimumFractionDigits: decimals, maximumFractionDigits: decimals,
+      signDisplay: sign ? 'always' : 'auto',
+    }).format(value);
+  }
+}
+
+/** @deprecated Préférer ``formatMoney(value, quote_currency)``. */
 export function formatUSD(value: number, opts: { decimals?: number; sign?: boolean } = {}): string {
-  const { decimals = 2, sign = false } = opts;
-  const formatter = new Intl.NumberFormat('en-US', {
-    style: 'currency', currency: 'USD',
-    minimumFractionDigits: decimals, maximumFractionDigits: decimals,
-    signDisplay: sign ? 'always' : 'auto',
-  });
-  return formatter.format(value);
+  return formatMoney(value, 'USD', opts);
+}
+
+/** Source de devise : cost_model backtest, enveloppe live, ou symbole. */
+export type CurrencySource = {
+  quote_currency?: string | null;
+  currency?: string | null;
+  symbol?: string | null;
+  cost_model?: { quote_currency?: string | null } | null;
+  /** Objet `{currency}` (étude) ou montant numérique (RiskVenue.envelope). */
+  envelope?: { currency?: string | null } | number | null;
+};
+
+/** Infère EUR/GBP depuis un ticker actions, sinon le quote d'une paire. */
+export function inferQuoteFromSymbol(symbol?: string | null): string {
+  if (!symbol) return '';
+  const s = symbol.toUpperCase();
+  if (/\.(PA|AS|BR|DE|MC|MI|MA)$/.test(s)) return 'EUR';
+  if (s.endsWith('.L')) return 'GBP';
+  const slash = s.lastIndexOf('/');
+  if (slash >= 0) {
+    const q = s.slice(slash + 1);
+    if (q === 'USDC' || q === 'USDT') return 'USD';
+    if (q.length === 3) return q;
+  }
+  return '';
+}
+
+/** UX-01 : devise réelle du payload, pas USD en dur. */
+export function quoteCurrency(
+  src?: CurrencySource | string | null,
+  fallback = 'USD',
+): string {
+  if (typeof src === 'string') {
+    return inferQuoteFromSymbol(src) || fallback;
+  }
+  const env = src?.envelope;
+  const envCcy = env && typeof env === 'object' ? env.currency : undefined;
+  const fromPayload =
+    src?.quote_currency
+    || src?.currency
+    || src?.cost_model?.quote_currency
+    || envCcy
+    || inferQuoteFromSymbol(src?.symbol);
+  return fromPayload || fallback;
 }
 
 export function formatPct(value: number, decimals = 2, sign = true): string {
-  const formatted = value.toFixed(decimals);
-  return sign && value > 0 ? `+${formatted}%` : `${formatted}%`;
+  const formatted = new Intl.NumberFormat('fr-FR', {
+    minimumFractionDigits: decimals, maximumFractionDigits: decimals,
+  }).format(value);
+  const body = `${formatted} %`;
+  return sign && value > 0 ? `+${body}` : body;
 }
 
 export function formatNumber(value: number, decimals = 2): string {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('fr-FR', {
     minimumFractionDigits: decimals, maximumFractionDigits: decimals,
   }).format(value);
 }
 
 export function formatCompact(value: number): string {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('fr-FR', {
     notation: 'compact', maximumFractionDigits: 1,
   }).format(value);
 }
@@ -88,10 +165,10 @@ export function parseSlotKey(slotKey: string): { strategy: string; tf: string; s
 // ── Cycle de vie ────────────────────────────────────────────────────────────
 
 export const LIFECYCLE_COLORS: Record<string, { bg: string; text: string; label: string; icon: string }> = {
-  candidat: { bg: 'bg-amber-500/10', text: 'text-amber-400', label: 'Candidat', icon: '○' },
-  essai: { bg: 'bg-cyan-500/10', text: 'text-cyan-400', label: 'Essai', icon: '◐' },
-  actif: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', label: 'Actif', icon: '●' },
-  retire: { bg: 'bg-red-500/10', text: 'text-red-400', label: 'Retiré', icon: '✕' },
+  candidat: { bg: 'bg-amber-500/10', text: 'text-amber-800 dark:text-amber-400', label: 'Candidat', icon: '○' },
+  essai: { bg: 'bg-cyan-500/10', text: 'text-cyan-800 dark:text-cyan-400', label: 'Essai', icon: '◐' },
+  actif: { bg: 'bg-emerald-500/10', text: 'text-emerald-800 dark:text-emerald-400', label: 'Actif', icon: '●' },
+  retire: { bg: 'bg-red-500/10', text: 'text-red-700 dark:text-red-400', label: 'Retiré', icon: '✕' },
 };
 
 export function lifecycleStyle(state: string) {

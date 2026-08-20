@@ -24,7 +24,7 @@ Découpage de `app/` :
 | `app/core/` | 59 | primitives partagées (risque, exécution, indicateurs, SMC, données) |
 | `app/strategies/` | 45 | stratégies |
 | `app/api/` | 27 | FastAPI (20 routers + middleware/helpers/state/schemas) |
-| `app/engine/` | 18 | backtest, optimiseur, scanner, walk-forward |
+| `app/engine/` | 20 | backtest + result + lifecycle, optimiseur, scanner, walk-forward |
 | `app/live/` | 15 | trader live et ses mixins |
 | `app/ml/` | 22 | apprentissage, registre, politique de promotion |
 
@@ -40,13 +40,13 @@ raison écrite.
 
 | # | Sévérité | Titre |
 |---|----------|-------|
-| X-01 | 🟠 Majeur | Six modules écrits, testés… et jamais appelés en production |
+| X-01 | 🟠 Majeur | Six modules écrits, testés… et jamais appelés en production | ✅ résolu — câblés ou `core/deflated_sharpe.py` supprimé |
 | X-02 | 🟠 Majeur | 80 % de duplication entre `scoring_statistique_opus_v4` et `_v5` |
-| X-03 | 🟡 Moyen | Trois fichiers de plus de 1 200 lignes portent le cœur du système |
-| X-04 | 🟡 Moyen | Deux implémentations du Deflated Sharpe, deux du Monte-Carlo |
+| X-03 | 🟡 Moyen | Trois fichiers de plus de 1 200 lignes portent le cœur du système | ✅ backtest découpé ; restent `optimizer_search.py` et `smart_money_signals.py` |
+| X-04 | 🟡 Moyen | Deux implémentations du Deflated Sharpe, deux du Monte-Carlo | ✅ `_sf` unifié ; DSR = Bailey ; MC double usage légitime |
 | X-05 | 🟡 Moyen | Constantes dupliquées malgré des modules de source unique |
 | X-06 | 🟡 Moyen | 45 stratégies dont 12 sont des variantes de 4 familles |
-| X-07 | 🔵 Mineur | Le changelog fait 244 Ko et l'audit ne peut pas s'y fier |
+| X-07 | 🔵 Mineur | Le changelog fait 244 Ko et l'audit ne peut pas s'y fier | ✅ bandeau → `audit/15` |
 
 ---
 
@@ -58,12 +58,12 @@ coûteuse : elle donne l'illusion qu'une garantie existe.
 
 | Module | Taille | État | Détail |
 |---|---|---|---|
-| `frontend/src/lib/i18n.tsx` | 97 l. | **zéro consommateur** | `useI18n` n'est référencé que par lui-même (U-01) |
-| `engine/backtest_risk_gate.py` | 435 l. | jamais activé | `realistic_risk=False` sur tous les appelants réels (B-07) |
-| `engine/opt_scoring.deflated_sharpe_ratio` | ~50 l. | mort | la version câblée est celle de `core/deflated_sharpe.py` (F-07) |
-| `Backtester.run_dual_pass` | ~30 l. | tests seuls | conçu pour séparer « bot promouvable » et « stratégie valable », appelé par aucun chemin d'optimisation (O-04) |
-| `Envelope.venue_envelope` | — | jamais lu | renseigné, jamais confronté à un plafond (F-05) |
-| `ml/overfitting_gate.py` | 190 l. | diagnostic seul | appelé **après** la décision de `decide_gate`, n'influence rien (M-05) |
+| `frontend/src/lib/i18n.tsx` | — | ✅ branché | U-01 — nav + sélecteur FR/EN |
+| `engine/backtest_risk_gate.py` | — | ✅ câblé | `realistic_risk=True` sur opt / WF / FT (B-07) |
+| `opt_scoring.deflated_sharpe_ratio` | — | ✅ câblé | Bailey & LdP ; `core/deflated_sharpe.py` (heuristique) **supprimé** |
+| `Backtester.run_dual_pass` | — | ✅ câblé | `compute_jobs` / `/api/backtest` |
+| `Envelope.venue_envelope` | — | ✅ lu | F-05 + R-02 (`RiskLedger`) |
+| `ml/overfitting_gate.py` | — | ✅ diagnostic | `auc_floor=AUC_WEAK` (M-05) ; overlap invalide le frozen (M-06) |
 
 À quoi s'ajoute une catégorie voisine : **du code qui s'exécute mais ne
 conclut rien**.
@@ -103,13 +103,18 @@ exactement ce que font `smart_money_aux` / `smart_money_params` /
 
 ## X-03 🟡 Trois fichiers concentrent le cœur
 
-| Lignes | Fichier | Ce qu'il porte |
+| Lignes (audit) | Fichier | État #244 |
 |---|---|---|
-| 1 809 | `app/engine/backtest.py` | `BacktestResult` + `Backtester` (cycle de vie complet d'une position) |
-| 1 312 | `app/engine/optimizer_search.py` | 3 méthodes de recherche + gel de paramètres + pool de process |
-| 1 212 | `app/strategies/smart_money_signals.py` | génération de signaux SMC |
-| 1 559 | `frontend/src/components/views/optimizer-view.tsx` | vue optimiseur |
-| 1 488 | `frontend/src/app/lab/page.tsx` | 5 onglets du Laboratoire |
+| 1 809 → ~686 | `app/engine/backtest.py` | `run()` + diagnostics ; import `Backtester, BacktestResult` inchangé |
+| — → ~410 | `app/engine/backtest_result.py` | métriques + sérialisation |
+| — → ~646 | `app/engine/position_lifecycle.py` | mixin : `_close_at` / `_try_enter` / scale-in (`RiskLedger`) |
+| 1 312 → ~817 | `app/engine/optimizer_search.py` | grid/random/pool ; mixins freeze + bayesian |
+| — → ~184 | `app/engine/opt_freeze.py` | gel à faible impact |
+| — → ~328 | `app/engine/opt_bayesian.py` | Optuna TPE / heuristique |
+| 1 212 → ~592 | `app/strategies/smart_money_signals.py` | `_signal_at` / score |
+| — → ~506 | `app/strategies/smart_money_setups.py` | checkers + `_SignalCtx` |
+| 1 559 → ~1 015 | `optimizer-view.tsx` | `JobCard` / `LiveProgress` extraits |
+| 1 488 → ~175 | `app/lab/page.tsx` | shell + `dynamic` ; onglet Backtest dans `backtest-view.tsx` |
 
 Ce ne sont pas des fourre-tout : chacun a une cohérence interne réelle et une
 documentation d'intention dense. Mais leur taille a un coût mesurable dans cet
@@ -117,15 +122,16 @@ audit : les constats **B-05** (`min_notional` vérifié avant `partial_fill`) et
 **B-06** (le pyramidage échappe à quatre garde-fous) sont des divergences entre
 deux endroits **du même fichier**, séparés par 200 lignes.
 
-Découpages naturels de `backtest.py` :
+Découpages naturels de `backtest.py` — **faits** (#244) :
 
-- `BacktestResult` + `_group_metrics` → `backtest_result.py` (~330 lignes) ;
+- `BacktestResult` + `_group_metrics` → `backtest_result.py` ;
 - `_close_at` / `_close_partial_at` / `_manage_open_position` / `_try_enter` →
-  `position_lifecycle.py` (~600 lignes) — le pendant exact des mixins du live ;
-- `run()` + diagnostics → `backtest.py` (~500 lignes).
+  `position_lifecycle.py` — le pendant des mixins du live ;
+- `run()` + diagnostics → `backtest.py`.
 
-Le bénéfice n'est pas esthétique : il rend visible que `_try_enter` et la
-branche `scale_in` doivent partager leur calcul de risque.
+`_try_enter` et le scale-in passent tous deux par `RiskLedger.reserve`
+(R-02). `optimizer_search.py` et `smart_money_signals.py` sont découpés
+(voir [`17`](17-REVISION-2026-08-18.md)).
 
 ---
 
@@ -246,7 +252,7 @@ mécanisme qui les fasse échouer quand ils deviennent faux.
   l'architecture qui rend la question « pourquoi le live diverge-t-il ? »
   répondable.
 - **Compatibilité ascendante gérée explicitement** : ré-exports en fin de
-  module avec la raison écrite (`backtest.py:1800-1808`), alias
+  module (WF / MC après la classe `Backtester`, pour casser le cycle), alias
   `RiskManager = RiskGate`, `StrategyOptimizer = OptimizerSearchEngine`. Les
   refactorings n'ont pas cassé les appelants.
 - **Configuration découpée par responsabilité** (`config.yaml` → 5 fichiers

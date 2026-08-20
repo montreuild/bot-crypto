@@ -55,15 +55,44 @@ def load_oos_tracker() -> dict:
         return {}
 
 
-def _save_record(slot_key: str, record: dict) -> None:
+def _atomic_write(data: dict) -> None:
+    """Écriture atomique (tmp + os.replace) — D-05.
+
+    ``open(..., "w")`` tronque avant d'écrire : une interruption laissait un
+    JSON illisible, et ``load_oos_tracker`` renvoyait ``{}`` (perte silencieuse
+    de tous les slots). Le motif est celui de ``CandleStore._save``.
+    """
+    path = _path()
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def save_records(updates: dict) -> None:
+    """Fusionne ``updates`` et n'écrit qu'une fois (fin de passe forward-test)."""
+    if not updates:
+        return
     try:
         with _lock:
             data = load_oos_tracker()
-            data[slot_key] = record
-            with open(_path(), "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            data.update(updates)
+            _atomic_write(data)
     except Exception as e:
-        logger.warning(f"[oos_tracker] écriture KO ({slot_key}) : {e}")
+        logger.warning(f"[oos_tracker] écriture batch KO : {e}")
+
+
+def _save_record(slot_key: str, record: dict) -> None:
+    save_records({slot_key: record})
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

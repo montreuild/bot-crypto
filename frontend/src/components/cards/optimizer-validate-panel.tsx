@@ -20,11 +20,13 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { FlaskConical, Loader2, Dices, LineChart } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn, formatUSD } from '@/lib/utils';
+import {cn, formatUSD, errorMessage} from '@/lib/utils';
 import { useOptimizeValidate } from '@/hooks/use-api';
+import type { OptimizeValidateResult } from '@/types';
+import { MonteCarloPanel, type MonteCarloData } from '@/components/charts/monte-carlo-panel';
+import { formatPctPoints } from '@/lib/backend-normalizers';
 
 type Methode = 'monte_carlo' | 'regime';
 
@@ -42,42 +44,9 @@ const LIBELLE_REGIME: Record<string, string> = {
   unassigned: 'Hors régime identifié',
 };
 
-function ResultatMonteCarlo({ data }: { data: any }) {
-  const r = data?.result ?? {};
-  const cases = [
-    { label: 'P5 (pire 5 %)', valeur: r.p5 ?? r.percentile_5, monetaire: true },
-    { label: 'Médiane', valeur: r.p50 ?? r.median, monetaire: true },
-    { label: 'P95 (meilleur 5 %)', valeur: r.p95 ?? r.percentile_95, monetaire: true },
-    { label: 'Prob. de gain', valeur: r.prob_profit, pourcent: true },
-    { label: 'Prob. de ruine (−10 %)', valeur: r.prob_ruin_10pct, pourcent: true, alerte: true },
-  ];
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-      {cases.map((c) => {
-        const v = typeof c.valeur === 'number' ? c.valeur : null;
-        return (
-          <div key={c.label} className="p-2 rounded-md bg-card-hover/30">
-            <div className="text-[10px] text-dim uppercase">{c.label}</div>
-            <div className={cn(
-              'font-mono text-sm font-semibold',
-              v == null ? 'text-muted'
-                : c.alerte ? (v > 0.2 ? 'text-rose-400' : 'text-emerald-400')
-                : c.pourcent ? 'text-foreground' : tonPnl(v),
-            )}>
-              {v == null ? '—'
-                : c.pourcent ? `${(v * 100).toFixed(1)} %`
-                : formatUSD(v, { sign: true })}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ResultatRegimes({ data }: { data: any }) {
-  const parStrategie: Record<string, any> = data?.by_strategy ?? {};
-  const marche: Record<string, any> = data?.market ?? {};
+function ResultatRegimes({ data }: { data: OptimizeValidateResult }) {
+  const parStrategie = data?.by_strategy ?? {};
+  const marche = data?.market ?? {};
   const regimes = Object.keys(parStrategie);
 
   if (regimes.length === 0) {
@@ -98,6 +67,7 @@ function ResultatRegimes({ data }: { data: any }) {
               <th scope="col" className="py-1 px-2 text-left">Régime</th>
               <th scope="col" className="py-1 px-2 text-right">Trades</th>
               <th scope="col" className="py-1 px-2 text-right">PnL</th>
+              <th scope="col" className="py-1 px-2 text-right">Gain %</th>
               <th scope="col" className="py-1 px-2 text-right">Win rate</th>
               <th scope="col" className="py-1 px-2 text-right">PnL moyen</th>
               <th scope="col" className="py-1 px-2 text-right">Marché</th>
@@ -121,7 +91,10 @@ function ResultatRegimes({ data }: { data: any }) {
                   <td className={cn('py-1.5 px-2 text-right font-mono font-semibold', tonPnl(s.pnl))}>
                     {formatUSD(s.pnl, { sign: true })}
                   </td>
-                  <td className="py-1.5 px-2 text-right font-mono">{s.win_rate} %</td>
+                  <td className={cn('py-1.5 px-2 text-right font-mono', tonPnl(s.pnl_pct ?? 0))}>
+                    {formatPctPoints(s.pnl_pct)}
+                  </td>
+                  <td className="py-1.5 px-2 text-right font-mono">{formatPctPoints(s.win_rate)}</td>
                   <td className={cn('py-1.5 px-2 text-right font-mono', tonPnl(s.avg_pnl))}>
                     {formatUSD(s.avg_pnl, { sign: true })}
                   </td>
@@ -143,20 +116,30 @@ function ResultatRegimes({ data }: { data: any }) {
   );
 }
 
-export function OptimizerValidatePanel({ jobId, disabled }: { jobId: string; disabled?: boolean }) {
+export function OptimizerValidatePanel({
+  jobId,
+  disabled,
+  initialCapital,
+}: {
+  jobId: string;
+  disabled?: boolean;
+  initialCapital?: number;
+}) {
   const valider = useOptimizeValidate();
-  const [methode, setMethode] = useState<Methode | null>(null);
-  const [resultat, setResultat] = useState<any>(null);
+  const [pending, setPending] = useState<Methode | null>(null);
+  const [mc, setMc] = useState<OptimizeValidateResult | null>(null);
+  const [regime, setRegime] = useState<OptimizeValidateResult | null>(null);
 
   const lancer = async (m: Methode) => {
-    setMethode(m);
-    setResultat(null);
+    setPending(m);
     try {
       const res = await valider.mutateAsync({ jobId, method: m });
-      setResultat(res);
-    } catch (e: any) {
-      toast.error(`Validation impossible : ${e?.message ?? 'erreur inconnue'}`);
-      setMethode(null);
+      if (m === 'monte_carlo') setMc(res);
+      else setRegime(res);
+    } catch (e) {
+      toast.error(`Validation impossible : ${errorMessage(e) || 'erreur inconnue'}`);
+    } finally {
+      setPending(null);
     }
   };
 
@@ -168,45 +151,55 @@ export function OptimizerValidatePanel({ jobId, disabled }: { jobId: string; dis
         <CardTitle className="flex items-center gap-2 text-sm">
           <FlaskConical className="w-4 h-4 text-cyan-400" />
           Valider ce paramétrage
-          <Badge variant="info" className="text-[10px]">P1-4</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-xs text-muted">
           Rejoue les meilleurs paramètres pour éprouver leur robustesse. Chaque lancement relance
-          un backtest complet côté serveur.
+          un backtest complet côté serveur. Les résultats restent affichés une fois calculés.
         </p>
 
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm" variant="outline" disabled={disabled || enCours}
-            onClick={() => lancer('monte_carlo')}
-          >
-            {enCours && methode === 'monte_carlo'
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Dices className="w-3.5 h-3.5" />}
-            Monte-Carlo
-          </Button>
-          <Button
-            size="sm" variant="outline" disabled={disabled || enCours}
-            onClick={() => lancer('regime')}
-          >
-            {enCours && methode === 'regime'
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <LineChart className="w-3.5 h-3.5" />}
-            Par régime de marché
-          </Button>
-        </div>
+        {(!mc || !regime) && (
+          <div className="flex flex-wrap gap-2">
+            {!mc && (
+              <Button
+                size="sm" variant="outline" disabled={disabled || enCours}
+                onClick={() => lancer('monte_carlo')}
+              >
+                {enCours && pending === 'monte_carlo'
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Dices className="w-3.5 h-3.5" />}
+                Monte-Carlo
+              </Button>
+            )}
+            {!regime && (
+              <Button
+                size="sm" variant="outline" disabled={disabled || enCours}
+                onClick={() => lancer('regime')}
+              >
+                {enCours && pending === 'regime'
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <LineChart className="w-3.5 h-3.5" />}
+                Par régime de marché
+              </Button>
+            )}
+          </div>
+        )}
 
-        {resultat && (
+        {mc && (
+          <MonteCarloPanel
+            data={(mc.result ?? {}) as MonteCarloData}
+            initialCapital={initialCapital}
+            nTrades={mc.n_trades}
+          />
+        )}
+        {regime && (
           <div className="space-y-2 pt-1">
             <div className="text-[10px] uppercase tracking-wide text-dim">
-              {resultat.method === 'monte_carlo' ? 'Monte-Carlo' : 'Performance par régime'}
-              {typeof resultat.n_trades === 'number' && ` · ${resultat.n_trades} trades`}
+              Performance par régime
+              {typeof regime.n_trades === 'number' && ` · ${regime.n_trades} trades`}
             </div>
-            {resultat.method === 'monte_carlo'
-              ? <ResultatMonteCarlo data={resultat} />
-              : <ResultatRegimes data={resultat} />}
+            <ResultatRegimes data={regime} />
           </div>
         )}
       </CardContent>

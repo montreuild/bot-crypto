@@ -46,7 +46,7 @@ class Strategy(_AnalysisMixin, _PlansMixin, BaseStrategy):
         self._ana_res: Optional[dict] = None
         self._ana_aux: Optional[dict] = None
 
-    def _p(self, params: dict = None) -> Dict[str, Any]:
+    def _p(self, params: dict | None = None) -> Dict[str, Any]:
         p = dict(self.fixed_params)
         for k, v in ((params or {}).get(self.name, {}) or {}).items():
             if k in p and v is not None:

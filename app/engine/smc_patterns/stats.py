@@ -153,11 +153,11 @@ def transitions(journal: pl.DataFrame, tf: str, fenetre: int = 12,
                                     "n_suivi": pl.UInt32, "observe": pl.Float64,
                                     "attendu": pl.Float64, "lift": pl.Float64,
                                     "significatif": pl.Boolean})
-    n_barres = int(n_barres or (int(sous["bar"].max()) + 1))
+    n_barres = int(n_barres or (int(sous["bar"].max()) + 1))  # type: ignore[arg-type]
     # `group_by` rend une clé TUPLE : sans déballage, `de`/`vers` sortiraient
     # en list[str] et toute jointure ultérieure sur ces colonnes échouerait.
     barres_par_motif: Dict[str, np.ndarray] = {
-        (m[0] if isinstance(m, tuple) else m): np.sort(g["bar"].to_numpy())
+        str(m[0] if isinstance(m, tuple) else m): np.sort(g["bar"].to_numpy())
         for m, g in sous.group_by("motif")
     }
     lignes = []
@@ -183,7 +183,7 @@ def transitions(journal: pl.DataFrame, tf: str, fenetre: int = 12,
 # ─────────────────────────────────────────────────────────────────────────────
 #  Mouvement suivant + témoins
 # ─────────────────────────────────────────────────────────────────────────────
-def _rendements_a(df: pl.DataFrame, bars: Sequence[int], h: int) -> np.ndarray:
+def _rendements_a(df: pl.DataFrame, bars: Sequence[int] | np.ndarray, h: int) -> np.ndarray:
     """Rendement de la clôture de ``bar`` à celle de ``bar + h``, en %."""
     close = df["close"].to_numpy().astype(float)
     n = len(close)
@@ -194,7 +194,7 @@ def _rendements_a(df: pl.DataFrame, bars: Sequence[int], h: int) -> np.ndarray:
     return (close[b + h] - close[b]) / base * 100.0
 
 
-def _mfe_mae_atr(df: pl.DataFrame, bars: Sequence[int], h: int,
+def _mfe_mae_atr(df: pl.DataFrame, bars: Sequence[int] | np.ndarray, h: int,
                  atr: np.ndarray) -> Dict[str, np.ndarray]:
     """Excursions favorable/défavorable maximales sur ]bar, bar+h], en ATR."""
     high = df["high"].to_numpy().astype(float)
@@ -250,7 +250,7 @@ def _temoin_inconditionnel(journal_motif: pl.DataFrame, df: pl.DataFrame,
     return np.asarray(tirages, dtype=float)
 
 
-def _temoin_decale(bars: Sequence[int], df: pl.DataFrame, h: int,
+def _temoin_decale(bars: Sequence[int] | np.ndarray, df: pl.DataFrame, h: int,
                    rng: np.random.Generator) -> np.ndarray:
     """Mêmes événements, décalés circulairement d'un offset aléatoire.
 

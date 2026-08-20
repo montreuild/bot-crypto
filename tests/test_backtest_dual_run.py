@@ -171,6 +171,45 @@ class TestDivergenceOnAnEquityVenueIsExplained:
         assert set(result.rejections["par_motif"]) <= set(REASONS)
 
 
+class TestDualPassIsolatesStrategyState:
+    """Une stratégie avec cooldown/_call_count ne doit pas vider la passe
+    d'étude après la passe live (supertrend_macd au Laboratoire)."""
+
+    def test_stateful_strategy_still_trades_on_the_reference_pass(self):
+        class _CooldownLong(BaseStrategy):
+            name = "cooldown_dummy"
+
+            def __init__(self):
+                self._call_count = {}
+                self._last_signal = {}
+
+            def score(self, df, params=None, df_htf=None, **kw):
+                if len(df) < 30:
+                    return {"side": "none", "score": 0}
+                sym = "BTC/USDC"
+                cnt = self._call_count.get(sym, 0) + 1
+                self._call_count[sym] = cnt
+                if cnt - self._last_signal.get(sym, -999) < 12:
+                    return {"side": "none", "score": 0, "reason": "Cooldown"}
+                self._last_signal[sym] = cnt
+                return {"side": "long", "score": 0.9, "name": self.name,
+                        "reason": "test", "sl_atr_mult": 2.0}
+
+        def factory():
+            eng = Engine()
+            eng.register(_CooldownLong())
+            return eng
+
+        df = _make_df(400)
+        out = run_dual_pass(
+            factory(), _cfg(), df, _env(90.0), symbol="BTC/USDC",
+            engine_factory=factory,
+        )
+        assert out["live"].total_trades > 0
+        assert out["reference"].total_trades > 0
+        assert out["live"].total_trades == out["reference"].total_trades
+
+
 class TestResultPayload:
     def test_rejections_are_exposed_in_to_dict(self):
         """Le payload doit porter les compteurs : c'est par la que l'UI et
@@ -239,8 +278,14 @@ class TestRouteWiring:
     def test_the_envelope_payload_carries_the_base_alongside_the_risk(self):
         """Règle d'affichage du §6 : jamais un montant de risque sans sa base."""
         from app.api.routes.backtest import _envelope_payload
+        from app.engine.compute_jobs import _envelope_payload as job_payload
         payload = _envelope_payload(_env(90.0))
         assert payload["slot_envelope"] == 90.0
         assert payload["risk_amount"] == pytest.approx(2.25)
         assert payload["trade_risk_pct"] == 0.025
+        assert payload["min_notional"] == 0
         assert _envelope_payload(None) is None
+        # Le Laboratoire passe par compute_jobs (dual-pass) : même contrat.
+        job = job_payload(_env(90.0))
+        assert job["risk_amount"] == pytest.approx(2.25)
+        assert job["min_notional"] == 0

@@ -16,7 +16,7 @@ import polars as pl
 
 from app.core.config import DATA_ROOT
 from app.core.singleton import lazy_singleton
-from app.core.timeframes import TF_SECONDS
+from app.core.timeframes import TF_MS, TF_SECONDS
 
 OHLCV_DIR = os.path.join(DATA_ROOT, "ohlcv")
 
@@ -111,6 +111,22 @@ def _bars_span_ms(exchange, symbol: str, tf: str, count: int, tf_ms: int) -> int
 #: perdante à chaque cycle de scan — la boucle visible dans les logs.
 _NO_HISTORY_RETRY_S = 6 * 3600.0
 
+# Recousage : UNE pagination de la première à la dernière discontinuité
+# (pas 8 trous × 6 pages, qui rejouaient la même plage pendant des heures
+# et fragmentaient les gros trous). 200 × 1000 = 200 k barres — au-delà
+# d'un 15m sur plusieurs années. Le reliquat (maintenance exchange) est
+# mémoïsé 6 h.
+_MAX_GAP_SPAN_PAGES = 200
+_GAP_FILL_PAGE = 1000
+
+
+def _fmt_ms(ms: int) -> str:
+    try:
+        return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M")
+    except (OSError, OverflowError, ValueError):
+        return str(ms)
+
 
 def _valid_bars(df: pl.DataFrame, exchange, symbol: str) -> pl.DataFrame:
     """Écarte les barres inexploitables, selon ce que le provider garantit.
@@ -124,6 +140,31 @@ def _valid_bars(df: pl.DataFrame, exchange, symbol: str) -> pl.DataFrame:
     if bool(getattr(_provider_for(exchange, symbol), "drop_zero_volume", True)):
         valid = valid & (pl.col("volume") > 0)
     return df.filter(valid).drop_nulls()
+
+
+def drop_forming_candle(df: pl.DataFrame, tf: str,
+                        now_ms: Optional[int] = None) -> pl.DataFrame:
+    """D-01 : retire la dernière barre si elle n'est pas encore close.
+
+    Une ouverture ``t`` couvre ``[t, t+Δ)``. Persistée, son close provisoire
+    empoisonne les backtests suivants. No-op si TF inconnu ou s'il ne resterait
+    plus aucune barre.
+    """
+    tf_ms = TF_MS.get(tf)
+    if not tf_ms or df is None or df.height <= 1:
+        return df
+    try:
+        last_ms = epoch_ms(df["time"][-1])
+        if last_ms is None:
+            return df
+        now = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        # Forming = now est DANS [t, t+Δ). Une barre future (fixtures de
+        # test, horloge en retard) ou déjà close n'est pas élaguée.
+        if last_ms <= now < last_ms + tf_ms:
+            return df.head(df.height - 1)
+    except Exception as e:
+        logger.debug(f"[CandleStore] élagage bougie en formation {tf} KO : {e}")
+    return df
 
 # Schéma Parquet — time stocké en ms pour cohérence avec ccxt
 _OHLCV_SCHEMA = {
@@ -167,6 +208,9 @@ class CandleStore:
         #: Nombre d'amorçages profonds réussis — sert à savoir si le
         #: premier fetch a déjà ramené toute la profondeur disponible.
         self._deep_fetches = 0
+        #: `(symbol, tf) → (missing_bars, retry_at)` — trous intérieurs que
+        #: l'exchange n'a pas pu combler. Même délai que l'historique épuisé.
+        self._unfillable_gaps: Dict[tuple, tuple] = {}
         logger.info(f"[CandleStore] Initialisation — répertoire : {self._base.resolve()}")
 
     # ── API publique ──────────────────────────────────────────────────────────
@@ -177,10 +221,11 @@ class CandleStore:
 
         prefer_cache=True : si le Parquet local contient déjà au moins ``total``
         bougies, on les retourne directement SANS aucun appel à l'exchange
-        (ni fetch incrémental, ni backfill historique). Utilisé par les backtests
-        et l'optimiseur, qui travaillent sur une plage historique fixe et n'ont
-        pas besoin de la dernière bougie en cours de formation. Le live et le
-        scanner gardent le défaut (prefer_cache=False) pour rester à jour.
+        (ni fetch incrémental, ni backfill historique, ni recousage de
+        trous). Utilisé par les backtests et l'optimiseur, qui travaillent
+        sur une plage historique fixe. Le live et le scanner (défaut
+        ``prefer_cache=False``) restent à jour et tentent de recoudre les
+        trous intérieurs non calendaires, même si le cache dépasse ``total``.
         """
         path = self._path(symbol, tf)
         lock = _get_file_lock(path)
@@ -194,12 +239,12 @@ class CandleStore:
                     f"[CandleStore] {symbol}/{tf} — cache suffisant "
                     f"({len(df_cached)} ≥ {total} bougies), aucun appel à l'exchange"
                 )
-                return df_cached.tail(total)
+                return drop_forming_candle(df_cached.tail(total), tf)
 
             # Fetch incrémental ou complet
             bootstrapped_deep = False
             if len(df_cached) > 0:
-                last_ms  = epoch_ms(df_cached["time"].max())
+                last_ms  = epoch_ms(df_cached["time"].max()) or 0
                 new_raw  = self._fetch_incremental(exchange, symbol, tf, last_ms + 1)
             else:
                 logger.info(f"[CandleStore] {symbol}/{tf} — premier fetch ({total} bougies)")
@@ -211,9 +256,10 @@ class CandleStore:
             if new_raw:
                 df_new    = self._raw_to_df(new_raw)
                 df_merged = _valid_bars(
-                    pl.concat([df_cached, df_new]).unique("time").sort("time"),
+                    pl.concat([df_cached, df_new]).unique("time", keep="last").sort("time"),
                     exchange, symbol,
                 )
+                df_merged = drop_forming_candle(df_merged, tf)
                 self._save(path, df_merged)
                 df_cached = df_merged
                 logger.debug(
@@ -235,7 +281,7 @@ class CandleStore:
                         f"bougies : c'est tout l'historique publié par la source "
                         f"pour cette granularité"
                     )
-                    old_raw = []
+                    old_raw: list = []
                 elif self._history_exhausted(symbol, tf, first_ms):
                     logger.debug(
                         f"[CandleStore] {symbol}/{tf} — backfill historique ignoré "
@@ -259,9 +305,10 @@ class CandleStore:
                     n_before  = len(df_cached)
                     df_old    = self._raw_to_df(old_raw)
                     df_merged = _valid_bars(
-                        pl.concat([df_cached, df_old]).unique("time").sort("time"),
+                        pl.concat([df_cached, df_old]).unique("time", keep="first").sort("time"),
                         exchange, symbol,
                     )
+                    df_merged = drop_forming_candle(df_merged, tf)
                     self._save(path, df_merged)
                     df_cached = df_merged
                     self._forget_exhausted(symbol, tf)
@@ -285,15 +332,67 @@ class CandleStore:
                         f"{_NO_HISTORY_RETRY_S / 3600:.0f} h"
                     )
 
+            # Trous INTÉRIEURS : le fetch incrémental ne regarde qu'après la
+            # dernière barre, et le backfill historique ci-dessus ne tourne
+            # que si le cache est plus court que `total`. Un BTC 15m à 58 k
+            # barres avec 7 trous au milieu n'était donc jamais recousu
+            # (l'UI refetch ne permet pas non plus de forcer `bars`).
+            if len(df_cached) >= 2:
+                df_cached = self._fill_detected_gaps(
+                    exchange, symbol, tf, df_cached, path)
+
         if len(df_cached) == 0:
             return None
 
-        result = df_cached.tail(total)
+        result = drop_forming_candle(df_cached.tail(total), tf)
         return result if len(result) >= 1 else None
 
     def load_cached(self, symbol: str, tf: str) -> pl.DataFrame:
         """DataFrame OHLCV en cache (sans aucun appel exchange). Vide si absent."""
         return self._load(self._path(symbol, tf))
+
+    def fetch_range(self, exchange, symbol: str, tf: str,
+                    start=None, end=None, *,
+                    total: int, prefer_cache: bool = False) -> Optional[pl.DataFrame]:
+        """A-03 : backfill jusqu'à ``total`` (persisté une fois), puis lit [start, end].
+
+        Le coût exchange n'est payé que si le Parquet est plus mince que
+        ``total``. La profondeur reste dans le store pour les prochains runs.
+        Seule la fenêtre demandée est renvoyée au backtest.
+        """
+        filled = self.fetch(exchange, symbol, tf, total=total, prefer_cache=prefer_cache)
+        if start is None and end is None:
+            return filled
+        out = self.load_range(symbol, tf, start=start, end=end)
+        return out if len(out) else None
+
+    def load_range(self, symbol: str, tf: str,
+                   start=None, end=None) -> pl.DataFrame:
+        """Lit le Parquet filtré par plage (predicate pushdown, A-03).
+
+        Ne touche pas l'exchange. DataFrame vide si le fichier n'existe pas
+        ou si le scan échoue. ``start`` / ``end`` sont des ``datetime`` naïfs
+        UTC, comme la colonne ``time`` du store.
+        """
+        path = self._path(symbol, tf)
+        if not path.exists():
+            return pl.DataFrame(schema=_OHLCV_SCHEMA)  # type: ignore[arg-type]
+        try:
+            lf = pl.scan_parquet(path)
+            if start is not None:
+                lf = lf.filter(pl.col("time") >= start)
+            if end is not None:
+                lf = lf.filter(pl.col("time") <= end)
+            df = lf.collect()
+            cols = list(_OHLCV_SCHEMA.keys())
+            if set(cols).issubset(df.columns):
+                df = df.select(cols)
+            if df.height and df["time"].dtype != pl.Datetime("ms"):
+                df = df.with_columns(pl.col("time").cast(pl.Datetime("ms")))
+            return df
+        except Exception as e:
+            logger.warning(f"[CandleStore] load_range {symbol}/{tf} KO : {e}")
+            return pl.DataFrame(schema=_OHLCV_SCHEMA)  # type: ignore[arg-type]
 
     def count_bars(self, symbol: str, tf: str) -> int:
         """Nombre de bougies en cache sans charger le DataFrame complet.
@@ -322,6 +421,12 @@ class CandleStore:
         if len(df) == 0:
             return {"symbol": symbol, "tf": tf, "bars": 0,
                     "from": None, "to": None, "size_kb": 0}
+        from app.core.ohlcv_gaps import (
+            calendar_for_symbol,
+            completeness_from_gaps,
+            detect_ohlcv_gaps,
+        )
+        gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol))
         return {
             "symbol":  symbol,
             "tf":      tf,
@@ -329,6 +434,8 @@ class CandleStore:
             "from":    str(df["time"].min()),
             "to":      str(df["time"].max()),
             "size_kb": round(path.stat().st_size / 1024, 1) if path.exists() else 0,
+            "gaps":    len(gaps),
+            "completeness": completeness_from_gaps(len(df), gaps),
         }
 
     def all_stats(self) -> list:
@@ -345,13 +452,18 @@ class CandleStore:
         if not hasattr(self, "_all_stats_cache"):
             self._all_stats_cache: Dict[str, tuple] = {}  # path -> (mtime, row)
 
+        # Un niveau seulement : ``<base>/<SYMBOL>/<tf>.parquet``. Un rglob
+        # ramassait aussi les copies imbriquées (ex. ``ohlcv/data/BTC_USDC/``)
+        # → doublons (symbole, tf) → clés React identiques sur /data.
         paths: list = []
-        for parquet in sorted(self._base.rglob("*.parquet")):
-            tf = parquet.stem
-            if tf not in TF_SECONDS:
-                continue
-            symbol = parquet.parent.name.replace("_", "/", 1)
-            paths.append((parquet, symbol, tf))
+        if self._base.is_dir():
+            for symbol_dir in sorted(p for p in self._base.iterdir() if p.is_dir()):
+                for parquet in sorted(symbol_dir.glob("*.parquet")):
+                    tf = parquet.stem
+                    if tf not in TF_SECONDS:
+                        continue
+                    symbol = symbol_dir.name.replace("_", "/", 1)
+                    paths.append((parquet, symbol, tf))
 
         def _one(item):
             parquet, symbol, tf = item
@@ -370,7 +482,18 @@ class CandleStore:
                     "from": None,
                     "to": None,
                     "size_kb": round(st.st_size / 1024, 1),
+                    "completeness": None,
+                    "gaps": 0,
                 }
+                sidecar = parquet.with_suffix(".gaps.json")
+                if sidecar.exists():
+                    try:
+                        import json as _json
+                        info = _json.loads(sidecar.read_text(encoding="utf-8"))
+                        row["gaps"] = int(info.get("gaps") or 0)
+                        row["completeness"] = info.get("completeness")
+                    except Exception:
+                        pass
                 self._all_stats_cache[key] = (mtime, row)
                 return row
             except Exception:
@@ -412,6 +535,216 @@ class CandleStore:
     def _forget_exhausted(self, symbol: str, tf: str) -> None:
         with self._no_history_lock:
             self._no_history.pop((symbol, tf), None)
+
+    def _gaps_on_cooldown(self, symbol: str, tf: str, missing: int) -> bool:
+        with self._no_history_lock:
+            entry = self._unfillable_gaps.get((symbol, tf))
+        if entry is None:
+            return False
+        marked_missing, retry_at = entry
+        if time.time() >= retry_at:
+            return False
+        return marked_missing == missing
+
+    def _mark_gaps_unfillable(self, symbol: str, tf: str, missing: int) -> None:
+        with self._no_history_lock:
+            self._unfillable_gaps[(symbol, tf)] = (
+                missing, time.time() + _NO_HISTORY_RETRY_S)
+
+    def _forget_gaps_unfillable(self, symbol: str, tf: str) -> None:
+        with self._no_history_lock:
+            self._unfillable_gaps.pop((symbol, tf), None)
+
+    def _fill_detected_gaps(self, exchange, symbol: str, tf: str,
+                            df: pl.DataFrame, path: Path) -> pl.DataFrame:
+        """Recoud les trous : un rattrapage de plage, puis mémo 6 h.
+
+        Pagination unique de la première à la dernière discontinuité — pas
+        8 trous × 6 pages, qui rejouaient la même fenêtre, fragmentaient
+        les gros trous et spammaient le journal. Reliquat = barres que
+        l'exchange ne publie pas (maintenance) : un essai, puis 6 h.
+        """
+        from app.core.ohlcv_gaps import (
+            calendar_for_symbol,
+            completeness_from_gaps,
+            detect_ohlcv_gaps,
+        )
+        tf_ms = TF_MS.get(tf)
+        if not tf_ms:
+            return df
+        try:
+            gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol))
+        except Exception as e:
+            logger.debug("[CandleStore] detect_ohlcv_gaps %s/%s KO : %s",
+                         symbol, tf, e)
+            return df
+        if not gaps:
+            self._forget_gaps_unfillable(symbol, tf)
+            return df
+        missing = sum(int(g.get("gap_bars") or 0) for g in gaps)
+        if self._gaps_on_cooldown(symbol, tf, missing):
+            logger.debug(
+                "[CandleStore] %s/%s — recousage des trous ignoré "
+                "(%d barre(s) manquante(s), mémo 6 h)",
+                symbol, tf, missing,
+            )
+            return df
+
+        indices = [int(g.get("index") or 0) for g in gaps
+                   if 1 <= int(g.get("index") or 0) < len(df)]
+        if not indices:
+            self._mark_gaps_unfillable(symbol, tf, missing)
+            return df
+        start_ms = (epoch_ms(df["time"][min(indices) - 1]) or 0) + tf_ms
+        end_ms = epoch_ms(df["time"][max(indices)]) or 0
+        if start_ms <= 0 or end_ms <= start_ms:
+            self._mark_gaps_unfillable(symbol, tf, missing)
+            return df
+
+        logger.info(
+            "[CandleStore] %s/%s — rattrapage exchange %s → %s "
+            "(%d trou(s), %d barre(s) manquante(s))",
+            symbol, tf, _fmt_ms(start_ms), _fmt_ms(end_ms),
+            len(gaps), missing,
+        )
+        known = set(df["time"].dt.epoch("ms").to_list()) if len(df) else set()
+        n_before = len(df)
+        raw, pages, reached = self._fetch_span(
+            exchange, symbol, tf, start_ms, end_ms, known)
+
+        if raw:
+            df = _valid_bars(
+                pl.concat([df, self._raw_to_df(raw)])
+                .unique("time", keep="last").sort("time"),
+                exchange, symbol,
+            )
+            df = drop_forming_candle(df, tf)
+            if len(df) > n_before:
+                self._save(path, df, log_gaps=False)
+
+        filled = len(df) - n_before
+        left, left_missing, left_comp = [], 0, 100.0
+        try:
+            left = detect_ohlcv_gaps(
+                df, tf, calendar=calendar_for_symbol(symbol))
+            left_missing = sum(int(g.get("gap_bars") or 0) for g in left)
+            left_comp = completeness_from_gaps(len(df), left) * 100
+        except Exception:
+            pass
+
+        if not left:
+            self._forget_gaps_unfillable(symbol, tf)
+            logger.info(
+                "[CandleStore] %s/%s — série continue (complétude 100%%, "
+                "+%d bougie(s), %d page(s))",
+                symbol, tf, filled, pages,
+            )
+            return df
+
+        if reached or filled <= 0:
+            self._mark_gaps_unfillable(symbol, tf, left_missing)
+            logger.info(
+                "[CandleStore] %s/%s — rattrapage terminé : +%d bougie(s) "
+                "(%d page(s)) · reste %d trou(s) / %d barre(s) "
+                "(complétude=%.1f%%) que l'exchange ne publie pas — "
+                "nouvel essai dans %.0f h",
+                symbol, tf, filled, pages, len(left), left_missing,
+                left_comp, _NO_HISTORY_RETRY_S / 3600.0,
+            )
+        else:
+            logger.info(
+                "[CandleStore] %s/%s — rattrapage partiel : +%d bougie(s) "
+                "(%d page(s)) · reste %d trou(s) / %d barre(s) "
+                "(complétude=%.1f%%) — reprise au prochain cycle",
+                symbol, tf, filled, pages, len(left), left_missing, left_comp,
+            )
+        return df
+
+    def _fetch_span(self, exchange, symbol: str, tf: str,
+                    start_ms: int, end_ms: int, known_ts: set) -> tuple:
+        """Dump exchange sur ``[start_ms, end_ms)``.
+
+        Prefère ``fetch_ohlcv_max`` (une requête, réponse définitive). Sinon
+        pagination ccxt jusqu'à ``end_ms``. Retourne
+        ``(rows, pages, reached_end)``.
+        """
+        deep = getattr(_provider_for(exchange, symbol), "fetch_ohlcv_max", None)
+        if callable(deep):
+            try:
+                rows = deep(symbol, tf) or []
+            except Exception as e:
+                logger.warning("[CandleStore] fetch_max %s/%s : %s",
+                               symbol, tf, e)
+                rows = []
+            if rows:
+                fresh = []
+                for r in rows:
+                    ts = r[0]
+                    if ts < start_ms or ts >= end_ms or ts in known_ts:
+                        continue
+                    known_ts.add(ts)
+                    fresh.append(r)
+                return fresh, 1, True
+        return self._fetch_gap_range(
+            exchange, symbol, tf, start_ms, end_ms, known_ts,
+            pages_left=_MAX_GAP_SPAN_PAGES)
+
+    def _fetch_gap_range(self, exchange, symbol: str, tf: str,
+                         start_ms: int, end_ms: int, known_ts: set,
+                         pages_left: int) -> tuple:
+        """Fetch paginé d'une plage ``[start_ms, end_ms)``.
+
+        Retourne ``(rows, pages, reached_end)``. ``reached_end`` est True si
+        la source est épuisée ou si on a dépassé ``end_ms`` — pas si on a
+        seulement atteint le plafond de pages.
+        """
+        if pages_left <= 0:
+            return [], 0, False
+        rate_sleep = getattr(exchange, "rateLimit", 1200) / 1000
+        rows: list = []
+        since = start_ms
+        pages = 0
+        reached = False
+        while pages < pages_left and since < end_ms:
+            try:
+                batch = exchange.fetch_ohlcv(
+                    symbol, tf, since=since, limit=_GAP_FILL_PAGE)
+            except Exception as e:
+                logger.warning(
+                    "[CandleStore] fetch_span %s/%s since=%s : %s",
+                    symbol, tf, since, e,
+                )
+                break
+            pages += 1
+            if not batch:
+                reached = True
+                break
+            last_ts = since
+            for c in batch:
+                ts = c[0]
+                last_ts = ts
+                if ts < start_ms or ts >= end_ms:
+                    continue
+                if ts in known_ts:
+                    continue
+                known_ts.add(ts)
+                rows.append(c)
+            nxt = last_ts + 1
+            if nxt <= since:
+                reached = True
+                break
+            since = nxt
+            if last_ts >= end_ms - 1:
+                reached = True
+                break
+            if len(batch) < _GAP_FILL_PAGE:
+                reached = True
+                break
+            if rate_sleep:
+                time.sleep(rate_sleep)
+        if since >= end_ms:
+            reached = True
+        return rows, pages, reached
 
     # ── Fetch interne ─────────────────────────────────────────────────────────
 
@@ -525,7 +858,7 @@ class CandleStore:
         else:
             since = max(floor_ms, int(exchange.milliseconds()) - span_ms)
 
-        all_raw = []
+        all_raw: list = []
         seen_ts = set()
 
         while len(all_raw) < needed:
@@ -608,7 +941,7 @@ class CandleStore:
         since   = max(_min_since(exchange, symbol),
                       exchange.milliseconds()
                       - _bars_span_ms(exchange, symbol, tf, total, tf_ms))
-        all_raw = []
+        all_raw: list = []
         seen_ts = set()
 
         while len(all_raw) < total:
@@ -670,9 +1003,9 @@ class CandleStore:
                 return df
             except Exception as e:
                 logger.warning(f"[CandleStore] Fichier corrompu {path} — re-fetch : {e}")
-        return pl.DataFrame(schema=_OHLCV_SCHEMA)
+        return pl.DataFrame(schema=_OHLCV_SCHEMA)  # type: ignore[arg-type]
 
-    def _save(self, path: Path, df: pl.DataFrame) -> None:
+    def _save(self, path: Path, df: pl.DataFrame, *, log_gaps: bool = True) -> None:
         """Écriture ATOMIQUE : Parquet écrit dans un .tmp puis os.replace
         (rename atomique sur le même filesystem). Un lecteur concurrent — y
         compris un second process (cli.py --backtest/--optimize pendant que le
@@ -683,12 +1016,57 @@ class CandleStore:
         try:
             df.write_parquet(tmp, compression="zstd")
             os.replace(tmp, path)
+            self._warn_write_gaps(path, df, log=log_gaps)
         except Exception as e:
             logger.error(f"[CandleStore] Erreur écriture {path} : {e}")
             try:
                 tmp.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def _warn_write_gaps(self, path: Path, df: pl.DataFrame, *,
+                         log: bool = True) -> None:
+        """D-03 : sidecar + WARNING des trous non calendaires à l'écriture.
+
+        Après un rattrapage, le reliquat est mémoïsé 6 h : on passe en
+        DEBUG pour ne pas répéter le même WARNING à chaque barre incrémentale.
+        """
+        try:
+            from app.core.ohlcv_gaps import (
+                calendar_for_symbol,
+                completeness_from_gaps,
+                detect_ohlcv_gaps,
+            )
+            tf = path.stem
+            symbol = path.parent.name.replace("_", "/", 1)
+            gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol))
+            missing = sum(int(g.get("gap_bars") or 0) for g in gaps)
+            comp = completeness_from_gaps(len(df), gaps)
+            try:
+                import json as _json
+                path.with_suffix(".gaps.json").write_text(
+                    _json.dumps({"gaps": len(gaps), "missing_bars": missing,
+                                 "completeness": comp}),
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+            if not gaps:
+                return
+            if (not log) or self._gaps_on_cooldown(symbol, tf, missing):
+                logger.debug(
+                    "[CandleStore] %s/%s : %d trou(s) non calendaire(s), "
+                    "%d barre(s) manquante(s), complétude=%.1f%%",
+                    symbol, tf, len(gaps), missing, comp * 100,
+                )
+                return
+            logger.warning(
+                "[CandleStore] %s/%s : %d trou(s) non calendaire(s), "
+                "%d barre(s) manquante(s), complétude=%.1f%%",
+                symbol, tf, len(gaps), missing, comp * 100,
+            )
+        except Exception as e:
+            logger.debug("[CandleStore] detect_ohlcv_gaps KO : %s", e)
 
     @staticmethod
     def _raw_to_df(raw: List[list]) -> pl.DataFrame:

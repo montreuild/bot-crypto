@@ -5,16 +5,37 @@
 
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
-import type { BotStatus } from '@/types';
+import { errorMessage } from '@/lib/utils';
+import type { BotStatus, OptimizeJob } from '@/types';
 
-// ── Bot status (polling 3s) ─────────────────────────────────────────────────
+/** UX-03 : un POST config qui échoue ne doit jamais rester silencieux. */
+function toastConfigError(err: unknown) {
+  toast.error(`Enregistrement refusé : ${errorMessage(err)}`);
+}
+
+/** U-03 : un onglet caché ne sonde pas. */
+function usePageVisible() {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const onVis = () => setVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+  return visible;
+}
+
+// ── Bot status (polling 15s, WS = source) ───────────────────────────────────
 export function useBotStatus() {
+  const visible = usePageVisible();
   return useQuery<BotStatus>({
     queryKey: ['status'],
     queryFn: api.getStatus,
-    refetchInterval: 3000, // 3s — temps réel via polling, complété par WS
+    refetchInterval: visible ? 15_000 : false,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   });
 }
@@ -32,7 +53,8 @@ export function useHealth() {
       const data = await api.getHealth();
       return { ...data, client_latency_ms: Math.round(performance.now() - t0) };
     },
-    refetchInterval: 10000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -67,7 +89,8 @@ export function useBots() {
   return useQuery({
     queryKey: ['bots'],
     queryFn: api.getBots,
-    refetchInterval: 10000,
+    refetchInterval: 20_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -75,7 +98,8 @@ export function usePortfolio() {
   return useQuery({
     queryKey: ['portfolio'],
     queryFn: api.getPortfolio,
-    refetchInterval: 5000,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -314,6 +338,7 @@ export function useToggleStrategyTimeframe() {
       qc.invalidateQueries({ queryKey: ['config'] });
       qc.invalidateQueries({ queryKey: ['status'] });
     },
+    onError: toastConfigError,
   });
 }
 
@@ -359,7 +384,7 @@ export function useBacktestSettings() {
 
 export function useRunBacktest() {
   return useMutation({
-    mutationFn: (payload: any) => api.runBacktest(payload),
+    mutationFn: (payload: Parameters<typeof api.runBacktest>[0]) => api.runBacktest(payload),
   });
 }
 
@@ -406,15 +431,16 @@ export function useOptimizeStatus(jobId?: string) {
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return 1500;
-      // Si on suit un job spécifique, poll rapide tant qu'il est running
       if (jobId) {
-        const job = (data as any)?.[jobId] ?? data;
+        const map = data as Record<string, OptimizeJob> | OptimizeJob;
+        const job = (map && typeof map === 'object' && jobId in map)
+          ? (map as Record<string, OptimizeJob>)[jobId]
+          : map as OptimizeJob;
         return job?.status === 'running' ? 1500 : false;
       }
-      // Sinon, vérifier si au moins un job est running
-      const allJobs = data as Record<string, any>;
+      const allJobs = data as Record<string, OptimizeJob>;
       const hasRunning = Object.values(allJobs).some(
-        (j: any) => j?.status === 'running' || j?.status === 'pending' || j?.status === 'queued'
+        (j) => j?.status === 'running' || j?.status === 'pending' || j?.status === 'queued'
       );
       return hasRunning ? 1500 : 30000;
     },
@@ -440,7 +466,7 @@ export function useOptimizeResults() {
 export function useStartOptimize() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (params: any) => api.startOptimize(params),
+    mutationFn: (params: Parameters<typeof api.startOptimize>[0]) => api.startOptimize(params),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['optimizeStatus'] });
     },
@@ -671,7 +697,7 @@ export function useDerivativesStatus(symbol = 'BTC/USDC') {
 // ── Replay ──────────────────────────────────────────────────────────────────
 export function useRunReplay() {
   return useMutation({
-    mutationFn: (params: any) => api.runReplay(params),
+    mutationFn: (params: Parameters<typeof api.runReplay>[0]) => api.runReplay(params),
   });
 }
 

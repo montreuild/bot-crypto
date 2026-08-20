@@ -97,7 +97,15 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   // ne peut pas le lire, la clé ne fuit pas dans le JS. `SameSite=Lax` : pas
   // d'envoi sur une navigation tierce.
   if (API_KEY) {
-    const secure = req.nextUrl.protocol === 'https:' ? '; Secure' : '';
+    // S-04 : derrière un proxy qui termine TLS, Next voit du HTTP interne.
+    // Honorer x-forwarded-proto (premier hop) en plus du protocole local.
+    const forwardedProto = req.headers
+      .get('x-forwarded-proto')
+      ?.split(',')[0]
+      ?.trim()
+      .toLowerCase();
+    const secure =
+      forwardedProto === 'https' || req.nextUrl.protocol === 'https:' ? '; Secure' : '';
     outHeaders.append(
       'set-cookie',
       `api_key=${encodeURIComponent(API_KEY)}; Path=/; HttpOnly; SameSite=Lax${secure}`,

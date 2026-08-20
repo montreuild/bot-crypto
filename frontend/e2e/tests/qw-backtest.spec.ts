@@ -22,11 +22,11 @@
 
 import { test, expect } from '@playwright/test';
 
-// Skip en CI si le backend n'est pas joignable (les tests E2E nécessitent
-// un bot fonctionnel avec données OHLCV en cache).
-const SKIP_IF_NO_BACKEND = process.env.CI ? test.skip : test;
+// Skip en CI : `test.skip` n'a pas de `.describe` (TypeError au chargement
+// du fichier, même si le grep CI n'exécute pas ces tests).
+const describeIfBackend = process.env.CI ? test.describe.skip : test.describe;
 
-SKIP_IF_NO_BACKEND.describe('QW-4/5/6 — Nouveaux composants backtest', () => {
+describeIfBackend('QW-4/5/6 — Nouveaux composants backtest', () => {
 
   test.beforeEach(async ({ page }) => {
     // Activer le mode expert via localStorage (sinon la section « Options
@@ -120,7 +120,7 @@ SKIP_IF_NO_BACKEND.describe('QW-4/5/6 — Nouveaux composants backtest', () => {
 });
 
 // ── Tests avec backtest réel (nécessitent un backend fonctionnel) ────────────
-SKIP_IF_NO_BACKEND.describe('QW-4/5/6 — Backtest réel (nécessite backend)', () => {
+describeIfBackend('QW-4/5/6 — Backtest réel (nécessite backend)', () => {
   test('lancer un backtest active le panel de recommandations', async ({ page }) => {
     // Ce test nécessite un backend fonctionnel avec des données OHLCV en cache.
     await page.addInitScript(() => {

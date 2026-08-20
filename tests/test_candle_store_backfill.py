@@ -553,3 +553,171 @@ class TestInteriorGaps:
             store.fetch(ex, "FULL/EUR", "15m", total=500)
             cached = store.load_cached("FULL/EUR", "15m")
         assert len(cached) == ex.depth
+
+    def test_interior_gap_filled_even_when_cache_already_longer_than_total(self):
+        """Cas UI / live : 58 k barres en cache, refetch à 6 000 — sans ce
+        passage les trous au milieu n'étaient jamais visés."""
+        ex = _FakeExchange(depth=400)
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            kept, total = self._holed_cache(store, ex, symbol="BTC/USDC")
+            assert kept == total - 30
+            store.fetch(ex, "BTC/USDC", "15m", total=50)
+            cached = store.load_cached("BTC/USDC", "15m")
+        assert len(cached) == total, (
+            f"{total - len(cached)} barre(s) toujours manquante(s) alors que "
+            f"le cache dépassait déjà `total`")
+        stamps = [epoch_ms(t) for t in cached["time"].to_list()]
+        gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b - a != ex.tf_ms]
+        assert gaps == [], f"trou(s) résiduel(s) : {gaps}"
+
+    def test_prefer_cache_does_not_hit_exchange_to_fill_gaps(self):
+        """Un backtest (prefer_cache) ne doit pas muter la série."""
+        ex = _FakeExchange(depth=400)
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            kept, _total = self._holed_cache(store, ex, symbol="BTC/USDC")
+            n_calls = len(ex.calls)
+            store.fetch(ex, "BTC/USDC", "15m", total=50, prefer_cache=True)
+            cached = store.load_cached("BTC/USDC", "15m")
+        assert len(cached) == kept
+        assert len(ex.calls) == n_calls
+
+    def test_unfillable_gap_is_not_refetched_every_cycle(self):
+        """Maintenance exchange : le trou n'existe pas chez le provider.
+        Un mémo 6 h évite de rejouer la plage à chaque cycle live."""
+
+        class _HoledSource(_FakeExchange):
+            def _all(self):
+                rows = super()._all()
+                return rows[:50] + rows[80:]
+
+        ex = _HoledSource(depth=200)
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store._save(store._path("BTC/USDC", "15m"),
+                        store._raw_to_df(ex._all()))
+            store.fetch(ex, "BTC/USDC", "15m", total=50)
+            after_first = len(ex.calls)
+            store.fetch(ex, "BTC/USDC", "15m", total=50)
+            after_second = len(ex.calls)
+        # 2e fetch : incrémental (1 appel) mais pas de re-pagination du trou.
+        assert after_second - after_first <= 1, (
+            f"le trou incombable a été redemandé "
+            f"({after_second - after_first} appels)")
+
+    def test_scattered_holes_filled_in_one_span(self):
+        """Des trous dispersés se recousent en UNE pagination de plage,
+        pas un fetch par trou."""
+        ex = _FakeExchange(depth=400)
+        rows = ex._all()
+        kept = []
+        drop = set()
+        for start in range(40, 360, 20):
+            drop.update(range(start, start + 3))
+        kept = [r for i, r in enumerate(rows) if i not in drop]
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store._save(store._path("BTC/USDC", "15m"),
+                        store._raw_to_df(kept))
+            assert len(store.load_cached("BTC/USDC", "15m")) < 400
+            n_before = len(ex.calls)
+            store.fetch(ex, "BTC/USDC", "15m", total=50)
+            cached = store.load_cached("BTC/USDC", "15m")
+            n_span = len(ex.calls) - n_before
+        assert len(cached) == 400
+        # Une pagination de la plage : largement moins d'appels que de trous.
+        n_holes = len(range(40, 360, 20))
+        assert n_span < n_holes, (
+            f"{n_span} appels pour {n_holes} trous — le fetch par trou est revenu")
+
+
+def test_unique_keep_last_on_incremental_overlap():
+    """D-02 : la barre de recouvrement prend la version fraîche (close à jour)."""
+    import polars as pl
+
+    old = pl.DataFrame({
+        "time": [datetime(2024, 1, 1, 10), datetime(2024, 1, 1, 11)],
+        "open": [1.0, 2.0], "high": [1.0, 2.0], "low": [1.0, 2.0],
+        "close": [10.0, 20.0], "volume": [1.0, 1.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    new = pl.DataFrame({
+        "time": [datetime(2024, 1, 1, 11), datetime(2024, 1, 1, 12)],
+        "open": [2.0, 3.0], "high": [2.0, 3.0], "low": [2.0, 3.0],
+        "close": [21.0, 30.0], "volume": [1.0, 1.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    merged = pl.concat([old, new]).unique("time", keep="last").sort("time")
+    eleven = merged.filter(pl.col("time") == datetime(2024, 1, 1, 11))
+    assert eleven["close"][0] == 21.0
+
+
+def test_unique_keep_first_on_historical_overlap():
+    """D-02 : le backfill ne doit pas écraser une barre déjà en cache."""
+    import polars as pl
+
+    cached = pl.DataFrame({
+        "time": [datetime(2024, 1, 1, 11)],
+        "open": [2.0], "high": [2.0], "low": [2.0],
+        "close": [21.0], "volume": [1.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    older = pl.DataFrame({
+        "time": [datetime(2024, 1, 1, 10), datetime(2024, 1, 1, 11)],
+        "open": [1.0, 2.0], "high": [1.0, 2.0], "low": [1.0, 2.0],
+        "close": [10.0, 99.0], "volume": [1.0, 1.0],
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    merged = pl.concat([cached, older]).unique("time", keep="first").sort("time")
+    eleven = merged.filter(pl.col("time") == datetime(2024, 1, 1, 11))
+    assert eleven["close"][0] == 21.0
+
+
+def test_fetch_range_approfondit_le_store_et_ne_rend_que_la_plage(tmp_path):
+    """A-03 : le backfill vise la profondeur du store ; le backtest n'en voit
+    que la fenêtre. Une plage de 3 jours ne doit pas empêcher d'aller chercher
+    l'historique manquant — c'est persisté une fois."""
+    from datetime import timedelta
+
+    ex = _FakeExchange(depth=400, tf_ms=3_600_000)
+    store = _store(str(tmp_path))
+    # `_fetch_full(limit=200)` sans `since` ramène les 200 plus anciennes
+    # barres de la source. La fenêtre doit recouvrir ce bloc, pas la queue.
+    first = datetime.fromtimestamp(
+        (ex._now - ex.depth * ex.tf_ms) / 1000, tz=timezone.utc
+    ).replace(tzinfo=None)
+    start, end = first, first + timedelta(hours=10)
+    out = store.fetch_range(
+        ex, "BTC/USDC", "1h", start=start, end=end,
+        total=200, prefer_cache=False,
+    )
+    cached = store.load_cached("BTC/USDC", "1h")
+    assert len(cached) >= 200, "le Parquet doit avoir été approfondi vers `total`"
+    assert out is not None and 0 < len(out) < len(cached)
+    assert out["time"].min() >= start
+    assert out["time"].max() <= end
+
+
+def test_load_range_ne_materialise_que_la_plage(tmp_path):
+    """A-03 : scan Parquet filtré — pas les 50k bougies du fichier."""
+    from datetime import timedelta
+
+    import polars as pl
+
+    n = 500
+    start0 = datetime(2024, 1, 1)
+    df = pl.DataFrame({
+        "time": [start0 + timedelta(hours=i) for i in range(n)],
+        "open":   [100.0] * n,
+        "high":   [101.0] * n,
+        "low":    [99.0] * n,
+        "close":  [100.5] * n,
+        "volume": [1.0] * n,
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    store = _store(str(tmp_path))
+    store._save(store._path("BTC/USDC", "1h"), df)
+    out = store.load_range(
+        "BTC/USDC", "1h",
+        start=datetime(2024, 1, 3),
+        end=datetime(2024, 1, 5),
+    )
+    assert 0 < len(out) < n
+    assert out["time"].min() >= datetime(2024, 1, 3)
+    assert out["time"].max() <= datetime(2024, 1, 5)

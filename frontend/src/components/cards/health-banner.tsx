@@ -12,16 +12,17 @@
 
 import { Card } from '@/components/ui/card';
 import { TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Activity } from 'lucide-react';
-import { cn, formatUSD, formatPct } from '@/lib/utils';
-import type { BotStatus } from '@/types';
+import { cn, formatMoney, formatPct } from '@/lib/utils';
+import type { BotStatus, PortfolioSnapshot, StrategyStats } from '@/types';
 
 interface HealthBannerProps {
   status: BotStatus | undefined;
-  portfolio: any | undefined;
+  portfolio: PortfolioSnapshot | undefined;
   expert?: boolean;
+  currency?: string;
 }
 
-export function HealthBanner({ status, portfolio, expert = false }: HealthBannerProps) {
+export function HealthBanner({ status, portfolio, expert = false, currency = 'USD' }: HealthBannerProps) {
   // Cas : backend down ou pas encore de données
   if (!status) {
     return (
@@ -62,7 +63,7 @@ export function HealthBanner({ status, portfolio, expert = false }: HealthBanner
   // Top contributeur (best strategy by PnL)
   const byStrategy = status.by_strategy || {};
   const topStrategy = Object.entries(byStrategy)
-    .sort(([, a]: any, [, b]: any) => (b.total_pnl ?? 0) - (a.total_pnl ?? 0))[0];
+    .sort(([, a], [, b]) => ((b as StrategyStats).total_pnl ?? 0) - ((a as StrategyStats).total_pnl ?? 0))[0];
   const topStrategyName = topStrategy?.[0];
   const topStrategyPnl = topStrategy?.[1]?.total_pnl ?? 0;
 
@@ -82,7 +83,7 @@ export function HealthBanner({ status, portfolio, expert = false }: HealthBanner
   } else if (isPositive) {
     icon = <TrendingUp className="w-5 h-5 text-emerald-400" />;
     tone = 'positive';
-    const parts = [`Ton portefeuille a généré ${formatUSD(pnl, { sign: true })} (${formatPct(pnlPct)})`];
+    const parts = [`Ton portefeuille a généré ${formatMoney(pnl, currency, { sign: true })} (${formatPct(pnlPct)})`];
     if (topStrategyName && topStrategyPnl > 0) {
       parts.push(`porté par ${topStrategyName}`);
     }
@@ -91,7 +92,7 @@ export function HealthBanner({ status, portfolio, expert = false }: HealthBanner
   } else {
     icon = <TrendingDown className="w-5 h-5 text-red-400" />;
     tone = 'negative';
-    const parts = [`Ton portefeuille est à ${formatUSD(pnl, { sign: true })} (${formatPct(pnlPct)})`];
+    const parts = [`Ton portefeuille est à ${formatMoney(pnl, currency, { sign: true })} (${formatPct(pnlPct)})`];
     if (topStrategyName && topStrategyPnl < 0) {
       parts.push(`tiré vers le bas par ${topStrategyName}`);
     }

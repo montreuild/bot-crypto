@@ -22,18 +22,31 @@ class BaseStrategy:
     # features dérivés (funding/OI/long-short/taker — crypto perpetuals
     # uniquement) surchargent avec frozenset({"crypto"}).
     asset_classes: frozenset = frozenset({"crypto", "equity"})
+    _bt_params: Any
+    _bt_symbol: str
+    _bt_tf: str
+    _bt_full_df: Any
 
-    def min_bars_required(self, params: dict = None) -> int:
+    def min_bars_required(self, params: dict | None = None) -> int:
         """Nombre minimum de bougies requis pour calculer les indicateurs."""
         return 50
 
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """P-01 : mémorise le frame complet (O(n) une fois).
+
+        Les stratégies qui recalculent des EMA / HTF via ``ema_window``
+        lisent ``_bt_full_df``. Celles qui n'utilisent que ``_pre_*``
+        ignorent ce cache — no-op inoffensif.
+        """
+        self._bt_full_df = df
+
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         """Retourne {"score": float [0-1], "side": "long"|"short"|"none", "name": str}."""
         raise NotImplementedError
 
     def check_early_exit(self, df: pl.DataFrame, position: dict,
-                         params: dict = None) -> Optional[str]:
+                         params: dict | None = None) -> Optional[str]:
         """Hook optionnel : la stratégie peut demander la sortie anticipée d'une
         position déjà ouverte (ex. changement de régime, inversion du signal
         directionnel). Appelé par l'engine de backtest et le live à chaque cycle
@@ -48,7 +61,7 @@ class BaseStrategy:
         return None
 
     def check_scale_in(self, df: pl.DataFrame, position: dict,
-                       params: dict = None) -> Optional[Dict[str, Any]]:
+                       params: dict | None = None) -> Optional[Dict[str, Any]]:
         """Hook optionnel : pyramidage (ajout d'une unité sur position gagnante).
 
         Appelé par le backtest et le live à chaque cycle quand une position de
@@ -76,6 +89,8 @@ class BaseStrategyML(BaseStrategy):
     """
     retrain_interval_h: int = 6
     model_dir: str = "models"
+    _cancel_event: Any
+    managed_externally: bool = False
 
     # ── Contrat de gate (ML-02) ────────────────────────────────────────────
     # Déclaratif : conventions de labels/métrique de CETTE recette, quand elle
@@ -90,7 +105,7 @@ class BaseStrategyML(BaseStrategy):
 
     @classmethod
     def score_holdout(cls, path_prefix: str, holdout_df, *,
-                      gate_cfg: Any = None, params: dict = None) -> Dict[str, Any]:
+                      gate_cfg: Any = None, params: dict | None = None) -> Dict[str, Any]:
         """Charge l'artefact à ``path_prefix`` et retourne ses métriques sur
         ``holdout_df`` — utilisé par le gate de promotion pour comparer un
         candidat au sortant sur un holdout commun (``app.ml.policy``).
@@ -116,11 +131,11 @@ class BaseStrategyML(BaseStrategy):
             amp_top_pct=getattr(gate_cfg, "amp_top_pct", 0.30),
         )
 
-    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
+    def fit(self, df: pl.DataFrame, params: dict | None = None) -> None:
         """Entraîne le modèle sur df avec les paramètres fournis."""
         raise NotImplementedError
 
-    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
+    def predict(self, df: pl.DataFrame, params: dict | None = None) -> Dict[str, Any]:
         """Retourne un signal en utilisant le modèle déjà entraîné."""
         raise NotImplementedError
 
@@ -158,7 +173,7 @@ class Engine:
             logger.info(f"[Engine] Stratégie enregistrée : {strategy.name}")
         self.strategies.append(strategy)
 
-    def best_signal(self, df: pl.DataFrame, params: dict = None,
+    def best_signal(self, df: pl.DataFrame, params: dict | None = None,
                     df_htf=None, symbol: str = "",
                     threshold: float = 0.0,
                     stats: Optional[Dict[str, Dict[str, int]]] = None) -> Dict[str, Any]:
@@ -221,3 +236,55 @@ class Engine:
                     sd["errors"] += 1
                 logger.error(f"[Engine] Erreur dans stratégie {strat.name} : {e}")
         return best
+
+    def passing_signals(self, df: pl.DataFrame, params: dict | None = None,
+                        df_htf=None, symbol: str = "",
+                        threshold: float = 0.0,
+                        stats: Optional[Dict[str, Dict[str, int]]] = None) -> List[Dict[str, Any]]:
+        """B-02 : tous les signaux au-dessus du seuil, meilleurs d'abord.
+
+        ``best_signal`` n'en garde qu'un ; le backtest multi-positions ouvre
+        un slot par stratégie qui passe, comme le live.
+        """
+        if df is None or len(df) < 2:
+            return []
+        out: List[Dict[str, Any]] = []
+        for strat in self.strategies:
+            sd = None
+            if stats is not None:
+                sd = stats.setdefault(strat.name, {
+                    "evaluated": 0, "none": 0, "proposed": 0,
+                    "below_threshold": 0, "above_threshold": 0, "errors": 0,
+                })
+            try:
+                result = strat.score(df, params, df_htf=df_htf, symbol=symbol)
+                if not isinstance(result, dict):
+                    continue
+                if sd is not None:
+                    sd["evaluated"] += 1
+                score = result.get("score", 0)
+                side  = result.get("side", "none")
+                if side == "none" or score <= 0:
+                    if sd is not None:
+                        sd["none"] += 1
+                    continue
+                if sd is not None:
+                    sd["proposed"] += 1
+                strat_threshold = float(
+                    (params or {}).get(strat.name, {}).get("score_threshold", threshold)
+                )
+                if score < strat_threshold:
+                    if sd is not None:
+                        sd["below_threshold"] += 1
+                    continue
+                if sd is not None:
+                    sd["above_threshold"] += 1
+                result = dict(result)
+                result.setdefault("name", strat.name)
+                out.append(result)
+            except Exception as e:
+                if sd is not None:
+                    sd["errors"] += 1
+                logger.error(f"[Engine] Erreur dans stratégie {strat.name} : {e}")
+        out.sort(key=lambda r: float(r.get("score") or 0), reverse=True)
+        return out

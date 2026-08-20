@@ -127,7 +127,7 @@ class Strategy(_V11Strategy):
         }}
 
     # ── Score V12 ─────────────────────────────────────────────────────────────
-    def score(self, df: pl.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         sig = super().score(df, params, df_htf=df_htf, symbol=symbol)
         if not sig or sig.get("side") == "none":

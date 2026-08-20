@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api import state
 from app.api.helpers import verify_api_key
+from app.api.schemas import RiskOverviewResponse, TradesListResponse
 from app.core.bot_identity import build_slot_key
 from app.core.database import session_scope
 from app.core.risk_gate import _default_venue_capital
@@ -28,9 +29,10 @@ def _validate_slot_key(slot_key: str) -> None:
         raise HTTPException(400, "Format slot_key invalide")
 
 
-@router.get("/api/trades", dependencies=[Depends(verify_api_key)])
+@router.get("/api/trades", dependencies=[Depends(verify_api_key)],
+            response_model=TradesListResponse)
 def list_trades(limit: int = 100, offset: int = 0,
-                symbol: str = None, strategy: str = None):
+                symbol: str | None = None, strategy: str | None = None):
     """Retourne les trades paginés avec filtres optionnels symbol/strategy."""
     if not state.SessionLocal:
         raise HTTPException(503, "DB non initialisée")
@@ -100,7 +102,7 @@ def daily_stats(days: int = 30):
 
 
 @router.get("/api/stats/fees", dependencies=[Depends(verify_api_key)])
-def fee_breakdown(days: int = None):
+def fee_breakdown(days: int | None = None):
     """FIN-06 : compteur de frais par catégorie — taker/maker/borrow/stop.
 
     ``days`` optionnel (défaut : toute l'historique) limite aux trades clos
@@ -116,7 +118,8 @@ def fee_breakdown(days: int = None):
         return get_fee_breakdown(session, since=since)
 
 
-@router.get("/api/risk", dependencies=[Depends(verify_api_key)])
+@router.get("/api/risk", dependencies=[Depends(verify_api_key)],
+            response_model=RiskOverviewResponse)
 def risk_status():
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")
@@ -355,20 +358,22 @@ def strategy_performance(slot_key: str):
         win_rate = round(wins / total * 100, 1) if total > 0 else 0.0
         pf = round(gross_win / gross_loss, 3) if gross_loss > 0 else (999.0 if gross_win > 0 else 0.0)
 
-        # Sharpe + Max DD
+        # R-01 : même plancher F-02 que health_mixin / BacktestResult.
+        from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES
         pnls = [float(t.pnl or 0) for t in trades_raw]
-        sharpe = 0.0
+        sharpe = None
         max_dd = 0.0
-        if len(pnls) >= 3:
+        if len(pnls) >= MIN_SIGNIFICANT_TRADES:
             import numpy as _np
             arr = _np.array(pnls)
             std = float(_np.std(arr))
             if std > 0:
                 sharpe = round(float(_np.mean(arr)) / std * _np.sqrt(252), 3)
-            if len(pnls) >= 2:
-                eq   = _np.cumsum(pnls)
-                peak = _np.maximum.accumulate(eq)
-                max_dd = round(float(_np.min((eq - peak) / (peak + 1e-9) * 100)), 2)
+        if len(pnls) >= 2:
+            import numpy as _np
+            eq   = _np.cumsum(pnls)
+            peak = _np.maximum.accumulate(eq)
+            max_dd = round(float(_np.min((eq - peak) / (peak + 1e-9) * 100)), 2)
 
         slot_state = None
         if state.trader:

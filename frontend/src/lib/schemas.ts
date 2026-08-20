@@ -79,6 +79,8 @@ export const BotSchema = z
         ci_low_pct: num,
         ci_high_pct: num,
         worst_trade_pct: num,
+        mean_pct: num,
+        avg_return_pct: num,
       })
       .passthrough()
       .nullish(),
@@ -398,7 +400,10 @@ export const WalkForwardErrorSchema = z
 export const WalkForwardSuccessSchema = z
   .object({
     n_folds: z.number(),
+    kind: z.string().optional(),
+    reoptimizes: z.boolean().optional(),
     avg_oos_pnl: num,
+    avg_fold_pnl: num.optional(),
     avg_oos_sharpe: num,
     avg_oos_wr: num,
     consistency: num,

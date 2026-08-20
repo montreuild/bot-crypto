@@ -1,12 +1,13 @@
-"""MLStrategyTrainer — gestion du cycle de vie des modèles ML (chargement, scheduling, réentraînement).
+"""MLStrategyTrainer — cycle de vie des *stratégies* ML live (chargement, scheduling).
 
-ML-02 : le chargement passe par le registre (``app.ml.model_registry`` —
-dernière version PROMUE pour ce (symbole, TF, stratégie), au lieu du chemin
-plat historique) et le réentraînement passe par la politique de gate
-(``app.ml.policy.maybe_refresh`` — le nouveau modèle n'est promu que s'il ne
-régresse pas par rapport au sortant, comparés sur le même holdout). Un modèle
-qui régresse reste sur disque pour l'audit (``decisions.jsonl``) mais
-n'écrase jamais silencieusement le modèle servi.
+Ce n'est **pas** ``RecipeTrainer`` (``app.ml.recipe_trainer``) : les recettes
+s'entraînent à la demande (``/api/ml/train``, jobs ML). Ici on planifie le
+réentraînement des **stratégies** activées en live. Une stratégie consomme
+une recette (clé du registre) ; le timer est par ``(stratégie, TF)``, jamais
+par recette.
+
+ML-02 : chargement via le registre (dernière version PROMUE pour
+``(TF, recette)``) et gate ``maybe_refresh`` avant promotion.
 """
 import logging
 import threading
@@ -23,12 +24,20 @@ logger = logging.getLogger(__name__)
 # rien n'empêche de continuer à le servir, cf. ``retrain_due`` qui le
 # rafraîchira au prochain cycle si le scheduler tourne).
 _STALE_FACTOR = 2.0
+# ``retrain_interval_h`` historique (= 6) était un timer wall-clock identique
+# pour 15m et 1d : 24 bougies d'un côté, un quart de bougie de l'autre.
+# On vise ~200 nouvelles barres (¼ de retrain_every=800), plancher 24 h,
+# plafond 14 j. ``base_h`` reste un multiplicateur de config (6 → ×1).
+_LIVE_BARS_PER_CYCLE = 200.0
+_MIN_INTERVAL_H = 24.0
+_MAX_INTERVAL_H = 14 * 24.0
+_BASE_H_REF = 6.0
 
 
 class MLStrategyTrainer:
     """Gère le cycle de vie des modèles BaseStrategyML (chargement, scheduling, réentraînement)."""
 
-    def __init__(self, cfg: dict, ml_lock: threading.Lock = None):
+    def __init__(self, cfg: dict, ml_lock: threading.Lock | None = None):
         self.cfg = cfg
         self._ml_lock = ml_lock or threading.Lock()
         self._retrain_timeout = float(
@@ -59,30 +68,37 @@ class MLStrategyTrainer:
                 continue
             strat.managed_externally = True
             sp         = strat_params.get(name, {})
-            interval_h = float(sp.get("retrain_interval_h", strat.retrain_interval_h))
+            base_h     = float(sp.get("retrain_interval_h", strat.retrain_interval_h))
             base_dir   = getattr(strat, "model_dir", "models") or "models"
+            recipe     = self._recipe_name(strat)
 
             for tf in self._supported_tfs(strat, timeframes):
                 key = f"{name}@{tf}"
+                interval_h = self._scaled_retrain_interval_h(base_h, tf)
                 art = None
                 try:
-                    from app.ml.scoring import resolve_recipe_name
-                    art = ml_registry.resolve(tf, resolve_recipe_name(strat),
-                                              base_dir=base_dir)
+                    art = ml_registry.resolve(tf, recipe, base_dir=base_dir)
                 except Exception as e:
-                    logger.warning(f"[MLTrainer] {name}/{tf} : resolve() KO : {e}")
+                    logger.warning(
+                        f"[MLTrainer] stratégie {name}/{tf} "
+                        f"(recette={recipe}) : resolve() KO : {e}"
+                    )
 
                 if art is not None and strat.load_model(art.path_prefix):
+                    auc = self._loaded_auc(strat, tf)
                     logger.info(
-                        f"[MLTrainer] {name}/{tf} : modèle chargé "
-                        f"(version={art.version_id}, AUC={strat._best_auc_per_tf.get(tf, 0):.4f})"
+                        f"[MLTrainer] stratégie {name}/{tf} : modèle chargé "
+                        f"(recette={recipe}, version={art.version_id}, AUC={auc:.4f})"
                     )
                     warn = self._freshness_warning(art, interval_h)
                     if warn:
-                        logger.warning(f"[MLTrainer] {name}/{tf} : {warn}")
+                        logger.warning(f"[MLTrainer] stratégie {name}/{tf} : {warn}")
                     self._retrain_at[key] = time.time() + interval_h * 3600
                 else:
-                    logger.info(f"[MLTrainer] {name}/{tf} : pas de modèle — réentraînement immédiat planifié")
+                    logger.info(
+                        f"[MLTrainer] stratégie {name}/{tf} : pas de modèle "
+                        f"(recette={recipe}) — réentraînement immédiat planifié"
+                    )
                     self._retrain_at[key] = 0  # déclenche dès le premier cycle
 
     # ── Interface pour le scheduler (live_trader._maybe_auto_optimize) ─────
@@ -116,14 +132,18 @@ class MLStrategyTrainer:
             if not isinstance(strat, BaseStrategyML):
                 continue
             sp         = strat_params.get(name, {})
-            interval_h = float(sp.get("retrain_interval_h", strat.retrain_interval_h))
+            base_h     = float(sp.get("retrain_interval_h", strat.retrain_interval_h))
 
             for tf in self._supported_tfs(strat, timeframes):
                 key = f"{name}@{tf}"
                 if now < self._retrain_at.get(key, 0):
                     continue
+                interval_h = self._scaled_retrain_interval_h(base_h, tf)
                 self._retrain_at[key] = now + interval_h * 3600
-                logger.info(f"[MLTrainer] Réentraînement planifié : {name}/{tf} (intervalle={interval_h}h)")
+                logger.info(
+                    f"[MLTrainer] Réentraînement stratégie {name}/{tf} planifié "
+                    f"(intervalle={interval_h:.0f}h, cadence TF — pas une recette)"
+                )
                 timeout = self._retrain_timeout
                 threading.Thread(
                     target=self._retrain_with_timeout,
@@ -339,6 +359,49 @@ class MLStrategyTrainer:
             logger.warning(f"[MLTrainer] get_symbols() KO : {e}")
             return None
         return next((s for s in symbols if "BTC" in s), symbols[0] if symbols else None)
+
+    @staticmethod
+    def _loaded_auc(strat, tf: str) -> float:
+        """AUC à journaliser après ``load_model`` — jamais une exception.
+
+        ``_best_auc_per_tf`` n'existe que sur les stratégies MLBackendMixin
+        (et quelques presets historiques). ``smc_ml_edge`` et tout
+        ``BaseStrategyML`` autonome n'ont pas cet attribut : y accéder
+        cassait l'init de LiveTrader (serveur web seul, ``trader: false``).
+        """
+        auc_map = getattr(strat, "_best_auc_per_tf", None)
+        if not isinstance(auc_map, dict):
+            return 0.0
+        try:
+            return float(auc_map.get(tf, 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _recipe_name(strat) -> str:
+        """Nom de recette consommée — clé registre, distinct du nom de stratégie."""
+        try:
+            from app.ml.scoring import resolve_recipe_name
+            return str(resolve_recipe_name(strat))
+        except Exception:
+            return "?"
+
+    @staticmethod
+    def _scaled_retrain_interval_h(base_h: float, tf: str) -> float:
+        """Intervalle live (heures) pour une stratégie, selon le TF.
+
+        ``base_h`` (défaut historique 6) n'est plus un timer unique : 6 h sur
+        15m (= 24 bougies) et sur 1d (¼ de bougie) n'ont pas de sens. On
+        attend ~200 barres × (base_h / 6), borné à [24 h, 14 j].
+        Les recettes (RecipeTrainer) ne passent pas par ici.
+        """
+        from app.core.timeframes import TF_SECONDS
+        if base_h <= 0:
+            return 0.0
+        tf_sec = float(TF_SECONDS.get(tf) or 3600)
+        scale = float(base_h) / _BASE_H_REF
+        hours = _LIVE_BARS_PER_CYCLE * scale * tf_sec / 3600.0
+        return max(_MIN_INTERVAL_H, min(_MAX_INTERVAL_H, hours))
 
     @staticmethod
     def _freshness_warning(art, interval_h: float, stale_factor: float = _STALE_FACTOR) -> Optional[str]:

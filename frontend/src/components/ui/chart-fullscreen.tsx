@@ -8,10 +8,10 @@
  * wrappé en S1) — inutile de recâbler des handlers globaux comme le faisait le
  * JS inline de la page Jinja2.
  *
- * `children` est une fonction et non un noeud : le graphique est monté DEUX
- * fois (vignette + plein écran) avec des hauteurs différentes, et recharts
- * mesure son conteneur au montage. Passer le même élément aux deux endroits
- * donnerait un graphique plein écran figé à la taille de la vignette.
+ * `children` est une fonction : le graphique plein écran est monté dans le
+ * Dialog (recharts mesure son conteneur au montage). Le bouton vit dans le
+ * header du parent — on ne re-rend PAS la vignette ici (évite un 2e chart
+ * et un bouton `absolute -top-7` mal placé).
  */
 
 import { useState, type ReactNode } from 'react';
@@ -29,18 +29,15 @@ export function ChartFullscreen({
 
   return (
     <>
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-label={`Afficher « ${title} » en plein écran`}
-          title="Plein écran"
-          className="absolute right-0 -top-7 z-10 p-1.5 rounded-md text-dim hover:text-foreground hover:bg-card-hover focus:outline-none focus:ring-2 focus:ring-primary-400"
-        >
-          <Maximize2 className="w-3.5 h-3.5" />
-        </button>
-        {children({ fullscreen: false })}
-      </div>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`Afficher « ${title} » en plein écran`}
+        title="Plein écran"
+        className="p-1.5 rounded-md text-dim hover:text-foreground hover:bg-card-hover focus:outline-none focus:ring-2 focus:ring-primary-400"
+      >
+        <Maximize2 className="w-3.5 h-3.5" />
+      </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-[95vw] w-[95vw] h-[90vh] flex flex-col">

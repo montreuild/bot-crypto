@@ -1,8 +1,6 @@
 """Route replay — rejeu multi-timeframe sur N mois pour validation."""
-import importlib
 import logging
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -11,10 +9,7 @@ from app.api import state
 from app.api.helpers import _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps, verify_api_key
 from app.core.candle_store import get_store
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.risk_gate import _default_venue_capital
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES  # V4-A : source unique
-from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer
-from app.engine.engine import Engine
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,6 +26,8 @@ def _months_to_bars(months: float, tf: str) -> int:
 def cancel_replay(request: Request):
     """Annule le replay en cours."""
     state._rp_cancel_event.set()
+    from app.engine.compute_pool import request_cancel
+    request_cancel()
     return {"status": "cancelling"}
 
 
@@ -108,95 +105,49 @@ def run_replay(
                 "low":    [round(float(v), 6) for v in df["low"].to_list()],
             }
 
-            mc_runner   = (
-                MonteCarlo(n_runs=state.cfg.get("backtest", {}).get("monte_carlo_runs", 200))
-                if monte_carlo else None
-            )
             by_strategy = {}
+            from app.engine.compute_pool import clear_cancel, map_jobs
+            clear_cancel()
+            bt_cfg = state.cfg.get("backtest") or {}
+            payloads = [{
+                "name": name,
+                "cfg": state.cfg,
+                "df": df,
+                "symbol": symbol,
+                "timeframe": tf,
+                "realistic_risk": False,
+                "dual_pass": False,
+                "envelope": None,
+                "walk_forward": walk_forward,
+                "monte_carlo": monte_carlo,
+                "days_covered": days_covered,
+                "bars_warning": None,
+                "wf_folds": bt_cfg.get("walk_forward_folds", 5),
+                "mc_runs": bt_cfg.get("monte_carlo_runs", 200),
+            } for name in strats_to_run]
+            computed = map_jobs(payloads, max_workers=min(len(strats_to_run), 4))
+            if state._rp_cancel_event.is_set():
+                raise HTTPException(499, "Replay annulé par l'utilisateur")
+            for name, result in computed:
+                by_strategy[name] = result
+                if "error" not in result and result.get("total_trades", 0) > 0:
+                    cap = result.get("initial_capital", 1) or 1
+                    cross_tf_summary.append({
+                        "tf":            tf,
+                        "strategy":      name,
+                        "n_bars":        actual_bars,
+                        "days_covered":  days_covered,
+                        "trades":        result["total_trades"],
+                        "win_rate":      result["win_rate"],
+                        "pnl":           result["total_pnl"],
+                        "pnl_pct":       round(result["total_pnl"] / cap * 100, 2),
+                        "sharpe":        result["sharpe"],
+                        "max_drawdown":  result["max_drawdown"],
+                        "profit_factor": result["profit_factor"],
+                        "final_equity":  result["final_equity"],
+                    })
 
-            def _run_one(name: str, _df=df, _tf=tf) -> tuple:
-                try:
-                    if state._rp_cancel_event.is_set():
-                        return name, {"error": "Annulé"}
-                    mod  = importlib.import_module(f"app.strategies.{name}")
-                    inst = mod.Strategy()
-                    if hasattr(inst, "_cancel_event"):
-                        inst._cancel_event = state._rp_cancel_event
-                    eng = Engine()
-                    eng.register(inst, silent=True)
-                    bt  = Backtester(eng, state.cfg, cancel_event=state._rp_cancel_event)
-                    res = bt.run(_df, symbol, timeframe=_tf)
-                    d   = res.to_dict()
-
-                    strat_key  = next(iter(res.by_strategy.keys()), name) if res.by_strategy else name
-                    strat_data = res.by_strategy.get(strat_key, {})
-                    all_trades = strat_data.get("trades", [])
-
-                    entry = {
-                        "total_trades":     strat_data.get("total_trades",  d["total_trades"]),
-                        "win_rate":         strat_data.get("win_rate",      d["win_rate"]),
-                        "total_pnl":        strat_data.get("total_pnl",     d["total_pnl"]),
-                        "total_fees":       strat_data.get("total_fees",    d["total_fees"]),
-                        "max_drawdown":     strat_data.get("max_drawdown",  d["max_drawdown"]),
-                        "sharpe":           strat_data.get("sharpe",        d["sharpe"]),
-                        "expectancy":       strat_data.get("expectancy",    d["expectancy"]),
-                        "profit_factor":    strat_data.get("profit_factor", d["profit_factor"]),
-                        "avg_win":          strat_data.get("avg_win",       d.get("avg_win", 0)),
-                        "avg_loss":         strat_data.get("avg_loss",      d.get("avg_loss", 0)),
-                        "initial_capital":  d["initial_capital"],
-                        "final_equity":     strat_data.get("final_equity",  d["final_equity"]),
-                        "equity_curve":     strat_data.get("equity_curve",  d.get("equity_curve", [])),
-                        "buy_and_hold_pct": d.get("buy_and_hold_pct", 0),
-                        "trades":           all_trades,
-                        "days_covered":     days_covered,
-                    }
-
-                    if walk_forward and actual_bars >= 200:
-                        wf = WalkForwardAnalyzer(
-                            eng, state.cfg,
-                            n_folds=state.cfg.get("backtest", {}).get("walk_forward_folds", 5)
-                        )
-                        entry["walk_forward"] = wf.run(_df, symbol)
-
-                    if mc_runner and all_trades:
-                        entry["monte_carlo"] = mc_runner.run(
-                            all_trades, _default_venue_capital(state.cfg)
-                        )
-
-                    return name, entry
-
-                except Exception as e:
-                    logger.error(f"[Replay] {name}/{_tf} : {e}", exc_info=True)
-                    return name, {"error": str(e), "trades": []}
-
-            with ThreadPoolExecutor(max_workers=min(len(strats_to_run), 4)) as pool:
-                futures = {pool.submit(_run_one, n): n for n in strats_to_run}
-                for fut in as_completed(futures):
-                    if state._rp_cancel_event.is_set():
-                        for f in futures:
-                            f.cancel()
-                        raise HTTPException(499, "Replay annulé par l'utilisateur")
-                    name, result = fut.result()
-                    by_strategy[name] = result
-
-                    if "error" not in result and result.get("total_trades", 0) > 0:
-                        cap = result.get("initial_capital", 1) or 1
-                        cross_tf_summary.append({
-                            "tf":            tf,
-                            "strategy":      name,
-                            "n_bars":        actual_bars,
-                            "days_covered":  days_covered,
-                            "trades":        result["total_trades"],
-                            "win_rate":      result["win_rate"],
-                            "pnl":           result["total_pnl"],
-                            "pnl_pct":       round(result["total_pnl"] / cap * 100, 2),
-                            "sharpe":        result["sharpe"],
-                            "max_drawdown":  result["max_drawdown"],
-                            "profit_factor": result["profit_factor"],
-                            "final_equity":  result["final_equity"],
-                        })
-
-            ohlcv_gaps   = detect_ohlcv_gaps(df, tf)
+            ohlcv_gaps   = detect_ohlcv_gaps(df, tf, symbol=symbol)
             gaps_warning = None
             if ohlcv_gaps:
                 total_missing = sum(g["gap_bars"] for g in ohlcv_gaps)

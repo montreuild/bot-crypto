@@ -24,7 +24,7 @@ import os
 import threading
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,9 @@ class Venue:
         """
         if not self.borrows:
             return 0.0
+        # Le TAUX reste celui de la venue même à levier 1 : un SHORT emprunte
+        # l'actif (F-04). C'est ``borrowed_notional`` / ``close_pnl`` qui
+        # annulent le montant sur un LONG couvert par les fonds propres.
         return float(self.borrow_rate_daily if self.borrow_rate_daily is not None
                      else default_rate)
 
@@ -179,7 +182,7 @@ def _enforce_market_coherence(v: Venue) -> Venue:
     if v.market_type in _BORROWING_MARKETS:
         return v
 
-    fixes = {}
+    fixes: dict[str, Any] = {}
     if v.max_leverage > 1:
         fixes["max_leverage"] = 1.0
     if v.margin_mode:
@@ -407,6 +410,19 @@ def build_pos_key(symbol: str, strategy: str, timeframe: str) -> str:
     return f"{symbol}::{strategy}::{timeframe}"
 
 
+def parse_pos_key(pos_key: str) -> tuple:
+    """Décompose ``symbol::strategy::tf`` → ``(symbol, strategy, tf)``.
+
+    Miroir de ``build_pos_key``. Le TF n'est pas une colonne de
+    ``open_positions`` : après un redémarrage il faut le relire depuis l'id.
+    """
+    parts = (pos_key or "").split("::")
+    symbol = parts[0] if parts else ""
+    strategy = parts[1] if len(parts) > 1 else ""
+    tf = parts[2] if len(parts) > 2 else ""
+    return symbol, strategy, tf
+
+
 def parse_slot_key(slot_key: str) -> tuple:
     """Décompose ``strategy::tf[::symbol]`` → ``(strategy, tf, symbol)``.
 
@@ -445,7 +461,7 @@ def register_identity(strategy: str, timeframe: str, params: dict,
 
 
 def peek_identity(strategy: str, timeframe: str, params: dict,
-                  cfg: dict, gens: dict = None, symbol: str = "") -> BotIdentity:
+                  cfg: dict, gens: dict | None = None, symbol: str = "") -> BotIdentity:
     """Identité **sans** effet de bord (lecture seule, ne touche pas la génération).
 
     Utile pour l'affichage : la génération courante est celle persistée (ou 1 par

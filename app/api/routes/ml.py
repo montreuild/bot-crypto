@@ -2,6 +2,7 @@
 registre de modèles daté (ML-02 — page « Modèles »)."""
 import importlib
 import logging
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -451,7 +452,9 @@ def ml_versioning_audit(request: Request):
         }
     except Exception as e:
         logger.error(f"[API] ml/versioning/audit KO : {e}", exc_info=True)
-        raise HTTPException(500, f"Erreur interne : {e}")
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} ml : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
 # ── P1-2 : Route pour lister les jobs ML récents ──────────────────────────────
@@ -500,7 +503,9 @@ def ml_jobs_list(request: Request, status: str = "", kind: str = "", limit: int 
         }
     except Exception as e:
         logger.error(f"[API] ml/jobs KO : {e}", exc_info=True)
-        raise HTTPException(500, f"Erreur interne : {e}")
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} ml : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
 # ── P1-2 : Route pour supprimer un job ML ────────────────────────────────────
@@ -522,7 +527,9 @@ def ml_jobs_delete(request: Request, job_id: str):
         raise
     except Exception as e:
         logger.error(f"[API] ml/jobs/{job_id} DELETE KO : {e}", exc_info=True)
-        raise HTTPException(500, f"Erreur interne : {e}")
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} ml : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
 # ── P1-3 : Audit trail global des décisions ML (toutes recettes confondues) ──
@@ -566,7 +573,9 @@ def ml_registry_decisions_recent(request: Request, limit: int = 100):
         }
     except Exception as e:
         logger.error(f"[API] ml/registry/decisions/recent KO : {e}", exc_info=True)
-        raise HTTPException(500, f"Erreur interne : {e}")
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} ml : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
 # ── P1-4 : Garde anti-chevauchement pour backtest frozen ─────────────────────
@@ -651,4 +660,6 @@ def ml_registry_overlaps(
         }
     except Exception as e:
         logger.error(f"[API] ml/registry/overlaps KO : {e}", exc_info=True)
-        raise HTTPException(500, f"Erreur interne : {e}")
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} ml : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")

@@ -15,6 +15,7 @@ from app.ml.splitting import (
     chrono_split,
     label_embargo,
     purged_time_series_splits,
+    val_eval_cut,
 )
 
 
@@ -28,21 +29,27 @@ class TestEmbargo:
         assert label_embargo(["3", 7]) == 7
 
     def test_le_split_reproduit_la_formule_historique(self):
-        """À embargo nul, le découpage doit être celui d'avant, indice pour indice."""
+        """La coupure de validation reste historique ; l'embargo ML-02 ajoute 1 %."""
+        from app.core.is_oos import default_purge_embargo
+        from app.ml.splitting import label_embargo
         for n in (1000, 5000, 12345):
             plan = chrono_split(n, [1])
             attendu = min(max(int(n * 0.8), MIN_TRAIN), n - MIN_VALID)
             assert plan.split == attendu
-            assert plan.train == attendu - 1        # embargo de 1 pour l'horizon 1
+            _, embargo = default_purge_embargo(n, label_embargo([1]))
+            assert plan.train == attendu - embargo
 
     def test_lembargo_ne_mord_que_sur_lentrainement(self):
         """La validation garde ses lignes : les AUC restent comparables."""
+        from app.core.is_oos import default_purge_embargo
+        from app.ml.splitting import label_embargo
         n = 5000
         court = chrono_split(n, [1])
         long_ = chrono_split(n, [1, 3, 6, 12])
         assert long_.split == court.split
         assert n - long_.split == n - court.split
-        assert long_.train == long_.split - 12
+        _, embargo = default_purge_embargo(n, label_embargo([1, 3, 6, 12]))
+        assert long_.train == long_.split - embargo
 
     def test_refus_quand_lembargo_ne_laisse_pas_assez(self):
         assert chrono_split(0, [1]) is None
@@ -109,3 +116,22 @@ class TestFoldsPurges:
         assert all(len(tr) > 0 for tr, _ in folds)
         assert purged_time_series_splits(10, 1) == []
         assert purged_time_series_splits(3, 5) == []
+
+
+class TestValEvalCut:
+    """ML-04 : calib et eval sont deux moitiés disjointes."""
+
+    def test_none_si_trop_court(self):
+        assert val_eval_cut(39) is None
+        assert val_eval_cut(0) is None
+
+    def test_moitie_quand_assez_grand(self):
+        assert val_eval_cut(40) == 20
+        assert val_eval_cut(101) == 50
+
+    def test_les_deux_tranches_sont_disjointes(self):
+        n = 80
+        cut = val_eval_cut(n)
+        calib, eval_ = set(range(cut)), set(range(cut, n))
+        assert not calib & eval_
+        assert len(calib) + len(eval_) == n

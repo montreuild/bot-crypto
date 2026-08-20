@@ -9,6 +9,7 @@ import time
 from fastapi import HTTPException, Request
 
 from app.api import state
+from app.core.ohlcv_gaps import detect_ohlcv_gaps  # noqa: F401 — re-export D-03
 from app.core.sanitize import CleanJSONResponse  # noqa: F401 — re-export
 from app.core.sanitize import clean_for_json as _clean  # noqa: F401 — re-export
 
@@ -122,17 +123,23 @@ def _get_bt_exchange(cfg: dict):
 _STRATEGY_CLASS_RE = re.compile(r"^class\s+Strategy\b", re.MULTILINE)
 
 
+_STRATEGY_FILE_CACHE: dict = {}  # path -> (mtime, bool)
+
+
 def _module_defines_strategy(path: str) -> bool:
     """True si le fichier définit ``class Strategy``.
 
-    Le test se fait sur le TEXTE, pas par import : importer les ~45 modules
-    de stratégies à chaque expiration de cache coûterait plusieurs secondes
-    (LightGBM, polars…) et exécuterait leur code au niveau module pour une
-    simple question de nommage.
+    P-09 : le contenu n'est relu que si le mtime a changé.
     """
     try:
+        mtime = os.path.getmtime(path)
+        hit = _STRATEGY_FILE_CACHE.get(path)
+        if hit and hit[0] == mtime:
+            return hit[1]
         with open(path, "r", encoding="utf-8") as fh:
-            return bool(_STRATEGY_CLASS_RE.search(fh.read()))
+            ok = bool(_STRATEGY_CLASS_RE.search(fh.read()))
+        _STRATEGY_FILE_CACHE[path] = (mtime, ok)
+        return ok
     except OSError as e:
         logger.warning(f"[Strategies] Lecture impossible de {path} : {e}")
         return False
@@ -164,26 +171,6 @@ def _discover_strategies() -> frozenset:
 
 
 # ── Helpers OHLCV ──────────────────────────────────────────────────────────
-
-def detect_ohlcv_gaps(df, timeframe: str) -> list:
-    tf_mins = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-               "1h": 60, "4h": 240, "1d": 1440}
-    expected_mins  = tf_mins.get(timeframe, 60)
-    from datetime import timedelta as _timedelta
-    expected_delta = _timedelta(minutes=expected_mins)
-    gaps  = []
-    times = df["time"]
-    for i in range(1, len(times)):
-        delta = times[i] - times[i - 1]
-        if delta > expected_delta * 1.5:
-            gap_bars = round(delta.total_seconds() / 60 / expected_mins) - 1
-            gaps.append({
-                "index":        int(i),
-                "time_before":  str(times[i - 1])[:16],
-                "time_after":   str(times[i])[:16],
-                "gap_bars":     gap_bars,
-                "gap_duration": str(delta),
-            })
-    return gaps
+# detect_ohlcv_gaps : app.core.ohlcv_gaps (calendrier-aware, D-03).
 
 

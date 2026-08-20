@@ -22,7 +22,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { ChevronDown, ChevronRight, History, Loader2, Trash2 } from 'lucide-react';
-import { formatDateTime } from '@/lib/utils';
+import {formatDateTime, errorMessage} from '@/lib/utils';
 
 interface ChangelogEntry {
   timestamp?: string;
@@ -30,9 +30,8 @@ interface ChangelogEntry {
   timeframe?: string;
   symbol?: string;
   oos_score?: number;
-  params_before?: Record<string, any>;
-  params_after?: Record<string, any>;
-  [key: string]: any;
+  params_before?: Record<string, unknown>;
+  params_after?: Record<string, unknown>;
 }
 
 export function OptimizerHistory({ className }: { className?: string }) {
@@ -46,8 +45,8 @@ export function OptimizerHistory({ className }: { className?: string }) {
       const res = await api.optimizePurge(24, 200);
       toast.success(`${res.purged} job(s) purgé(s), ${res.remaining} restant(s)`);
       qc.invalidateQueries({ queryKey: ['optimizeStatus'] });
-    } catch (e: any) {
-      toast.error(`Erreur purge : ${e.message}`);
+    } catch (e) {
+      toast.error(`Erreur purge : ${errorMessage(e)}`);
     } finally {
       setPurging(false);
     }

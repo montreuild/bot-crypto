@@ -30,6 +30,31 @@ function resolveWsUrl(): string {
 
 const WS_URL = resolveWsUrl();
 
+/** Demande un jeton WS éphémère via le proxy same-origin (pose aussi le cookie). */
+async function fetchWsTicket(): Promise<string | null> {
+  try {
+    const r = await fetch('/api/ws/ticket', { method: 'POST', credentials: 'include' });
+    if (!r.ok) return null;
+    const body = await r.json();
+    return typeof body?.ticket === 'string' && body.ticket ? body.ticket : null;
+  } catch {
+    return null;
+  }
+}
+
+export function wsUrlWithTicket(base: string, ticket: string | null): string {
+  if (!ticket) return base;
+  try {
+    const origin = typeof window !== 'undefined' ? window.location.href : 'http://localhost';
+    const u = new URL(base, origin);
+    u.searchParams.set('ticket', ticket);
+    return u.toString();
+  } catch {
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}ticket=${encodeURIComponent(ticket)}`;
+  }
+}
+
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 interface WSContextValue {
@@ -51,60 +76,79 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttempts = useRef(0);
   const mountedRef = useRef(true);
+  const connectingRef = useRef(false);
 
   const connect = useCallback(() => {
     if (!mountedRef.current) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (connectingRef.current) return;
 
+    connectingRef.current = true;
     setStatus('connecting');
-    // S1-04/S1-05 : plus de clé API dans l'URL — le cookie HttpOnly api_key
-    // (posé par les pages web) est envoyé automatiquement par le navigateur
-    // lors du handshake WebSocket, sans exposition dans les logs/devtools.
-    try {
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
+    // Le cookie HttpOnly n'existe qu'après un premier aller-retour REST via
+    // le proxy. Sans jeton, le handshake /ws partait en 403 (Disconnected
+    // sur le premier écran). POST /api/ws/ticket pose le cookie ET fournit
+    // un ticket à usage unique, prévu pour ça (SEC-02).
+    void (async () => {
+      const ticket = await fetchWsTicket();
+      if (!mountedRef.current) {
+        connectingRef.current = false;
+        return;
+      }
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        connectingRef.current = false;
+        return;
+      }
+      try {
+        const ws = new WebSocket(wsUrlWithTicket(WS_URL, ticket));
+        wsRef.current = ws;
 
-      ws.onopen = () => {
-        if (!mountedRef.current) return;
-        reconnectAttempts.current = 0;
-        setStatus('connected');
-        console.info('[WS] connected');
-      };
+        ws.onopen = () => {
+          connectingRef.current = false;
+          if (!mountedRef.current) return;
+          reconnectAttempts.current = 0;
+          setStatus('connected');
+          console.info('[WS] connected');
+        };
 
-      ws.onmessage = (e) => {
-        try {
-          const event: WSEvent = JSON.parse(e.data);
-          setLastEvent(event);
-          if (event.type === 'connected') {
-            setSubscribersCount(event.data?.subscribers || 0);
+        ws.onmessage = (e) => {
+          try {
+            const event: WSEvent = JSON.parse(e.data);
+            setLastEvent(event);
+            if (event.type === 'connected') {
+              setSubscribersCount(event.data?.subscribers || 0);
+            }
+            handlersRef.current.forEach((h) => {
+              try { h(event); } catch (err) { console.error('[WS] handler error:', err); }
+            });
+          } catch (err) {
+            console.error('[WS] parse error:', err);
           }
-          handlersRef.current.forEach((h) => {
-            try { h(event); } catch (err) { console.error('[WS] handler error:', err); }
-          });
-        } catch (err) {
-          console.error('[WS] parse error:', err);
-        }
-      };
+        };
 
-      ws.onerror = (e) => {
-        console.error('[WS] error:', e);
+        ws.onerror = (e) => {
+          connectingRef.current = false;
+          console.error('[WS] error:', e);
+          setStatus('error');
+        };
+
+        ws.onclose = () => {
+          connectingRef.current = false;
+          if (!mountedRef.current) return;
+          setStatus('disconnected');
+          wsRef.current = null;
+          const attempt = reconnectAttempts.current++;
+          const delay = Math.min(1000 * 2 ** attempt, 30000);
+          console.info(`[WS] reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+          reconnectTimeoutRef.current = setTimeout(connect, delay);
+        };
+      } catch (err) {
+        connectingRef.current = false;
+        console.error('[WS] connect error:', err);
         setStatus('error');
-      };
-
-      ws.onclose = () => {
-        if (!mountedRef.current) return;
-        setStatus('disconnected');
-        wsRef.current = null;
-        const attempt = reconnectAttempts.current++;
-        const delay = Math.min(1000 * 2 ** attempt, 30000);
-        console.info(`[WS] reconnecting in ${delay}ms (attempt ${attempt + 1})`);
-        reconnectTimeoutRef.current = setTimeout(connect, delay);
-      };
-    } catch (err) {
-      console.error('[WS] connect error:', err);
-      setStatus('error');
-      reconnectTimeoutRef.current = setTimeout(connect, 5000);
-    }
+        reconnectTimeoutRef.current = setTimeout(connect, 5000);
+      }
+    })();
   }, []);
 
   useEffect(() => {

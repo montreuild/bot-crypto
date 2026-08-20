@@ -6,7 +6,7 @@ dans ``candle_store.get_store`` et ``feature_store.get_feature_store``.
 import threading
 
 
-def lazy_singleton(factory, doc: str = None):
+def lazy_singleton(factory, doc: str | None = None):
     """Retourne un accesseur ``get(*args, **kwargs)`` qui crée l'instance via
     ``factory`` au premier appel (double-checked locking). Les arguments des
     appels suivants sont ignorés — l'instance existe déjà.
@@ -26,10 +26,10 @@ def lazy_singleton(factory, doc: str = None):
 
     def set_instance(obj) -> None:
         with lock:
-            get.instance = obj
+            get.instance = obj  # type: ignore[attr-defined]
 
-    get.instance = None
-    get.set = set_instance
+    get.instance = None  # type: ignore[attr-defined]
+    get.set = set_instance  # type: ignore[attr-defined]
     get.__name__ = f"get_{getattr(factory, '__name__', 'instance').lower()}"
     if doc:
         get.__doc__ = doc

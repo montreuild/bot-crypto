@@ -12,8 +12,9 @@
     --border: #e2e8f0;
     --border-hi: #cbd5e1;
     --fg: #0f172a;
-    --muted: #64748b;
-    --dim: #94a3b8;
+    /* slate-500 (#64748b) ne fait que 4.34:1 sur --card-hover — sous AA. */
+    --muted: #475569;
+    --dim: #334155;
   }
 
   /* Dark theme — activé via <html class="dark"> */
@@ -95,8 +96,10 @@
     font-feature-settings: 'tnum';
   }
 
-  .text-profit { color: #10b981; }
-  .text-loss { color: #ef4444; }
+  .text-profit { color: #047857; }
+  .text-loss { color: #b91c1c; }
+  .dark .text-profit { color: #34d399; }
+  .dark .text-loss { color: #f87171; }
   .text-neutral-pnl { color: var(--muted); }
 
   .bg-profit-dim { background-color: rgba(16, 185, 129, 0.1); }
@@ -114,6 +117,81 @@
 }
 
 @layer utilities {
+  /*
+   * Thème clair : les utilities Tailwind *-200/300/400 sont calibrées pour un
+   * fond sombre (~8:1). Sur blanc / pastilles 10 % elles tombent à 1.1–2.8:1
+   * (axe color-contrast, 21 pages CI). On les remappe vers 700/800.
+   * Le thème sombre conserve les valeurs Tailwind d'origine.
+   */
+  html:not(.dark) {
+    --aa-cyan: #155e75;
+    --aa-emerald: #065f46;
+    --aa-amber: #92400e;
+    --aa-red: #b91c1c;
+    --aa-rose: #be123c;
+    --aa-purple: #6b21a8;
+    --aa-green: #166534;
+  }
+
+  html:not(.dark) :is(
+    .text-cyan-200, .text-cyan-300, .text-cyan-400,
+    .text-primary-200, .text-primary-300, .text-primary-400,
+    .hover\:text-cyan-400:hover,
+    .hover\:text-primary-400:hover,
+    .data-\[state\=active\]\:text-primary-400[data-state='active']
+  ) {
+    color: var(--aa-cyan);
+  }
+
+  html:not(.dark) .group:hover .group-hover\:text-primary-400 {
+    color: var(--aa-cyan);
+  }
+
+  html:not(.dark) :is(
+    .text-emerald-200, .text-emerald-300, .text-emerald-400,
+    .text-emerald-400\/90
+  ) {
+    color: var(--aa-emerald);
+  }
+
+  html:not(.dark) :is(
+    .text-amber-200, .text-amber-300, .text-amber-400,
+    .text-amber-300\/80, .text-amber-400\/80
+  ) {
+    color: var(--aa-amber);
+  }
+
+  html:not(.dark) :is(
+    .text-red-200, .text-red-300, .text-red-400
+  ) {
+    color: var(--aa-red);
+  }
+
+  html:not(.dark) :is(
+    .text-rose-200, .text-rose-300, .text-rose-400,
+    .text-rose-300\/80, .text-rose-400\/70
+  ) {
+    color: var(--aa-rose);
+  }
+
+  html:not(.dark) :is(
+    .text-purple-200, .text-purple-300, .text-purple-400
+  ) {
+    color: var(--aa-purple);
+  }
+
+  html:not(.dark) :is(
+    .text-green-200, .text-green-300, .text-green-400
+  ) {
+    color: var(--aa-green);
+  }
+
+  html:not(.dark) :is(
+    .text-cyan-300\/80
+  ) {
+    color: var(--aa-cyan);
+  }
+
   .text-balance {
     text-wrap: balance;
   }

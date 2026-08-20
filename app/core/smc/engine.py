@@ -44,7 +44,7 @@ Ce module est une FAÇADE (V4-L / ARCH-14) : l'implémentation vit dans
 ``smc_sessions``. Tous les noms historiques restent importables d'ici —
 aucun site d'appel n'a besoin de changer.
 """
-from app.core.smc_geometry import (  # noqa: F401
+from app.core.smc.geometry import (  # noqa: F401
     _cycle_projection,
     _premium_discount_at,
     _trendlines,
@@ -57,7 +57,7 @@ from app.core.smc_geometry import (  # noqa: F401
     void_targets_above,
     void_targets_below,
 )
-from app.core.smc_primitives import (  # noqa: F401
+from app.core.smc.primitives import (  # noqa: F401
     _MAX_KEEP,
     DEFAULTS,
     _empty_result,
@@ -67,7 +67,7 @@ from app.core.smc_primitives import (  # noqa: F401
     _try_cluster_pool,
     _wilder_atr,
 )
-from app.core.smc_sessions import (  # noqa: F401
+from app.core.smc.sessions import (  # noqa: F401
     KILLZONES,
     SESSIONS,
     _htf_buckets,
@@ -80,8 +80,8 @@ from app.core.smc_sessions import (  # noqa: F401
     session_label,
     smt_series,
 )
-from app.core.smc_structure import analyze  # noqa: F401
-from app.core.smc_volume import (  # noqa: F401
+from app.core.smc.structure import analyze  # noqa: F401
+from app.core.smc.volume import (  # noqa: F401
     _regression_channel,
     regression_channel_at,
     volume_profile,

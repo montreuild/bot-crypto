@@ -18,11 +18,11 @@ export function useTradingTimeframes(preferredDefault?: string) {
   const { data: config } = useConfig();
 
   const timeframes = useMemo(() => {
-    const fromStatus = (status as any)?.timeframes;
+    const fromStatus = status?.timeframes;
     if (Array.isArray(fromStatus) && fromStatus.length > 0) {
       return fromStatus.map(String);
     }
-    const fromCfg = (config as any)?.trading?.timeframes;
+    const fromCfg = (config as { trading?: { timeframes?: string[] } } | undefined)?.trading?.timeframes;
     if (Array.isArray(fromCfg) && fromCfg.length > 0) {
       return fromCfg.map(String);
     }
@@ -33,8 +33,8 @@ export function useTradingTimeframes(preferredDefault?: string) {
     if (preferredDefault && timeframes.includes(preferredDefault)) {
       return preferredDefault;
     }
-    const single = (config as any)?.trading?.timeframe
-      || (status as any)?.timeframe;
+    const single = (config as { trading?: { timeframe?: string } } | undefined)?.trading?.timeframe
+      || status?.timeframe;
     if (single && timeframes.includes(String(single))) return String(single);
     return timeframes[0] || '1h';
   }, [timeframes, preferredDefault, config, status]);

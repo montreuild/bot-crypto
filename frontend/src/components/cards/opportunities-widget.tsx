@@ -123,7 +123,7 @@ export function OpportunitiesWidget({ timeframe: tfProp, limit = 12 }: Opportuni
                     className="w-full flex flex-col gap-1 p-2 rounded-md hover:bg-card-hover border border-border/50 transition-colors text-left group"
                   >
                     <div className="flex items-center gap-2 w-full">
-                      <span className="font-mono text-sm font-semibold truncate flex-1">{s.symbol}</span>
+                      <span className="font-mono text-sm font-semibold break-all">{s.symbol}</span>
                       <Badge variant="muted" className="text-[9px] font-mono">{s.timeframe}</Badge>
                       <span className={cn('text-[10px] font-semibold', isLong ? 'text-emerald-400' : 'text-red-400')}>
                         {String(s.side || '—').toUpperCase()}
@@ -197,7 +197,7 @@ export function OpportunitiesWidget({ timeframe: tfProp, limit = 12 }: Opportuni
                   >
                     <div className="flex items-center gap-2 w-full">
                       <span className="text-[10px] text-dim font-mono w-4">{idx + 1}</span>
-                      <span className="font-mono text-sm font-semibold truncate flex-1">{opp.symbol}</span>
+                      <span className="font-mono text-sm font-semibold break-all">{opp.symbol}</span>
                       <span className="text-[10px] text-dim font-mono whitespace-nowrap">
                         {formatSignalTime(sigT)}
                       </span>

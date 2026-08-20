@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * BT-002 — Tableau des trades (sortable, paginé, filtrable, expandable).
  *
@@ -163,7 +165,7 @@ export function TradesTable({ trades, meta, onRowClick }: Props) {
               }}
               className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
                 filter === f
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                  ? 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border border-cyan-500/40'
                   : 'bg-surface border border-border text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -342,7 +344,7 @@ function TradeDetail({ trade }: { trade: BacktestTrade }) {
             </div>
             <ul className="space-y-0.5">
               {conditions.map((c, i) => (
-                <li key={i} className="text-xs flex items-center gap-2">
+                <li key={c.label ?? i} className="text-xs flex items-center gap-2">
                   <span className={c.passed ? 'text-emerald-400' : 'text-rose-400'}>
                     {c.passed ? '✓' : '✗'}
                   </span>

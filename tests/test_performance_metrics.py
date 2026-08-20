@@ -14,9 +14,11 @@ import math
 import pytest
 
 from app.core.performance_metrics import (
+    alpha_vs_buy_hold,
     annualized_excess_vs_buy_hold,
     compute_cagr,
     compute_extended_metrics,
+    sortino_ratio,
 )
 
 BARS_PER_YEAR_1D = 365.0
@@ -24,6 +26,29 @@ BARS_PER_YEAR_1D = 365.0
 # Run réel observé : 8 trades sur 2 000 bougies journalières, 1000 → 1094,6.
 EQUITY_8_TRADES = [1000.0, 1010, 1005, 1040, 1030, 1060, 1050, 1080, 1094.6]
 ANNEES_REELLES = 2000 / BARS_PER_YEAR_1D  # ≈ 5,48 ans
+
+
+def test_sortino_uses_full_sample_downside_dev():
+    """F-09 : dénominateur = N total, pas n_négatifs − 1."""
+    rets = [0.02, -0.01, 0.03, -0.02, 0.01]
+    s = sortino_ratio(rets, periods_per_year=1)
+    n = len(rets)
+    downside_ss = sum(min(r, 0.0) ** 2 for r in rets)
+    expected = (sum(rets) / n) / (downside_ss / n) ** 0.5
+    assert s == pytest.approx(round(expected, 4))
+
+
+def test_sortino_without_losses_is_nan_not_one_hundred():
+    """F-10 : sentinelle 100 remplacée par NaN."""
+    assert math.isnan(sortino_ratio([0.01, 0.02, 0.03], periods_per_year=1))
+
+
+def test_alpha_vs_buy_hold_n_est_pas_on2():
+    """F-13 : mean() hors des boucles — le résultat reste défini."""
+    strat = [0.01, -0.005, 0.02, 0.0, 0.015]
+    bench = [0.008, 0.002, 0.01, -0.001, 0.012]
+    a = alpha_vs_buy_hold(strat, bench, periods_per_year=365)
+    assert isinstance(a, float)
 
 
 def test_cagr_utilise_la_duree_reelle_et_non_le_nombre_de_trades():

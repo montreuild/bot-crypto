@@ -3,7 +3,9 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
 import { useWebSocket } from '@/lib/ws-provider';
+import { useBotStatus } from '@/hooks/use-api';
 import {
   Bot, Settings, Activity,
   Zap, Database, Network, Sparkles,
@@ -13,61 +15,45 @@ import {
 
 const NAV_GROUPS = [
   {
-    label: 'Trading',
+    labelKey: 'nav.trading',
     items: [
-      // S10 — /dashboard et /bots sont désormais en 308 vers les pages v2 :
-      // on pointe directement dessus pour éviter le saut de redirection.
-      // Lot Portefeuille — l'entrée « Portefeuille (détail) » vers /portfolio
-      // disparaît : le journal de notifications et la vue par bot qu'elle
-      // seule donnait sont maintenant sur /portfolio, qui est en 308.
-      { href: '/portfolio', label: 'Portefeuille', icon: Wallet },
-      { href: '/bots', label: 'Mes Bots', icon: Bot },
-      { href: '/trades', label: 'Trades', icon: Activity },
+      { href: '/portfolio', labelKey: 'nav.portfolio', icon: Wallet },
+      { href: '/bots', labelKey: 'nav.bots', icon: Bot },
+      { href: '/trades', labelKey: 'nav.trades', icon: Activity },
     ],
   },
   {
-    label: 'Recherche',
+    labelKey: 'nav.research',
     items: [
-      { href: '/lab', label: 'Laboratoire', icon: Sparkles },
-      { href: '/market', label: 'Marché', icon: Network },
-      // Lots Marché et Laboratoire — Scanner / Smart Graph / Smart Replay /
-      // Dérivés et Optimiseur / ML / Replay / Comparatif ne sont plus des
-      // pages : ce sont les onglets de « Marché » et « Laboratoire », et les
-      // anciennes routes sont en 308 vers eux. Leurs entrées de nav sont
-      // retirées ici (l'état actif se calcule sur le seul `pathname`, elles
-      // pointeraient toutes sur /market ou /lab sans jamais s'allumer) ; la
-      // recherche Cmd+K continue de les référencer par leur nom, onglet
-      // compris.
-      { href: '/audit', label: 'Audit OOS', icon: ClipboardList },
-      { href: '/audit-log', label: 'Journal Audit', icon: ScrollText },
+      { href: '/lab', labelKey: 'nav.lab', icon: Sparkles },
+      { href: '/market', labelKey: 'nav.market', icon: Network },
+      { href: '/audit', labelKey: 'nav.audit', icon: ClipboardList },
+      { href: '/audit-log', labelKey: 'nav.audit_log', icon: ScrollText },
     ],
   },
   {
-    label: 'Données',
+    labelKey: 'nav.data',
     items: [
-      { href: '/data', label: 'Bougies OHLCV', icon: Database },
-      // /models n'est PAS dans le plan de fusion : le registre versionné
-      // reste une page à part entière, et garde donc son entrée.
-      { href: '/models', label: 'Registre modèles', icon: Archive },
+      { href: '/data', labelKey: 'nav.data_ohlcv', icon: Database },
+      { href: '/models', labelKey: 'nav.models', icon: Archive },
     ],
   },
   {
-    label: 'Configuration',
+    labelKey: 'nav.config',
     items: [
-      // Lot Réglages — /config et /settings sont en 308 vers les onglets de
-      // /settings, qui porte maintenant l'éditeur de params par stratégie,
-      // le thème et les notifications navigateur. Une seule entrée subsiste,
-      // et elle n'a plus à s'appeler « v2 » : il n'y a plus d'ancienne page.
-      { href: '/settings', label: 'Réglages', icon: Settings },
+      { href: '/settings', labelKey: 'nav.settings', icon: Settings },
     ],
   },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { t } = useI18n();
   // S0-F1-US5 — Le footer "Connected" était hardcodé et mentait quand le
   // backend était down. On consomme maintenant l'état réel du WS.
   const { status: wsStatus } = useWebSocket();
+  const { data: botStatus } = useBotStatus();
+  const modeLabel = botStatus?.paper_mode === false ? 'live' : 'paper';
 
   const wsLabel = wsStatus === 'connected' ? 'Connected'
     : wsStatus === 'connecting' ? 'Connecting...'
@@ -86,16 +72,16 @@ export function Sidebar() {
         </div>
         <div>
           <div className="font-bold text-base leading-tight">Crypto Bot</div>
-          <div className="text-[10px] text-dim font-mono">v12.17 · live</div>
+          <div className="text-[10px] text-dim font-mono">v12.17 · {modeLabel}</div>
         </div>
       </div>
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-3">
         {NAV_GROUPS.map((group) => (
-          <div key={group.label} className="mb-6">
+          <div key={group.labelKey} className="mb-6">
             <div className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-wider text-dim">
-              {group.label}
+              {t(group.labelKey)}
             </div>
             <div className="space-y-1">
               {group.items.map((item) => {
@@ -108,12 +94,12 @@ export function Sidebar() {
                     className={cn(
                       'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all',
                       active
-                        ? 'bg-primary-500/10 text-primary-400 border-l-2 border-primary-400'
+                        ? 'bg-primary-500/10 text-primary-800 dark:text-primary-400 border-l-2 border-primary-700 dark:border-primary-400'
                         : 'text-muted hover:text-foreground hover:bg-card-hover',
                     )}
                   >
                     <Icon className="w-4 h-4 flex-shrink-0" />
-                    <span>{item.label}</span>
+                    <span>{t(item.labelKey)}</span>
                   </Link>
                 );
               })}
