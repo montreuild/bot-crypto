@@ -112,9 +112,20 @@ def run_dual_pass(engine: Engine, cfg: dict, df, envelope, *,
     for pass_name, env in (("live", envelope),
                            ("reference", with_reference_envelope(envelope, reference_capital))):
         eng = engine_factory() if callable(engine_factory) else engine
+        df_pass = _clone_frame(df)
         bt = Backtester(eng, cfg, envelope=env, **run_kwargs)
-        out[pass_name] = bt.run(df, symbol=symbol, timeframe=timeframe)
+        out[pass_name] = bt.run(df_pass, symbol=symbol, timeframe=timeframe)
     return out
+
+
+def _clone_frame(df):
+    """Copie du frame par passe : prepare_for_backtest / colonnes _pre_* ne
+    doivent pas muter le df partagé entre live et étude."""
+    if hasattr(df, "clone"):
+        return df.clone()
+    if hasattr(df, "copy"):
+        return df.copy()
+    return df
 
 
 _ML_MODES = ("frozen", "inline", "simulated_live")

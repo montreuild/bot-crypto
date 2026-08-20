@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 _TF_MINS = {
@@ -55,6 +55,12 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
         if cal is not None:
             try:
                 ts = _as_dt(times[i - 1])
+                after = _as_dt(times[i])
+                # Week-end / férié : si l'intérieur du span est fermé, ce n'est
+                # pas un trou de données. 1d : aucun jour de séance entre les
+                # deux barres (ven. minuit → lun. minuit).
+                if _calendar_closed_span(cal, ts, after, expected_secs):
+                    continue
                 end = cal.session_end(ts)
                 nxt = cal.next_open(end or ts)
                 if nxt is not None:
@@ -62,6 +68,10 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
                         allowed,
                         (nxt - ts).total_seconds() + expected_secs * 1.5,
                     )
+                try:
+                    allowed = max(allowed, float(cal.max_gap_seconds(ts, expected_secs)))
+                except Exception:
+                    pass
             except Exception:
                 pass
         if delta_secs > allowed:
@@ -74,6 +84,44 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
                 "gap_duration": str(times[i] - times[i - 1]),
             })
     return gaps
+
+
+def _calendar_closed_span(cal, ts: datetime, after: datetime, expected_secs: float) -> bool:
+    """True si le span est une fermeture calendaire, pas un trou de données."""
+    if _interior_all_closed(cal, ts, after):
+        return True
+    if expected_secs < 86400 * 0.9:
+        return False
+    d0 = ts.date()
+    d1 = after.date()
+    d = d0 + timedelta(days=1)
+    while d < d1:
+        noon = datetime(d.year, d.month, d.day, 12, 0, tzinfo=timezone.utc)
+        try:
+            if cal.is_open(noon):
+                return False
+            morning = datetime(d.year, d.month, d.day, 8, 0, tzinfo=timezone.utc)
+            nxt = cal.next_open(morning)
+            if nxt is not None and nxt.date() == d:
+                return False
+        except Exception:
+            return False
+        d += timedelta(days=1)
+    return True
+
+
+def _interior_all_closed(cal, ts: datetime, after: datetime, samples: int = 7) -> bool:
+    total = (after - ts).total_seconds()
+    if total <= 0:
+        return False
+    for k in range(1, samples + 1):
+        mid = ts + timedelta(seconds=total * k / (samples + 1))
+        try:
+            if cal.is_open(mid):
+                return False
+        except Exception:
+            return False
+    return True
 
 
 def _one_delta_secs(a, b) -> float:

@@ -508,7 +508,7 @@ def run_backtest(
                     }
             by_strategy[name] = entry
 
-        ohlcv_gaps   = detect_ohlcv_gaps(df, tf)
+        ohlcv_gaps   = detect_ohlcv_gaps(df, tf, symbol=symbol)
         gaps_warning = None
         if ohlcv_gaps:
             total_missing = sum(g["gap_bars"] for g in ohlcv_gaps)

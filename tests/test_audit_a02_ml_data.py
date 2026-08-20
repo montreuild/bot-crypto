@@ -64,6 +64,57 @@ def test_detect_ohlcv_gaps_xpar_weekend_is_not_a_hole():
     assert gaps == []
 
 
+def test_detect_ohlcv_gaps_xpar_daily_weekend_is_not_a_hole():
+    """CS.PA 1d : vendredi minuit → lundi minuit n'est pas un trou (week-end)."""
+    import polars as pl
+    from app.core.market_calendar import get_calendar
+    from app.core.ohlcv_gaps import detect_ohlcv_gaps
+    cal = get_calendar("XPAR")
+    fri = datetime(2026, 4, 17, 0, 0, tzinfo=timezone.utc)
+    mon = datetime(2026, 4, 20, 0, 0, tzinfo=timezone.utc)
+    df = pl.DataFrame({
+        "time": [fri, mon],
+        "open": [1.0, 1.0], "high": [1.0, 1.0],
+        "low": [1.0, 1.0], "close": [1.0, 1.0], "volume": [1.0, 1.0],
+    })
+    gaps = detect_ohlcv_gaps(df, "1d", calendar=cal)
+    assert gaps == []
+
+
+def test_detect_ohlcv_gaps_xpar_afterhours_weekend_is_not_a_hole():
+    """1h : ven. 16:00 UTC → lun. 09:00 UTC (65 h, séance fermée) n'est pas un trou."""
+    import polars as pl
+    from app.core.market_calendar import get_calendar
+    from app.core.ohlcv_gaps import detect_ohlcv_gaps
+    cal = get_calendar("XPAR")
+    fri = datetime(2026, 4, 17, 16, 0, tzinfo=timezone.utc)
+    mon = datetime(2026, 4, 20, 9, 0, tzinfo=timezone.utc)
+    df = pl.DataFrame({
+        "time": [fri, mon],
+        "open": [1.0, 1.0], "high": [1.0, 1.0],
+        "low": [1.0, 1.0], "close": [1.0, 1.0], "volume": [1.0, 1.0],
+    })
+    gaps = detect_ohlcv_gaps(df, "1h", calendar=cal, symbol="CS.PA")
+    assert gaps == []
+
+
+def test_detect_ohlcv_gaps_xpar_weekday_hole_is_flagged():
+    """1d : vendredi → mardi (lundi manquant) reste un trou."""
+    import polars as pl
+    from app.core.market_calendar import get_calendar
+    from app.core.ohlcv_gaps import detect_ohlcv_gaps
+    cal = get_calendar("XPAR")
+    fri = datetime(2026, 4, 17, 0, 0, tzinfo=timezone.utc)
+    tue = datetime(2026, 4, 21, 0, 0, tzinfo=timezone.utc)
+    df = pl.DataFrame({
+        "time": [fri, tue],
+        "open": [1.0, 1.0], "high": [1.0, 1.0],
+        "low": [1.0, 1.0], "close": [1.0, 1.0], "volume": [1.0, 1.0],
+    })
+    gaps = detect_ohlcv_gaps(df, "1d", calendar=cal)
+    assert len(gaps) >= 1
+
+
 def test_oos_tracker_atomic_write(tmp_path, monkeypatch):
     import app.core.oos_tracker as ot
     monkeypatch.setattr(ot, "_TRACKER_PATH", str(tmp_path / "oos_tracker.json"))
