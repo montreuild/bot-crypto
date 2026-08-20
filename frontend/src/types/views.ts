@@ -430,6 +430,8 @@ export interface OptimizeJob {
     /** Contexte facturé pendant toute l'optimisation (S11) — sans lui, deux
      *  `oos_score` ne sont pas comparables. */
     cost_model?: CostModel;
+    /** Capital de la passe (enveloppe / venue) — échelle du Monte-Carlo. */
+    initial_capital?: number;
   };
   applied?: boolean;
   /** N-02 : 'holdout' si le gate a jugé le holdout, sinon 'selection'. */
