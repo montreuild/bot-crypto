@@ -10,6 +10,36 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔬 Mesure SMC : plancher des p-values abaissé, Bonferroni → Benjamini-Hochberg
+
+Correctif du plafond de méthode décrit dans l'entrée suivante. Deux changements
+indissociables, parce qu'aucun des deux ne suffit seul :
+
+- **`N_TIRAGES_TEMOIN` : 200 → 2000.** Le plancher des p-values, `1/(1+N)`,
+  passe de 0.00498 à 5.0 × 10⁻⁴. Rendu abordable par la **vectorisation de
+  `_temoin_decale`** (matrice tirages × occurrences au lieu d'une boucle Python
+  qui re-matérialisait la colonne des clôtures à chaque tirage — ~14 M de fois
+  sur un run 4 TF). Run complet : ~6 min contre ~10 min auparavant, avec dix
+  fois plus de tirages. Nouveau drapeau `--tirages` pour descendre plus bas.
+
+- **Bonferroni → Benjamini-Hochberg.** Bonferroni contrôle la probabilité de la
+  moindre fausse découverte ; sur 73 000 hypothèses il exige 6.9 × 10⁻⁷, soit
+  mille fois moins que le plancher du test. BH contrôle la *proportion* de
+  fausses découvertes parmi les rejets — la garantie pertinente pour une étude
+  exploratoire dont le produit est une liste de candidats à retester. Les deux
+  témoins sont combinés par le **maximum** de leurs p-values (test
+  d'intersection-union) avant d'entrer dans BH.
+
+À 200 tirages, BH seul n'aurait rien débloqué non plus : au rang 6 il exige
+8.3 × 10⁻⁴, encore sous le plancher de 0.00498. D'où les deux ensemble.
+
+Le rapport publie désormais le plancher **à côté** du seuil retenu et distingue
+les deux causes d'un zéro : « le test pouvait rejeter et n'a rien trouvé » vs
+« le seuil était sous le plancher ». `alpha_bonferroni` reste publié pour
+comparaison. Effet de bord notable : la validation « 0 découverte sur marche
+aléatoire » redevient un vrai test — elle était vide de sens tant que zéro était
+le seul résultat atteignable.
+
 ### 🔬 Motifs SMC BTC/USDC : le « 0 survivant » était un plafond de méthode
 
 Première exécution complète de `scripts/analyze_smc_patterns.py` sur BTC/USDC en

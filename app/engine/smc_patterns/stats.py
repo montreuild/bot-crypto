@@ -40,9 +40,26 @@ from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES
 
 logger = logging.getLogger(__name__)
 
-#: Tirages par témoin. 200 suffit pour une moyenne stable sans rendre l'étude
-#: interminable ; l'incertitude du témoin est publiée, pas cachée.
-N_TIRAGES_TEMOIN = 200
+#: Tirages par témoin. Ce nombre fixe le PLANCHER des p-values : avec la
+#: convention (1 + k) / (1 + N) de ``p_valeur_empirique``, aucune ligne ne peut
+#: descendre sous 1 / (1 + N).
+#:
+#: À 200 tirages ce plancher valait 0.00498 — au-dessus de TOUS les seuils
+#: corrigés de l'étude (1.4e-4 pour 360 motifs, 6.9e-7 pour 73 000 composés).
+#: Le « 0 survivant » était donc garanti par construction, quelles que soient
+#: les données : le test n'avait pas la résolution pour rejeter quoi que ce
+#: soit. Mesuré sur BTC/USDC, cf. research/RESULTATS_smc_patterns_btc.md.
+#:
+#: À 2000 le plancher tombe à 5.0e-4, ce qui rend les rejets ATTEIGNABLES sous
+#: Benjamini-Hochberg (cf. ``seuil_bh``) : il faut alors 4 découvertes pour 360
+#: motifs, 730 pour 73 000 composés. Le coût de ce dixuplement est absorbé par
+#: la vectorisation de ``_temoin_decale`` — c'est elle qui l'a rendu abordable.
+N_TIRAGES_TEMOIN = 2000
+
+#: Plafond d'éléments d'une matrice de tirages, pour borner la mémoire du
+#: témoin décalé : un motif à 5 500 occurrences et un composé à 30 n'ont pas le
+#: même appétit, la taille de bloc s'ajuste donc en éléments, pas en tirages.
+_ELEMENTS_MAX_BLOC = 2_000_000
 
 #: Horizons de mesure du mouvement suivant, en barres.
 HORIZONS_DEFAUT = (1, 3, 6, 12, 24)
@@ -183,15 +200,30 @@ def transitions(journal: pl.DataFrame, tf: str, fenetre: int = 12,
 # ─────────────────────────────────────────────────────────────────────────────
 #  Mouvement suivant + témoins
 # ─────────────────────────────────────────────────────────────────────────────
-def _rendements_a(df: pl.DataFrame, bars: Sequence[int] | np.ndarray, h: int) -> np.ndarray:
-    """Rendement de la clôture de ``bar`` à celle de ``bar + h``, en %."""
-    close = df["close"].to_numpy().astype(float)
+def _rendements_sur(close: np.ndarray, bars: Sequence[int] | np.ndarray,
+                    h: int) -> np.ndarray:
+    """Idem ``_rendements_a``, mais sur une colonne DÉJÀ matérialisée.
+
+    ``df["close"].to_numpy()`` copie toute la colonne — 57 000 flottants en 15 m.
+    Le faire à chaque tirage de témoin coûtait plus cher que le calcul lui-même ;
+    les appelants qui bouclent hissent donc la matérialisation hors de la boucle.
+    """
     n = len(close)
     b = np.asarray([x for x in bars if 0 <= x < n - h], dtype=int)
     if len(b) == 0:
         return np.zeros(0)
     base = np.maximum(close[b], 1e-12)
     return (close[b + h] - close[b]) / base * 100.0
+
+
+def _rendements_a(df: pl.DataFrame, bars: Sequence[int] | np.ndarray, h: int) -> np.ndarray:
+    """Rendement de la clôture de ``bar`` à celle de ``bar + h``, en %."""
+    return _rendements_sur(df["close"].to_numpy().astype(float), bars, h)
+
+
+def _tirages(n_tirages: Optional[int]) -> int:
+    """Nombre de tirages effectif — l'argument prime, le module fait défaut."""
+    return int(n_tirages) if n_tirages else N_TIRAGES_TEMOIN
 
 
 def _mfe_mae_atr(df: pl.DataFrame, bars: Sequence[int] | np.ndarray, h: int,
@@ -219,7 +251,8 @@ def _mfe_mae_atr(df: pl.DataFrame, bars: Sequence[int] | np.ndarray, h: int,
 
 def _temoin_inconditionnel(journal_motif: pl.DataFrame, df: pl.DataFrame,
                            sessions: np.ndarray, h: int,
-                           rng: np.random.Generator) -> np.ndarray:
+                           rng: np.random.Generator,
+                           n_tirages: Optional[int] = None) -> np.ndarray:
     """Barres au hasard, à distribution de sessions identique au motif.
 
     Sans l'appariement par session, un motif qui ne se produit qu'en session US
@@ -233,8 +266,9 @@ def _temoin_inconditionnel(journal_motif: pl.DataFrame, df: pl.DataFrame,
     index_par_session: Dict[str, np.ndarray] = {
         s: np.flatnonzero(sessions == s) for s in besoin
     }
+    close = df["close"].to_numpy().astype(float)
     tirages = []
-    for _ in range(N_TIRAGES_TEMOIN):
+    for _ in range(_tirages(n_tirages)):
         bars: List[int] = []
         for s, c in besoin.items():
             pool = index_par_session.get(s, np.zeros(0, dtype=int))
@@ -244,36 +278,61 @@ def _temoin_inconditionnel(journal_motif: pl.DataFrame, df: pl.DataFrame,
             bars.extend(rng.choice(pool, size=min(c, len(pool)),
                                    replace=len(pool) < c).tolist())
         if bars:
-            r = _rendements_a(df, bars, h)
+            r = _rendements_sur(close, bars, h)
             if len(r):
                 tirages.append(float(r.mean()))
     return np.asarray(tirages, dtype=float)
 
 
 def _temoin_decale(bars: Sequence[int] | np.ndarray, df: pl.DataFrame, h: int,
-                   rng: np.random.Generator) -> np.ndarray:
+                   rng: np.random.Generator,
+                   n_tirages: Optional[int] = None) -> np.ndarray:
     """Mêmes événements, décalés circulairement d'un offset aléatoire.
 
     L'espacement entre occurrences est conservé EXACTEMENT ; seul l'alignement
     au prix est détruit. C'est le témoin qui distingue un motif d'un calendrier.
+
+    VECTORISÉ PAR BLOCS. C'est ce témoin-là qui domine le coût de l'étude : un
+    appel par composé confirmé et par horizon, soit ~70 000 appels sur un run
+    4 TF. En boucle Python il re-matérialisait la colonne des clôtures à chaque
+    tirage, ce qui plafonnait de fait ``N_TIRAGES_TEMOIN`` à 200 — et donc le
+    plancher des p-values à 0.00498. Le passage en matrice
+    (tirages × occurrences) est ce qui a rendu un plancher utilisable abordable.
     """
     n = len(df)
     b = np.asarray([x for x in bars if 0 <= x < n], dtype=int)
     if len(b) == 0 or n <= h + 1:
         return np.zeros(0)
-    tirages = []
-    for _ in range(N_TIRAGES_TEMOIN):
-        offset = int(rng.integers(1, n))
-        decale = (b + offset) % n
-        r = _rendements_a(df, decale, h)
-        if len(r):
-            tirages.append(float(r.mean()))
-    return np.asarray(tirages, dtype=float)
+    close = df["close"].to_numpy().astype(float)
+    total = _tirages(n_tirages)
+    bloc = max(1, min(total, max(1, _ELEMENTS_MAX_BLOC // max(1, len(b)))))
+    moyennes: List[np.ndarray] = []
+    for debut in range(0, total, bloc):
+        k = min(bloc, total - debut)
+        offsets = rng.integers(1, n, size=k)
+        decale = (b[None, :] + offsets[:, None]) % n          # (k, len(b))
+        # Même filtre que `_rendements_sur` : une occurrence décalée dans les
+        # h dernières barres n'a pas de futur, elle sort de la moyenne.
+        valide = decale < n - h
+        idx = np.where(valide, decale, 0)
+        base = np.maximum(close[idx], 1e-12)
+        brut = (close[idx + h] - close[idx]) / base * 100.0
+        ok = valide & np.isfinite(brut)
+        compte = ok.sum(axis=1)
+        somme = np.where(ok, brut, 0.0).sum(axis=1)
+        # Division protégée puis invalidation : `nanmean` sur une ligne vide
+        # émet un avertissement et coûte un masque de plus.
+        moy = somme / np.maximum(compte, 1)
+        moy[compte == 0] = np.nan
+        moyennes.append(moy)
+    out = np.concatenate(moyennes) if moyennes else np.zeros(0)
+    return out[np.isfinite(out)]
 
 
 def mouvement_suivant(journal: pl.DataFrame, frames: Dict[str, pl.DataFrame],
                       horizons: Sequence[int] = HORIZONS_DEFAUT,
-                      graine: int = 0) -> pl.DataFrame:
+                      graine: int = 0,
+                      n_tirages: Optional[int] = None) -> pl.DataFrame:
     """Rendement après confirmation, avec les deux témoins et les IC.
 
     Une ligne par (tf, motif, horizon). ``ecart_inconditionnel`` et
@@ -302,8 +361,9 @@ def mouvement_suivant(journal: pl.DataFrame, frames: Dict[str, pl.DataFrame],
                 if len(obs) == 0:
                     continue
                 s_obs = _stats_echantillon(obs)
-                moy_inc = _temoin_inconditionnel(g, df, sessions, h, rng)
-                moy_dec = _temoin_decale(bars, df, h, rng)
+                moy_inc = _temoin_inconditionnel(g, df, sessions, h, rng,
+                                                 n_tirages)
+                moy_dec = _temoin_decale(bars, df, h, rng, n_tirages)
                 s_inc = _stats_echantillon(moy_inc)
                 s_dec = _stats_echantillon(moy_dec)
                 exc = _mfe_mae_atr(df, bars, h, atr)
@@ -370,42 +430,121 @@ def p_valeur_empirique(observe: float, moyennes_temoin: np.ndarray) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Test multiple
 # ─────────────────────────────────────────────────────────────────────────────
-def budget_hypotheses(resultats: pl.DataFrame) -> Dict[str, Any]:
-    """Nombre d'hypothèses testées et seuil corrigé.
+def plancher_p(n_tirages: Optional[int] = None) -> float:
+    """Plus petite p-value ATTEIGNABLE avec ce nombre de tirages.
+
+    À publier avec le seuil : un seuil sous ce plancher ne rejette jamais, et
+    le « 0 survivant » qui en résulte ne dit rien des données. C'est
+    exactement ce qui s'est produit à 200 tirages.
+    """
+    return 1.0 / (1.0 + _tirages(n_tirages))
+
+
+def seuil_bh(p_values: Sequence[Optional[float]], m: Optional[int] = None,
+             alpha: float = 0.05) -> Optional[float]:
+    """Seuil de Benjamini-Hochberg : contrôle le FDR, pas le FWER.
+
+    POURQUOI PAS BONFERRONI. Bonferroni contrôle la probabilité de la MOINDRE
+    fausse découverte : sur 73 000 composés il exige 6.9e-7, soit mille fois
+    moins que le plancher du test de permutation. Il ne rejetait donc rien —
+    pas par sévérité bien placée, mais par impossibilité arithmétique.
+
+    BH contrôle la PROPORTION attendue de fausses découvertes parmi les
+    rejets. Sur une étude exploratoire dont le produit est une liste de
+    candidats à retester, c'est la bonne garantie : accepter 5 % de déchet
+    dans une liste de vingt pistes est raisonnable, exiger zéro faux positif
+    sur 73 000 tests ne l'est pas.
+
+    Procédure (step-up) : p triées, on cherche le plus grand rang k tel que
+    p(k) ≤ k/m · alpha, et on rejette tout jusqu'à ce rang.
+
+    ``m`` est le nombre d'hypothèses ÉNUMÉRÉES, qui peut dépasser le nombre de
+    p-values fournies : les hypothèses écartées en amont (support insuffisant)
+    comptent au dénominateur mais ne peuvent pas être rejetées. C'est le même
+    principe que le décompte d'énumération de ``composites.mine``.
+    """
+    p = np.asarray([float(x) for x in p_values
+                    if x is not None and np.isfinite(x)], dtype=float)
+    if len(p) == 0:
+        return None
+    total = int(m) if m else len(p)
+    if total <= 0:
+        return None
+    p.sort()
+    rangs = np.arange(1, len(p) + 1, dtype=float)
+    passe = p <= (rangs / float(total)) * alpha
+    if not passe.any():
+        return None
+    return float(p[int(np.flatnonzero(passe)[-1])])
+
+
+def budget_hypotheses(resultats: pl.DataFrame,
+                      n_tirages: Optional[int] = None) -> Dict[str, Any]:
+    """Nombre d'hypothèses testées, seuils, et plancher de résolution du test.
 
     Tester 500 combinaisons puis publier les cinq meilleures sans le dire n'est
     pas une analyse, c'est du tri de bruit. Ce décompte va EN TÊTE du rapport,
     pas en note de bas de page.
+
+    ``alpha_bonferroni`` reste publié à titre de COMPARAISON — c'est lui qui
+    rendait l'étude incapable de conclure, et le rapport doit pouvoir le
+    montrer à côté du plancher.
     """
     n = int(resultats.height)
+    plancher = plancher_p(n_tirages)
     if n == 0:
         return {"n_hypotheses": 0, "alpha_nominal": 0.05, "alpha_bonferroni": None,
-                "z_requis": None}
+                "z_requis": None, "methode": "benjamini-hochberg",
+                "plancher_p": plancher, "seuil_bh": None}
     alpha = 0.05 / n
     # Quantile normal bilatéral, sans scipy (absent du dépôt en production).
     from statistics import NormalDist
     z = NormalDist().inv_cdf(1.0 - alpha / 2.0)
     return {"n_hypotheses": n, "alpha_nominal": 0.05,
-            "alpha_bonferroni": alpha, "z_requis": round(z, 3)}
+            "alpha_bonferroni": alpha, "z_requis": round(z, 3),
+            "methode": "benjamini-hochberg", "plancher_p": plancher,
+            "seuil_bh": None}
 
 
 def survivants(resultats: pl.DataFrame, budget: Dict[str, Any]) -> pl.DataFrame:
-    """Lignes dont l'écart au témoin décalé survit à la correction de Bonferroni.
+    """Lignes dont l'écart aux DEUX témoins survit au contrôle du FDR.
 
-    Le témoin décalé est le juge : c'est celui qui distingue un motif de son
-    calendrier. Une ligne sous ``MIN_SIGNIFICANT_TRADES`` occurrences est
-    écartée quel que soit son écart.
+    Le témoin décalé est le juge principal : c'est celui qui distingue un motif
+    de son calendrier. Mais les deux doivent tomber — un motif qui bat le
+    témoin inconditionnel sans battre le décalé n'a pas d'edge propre, il
+    hérite de son calendrier.
+
+    « Les deux tombent » se teste par le MAXIMUM des deux p-values : c'est le
+    test d'intersection-union, et ce maximum est une p-value valide au niveau
+    visé pour l'hypothèse conjointe. BH s'applique donc à cette p-value
+    combinée, une par ligne — pas deux fois séparément, ce qui ne contrôlerait
+    plus rien.
+
+    Une ligne sous ``MIN_SIGNIFICANT_TRADES`` occurrences est écartée quel que
+    soit son écart. Le seuil effectivement appliqué est écrit dans
+    ``budget["seuil_bh"]`` pour que le rapport le publie.
     """
-    if resultats.height == 0 or not budget.get("alpha_bonferroni"):
+    budget["seuil_bh"] = None
+    if resultats.height == 0 or not budget.get("n_hypotheses"):
         return resultats.head(0)
-    alpha = float(budget["alpha_bonferroni"])
-    # Les DEUX témoins doivent tomber : un motif qui bat le témoin
-    # inconditionnel mais pas le décalé n'a pas d'edge propre, il hérite de son
-    # calendrier.
-    return (resultats
-            .filter(pl.col("significatif")
-                    & pl.col("p_decale").is_not_null()
-                    & (pl.col("p_decale") < alpha)
-                    & pl.col("p_inconditionnel").is_not_null()
-                    & (pl.col("p_inconditionnel") < alpha))
+
+    eligibles = resultats.filter(
+        pl.col("significatif")
+        & pl.col("p_decale").is_not_null()
+        & pl.col("p_inconditionnel").is_not_null())
+    if eligibles.height == 0:
+        return resultats.head(0)
+
+    combinee = (pl.max_horizontal(pl.col("p_decale"), pl.col("p_inconditionnel"))
+                .alias("_p_combinee"))
+    eligibles = eligibles.with_columns(combinee)
+    seuil = seuil_bh(eligibles["_p_combinee"].to_list(),
+                     m=int(budget["n_hypotheses"]),
+                     alpha=float(budget.get("alpha_nominal") or 0.05))
+    if seuil is None:
+        return resultats.head(0)
+    budget["seuil_bh"] = seuil
+    return (eligibles
+            .filter(pl.col("_p_combinee") <= seuil)
+            .drop("_p_combinee")
             .sort("ecart_decale", descending=True, nulls_last=True))

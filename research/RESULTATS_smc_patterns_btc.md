@@ -1,6 +1,6 @@
 # Mesure des motifs SMC — BTC/USDC, 4 timeframes
 
-Première exécution complète de `scripts/analyze_smc_patterns.py` sur BTC/USDC en
+**Run de diagnostic** de `scripts/analyze_smc_patterns.py` sur BTC/USDC en
 **15m, 30m, 1h, 4h**, fenêtre de composés réglée à **2 barres** du TF le plus bas
 (= 30 minutes). Étude de mesure : aucun détecteur n'a été modifié.
 
@@ -12,6 +12,11 @@ python scripts/analyze_smc_patterns.py --symbol BTC/USDC --tfs 15m,30m,1h,4h --f
 
 Les sorties parquet (`research/smc_patterns/`) ne sont pas suivies — voir
 `.gitignore`. Les chiffres qui comptent sont ci-dessous.
+
+> **Lire d'abord la fin.** Ce run a tourné sous l'ANCIEN protocole (200 tirages,
+> Bonferroni) et sa conclusion affichée — « 0 survivant » — ne mesurait rien.
+> C'est ce défaut que le document établit, et la section « Correctif appliqué »
+> dit ce qui a changé depuis.
 
 ## Données
 
@@ -118,17 +123,48 @@ pour rejeter quoi que ce soit à ce seuil.
   un enchaînement de deux événements. Avant d'en tirer quoi que ce soit, il
   faudrait vérifier le taux de recouvrement temporel des deux maillons.
 
-## Suites possibles
+## Correctif appliqué
 
-Pour que la mesure puisse conclure, au choix :
+Deux changements, **indissociables** — c'est le point le moins évident de ce
+dossier :
 
-1. **Monter `N_TIRAGES_TEMOIN`** à au moins 1/α — soit ~7 200 tirages pour les
-   motifs. Faisable. Hors de portée pour les composés (il en faudrait ~10⁶).
-2. **Passer de Bonferroni à un contrôle du FDR** (Benjamini-Hochberg), beaucoup
-   moins brutal sur 73 000 hypothèses et adapté à une étude exploratoire.
-3. **Réduire le nombre d'hypothèses** en amont : moins d'horizons, moins de TF,
-   ou une présélection déclarée avant mesure.
+1. **`N_TIRAGES_TEMOIN` : 200 → 2000.** Le plancher passe de 0.00498 à
+   5.0 × 10⁻⁴. Rendu abordable par la vectorisation de `_temoin_decale` (le
+   témoin qui domine le coût : ~70 000 appels par run, en boucle Python
+   re-matérialisant la colonne des clôtures à chaque tirage). Run complet :
+   ~6 min contre ~10 min auparavant, **avec dix fois plus de tirages**. Le
+   drapeau `--tirages` permet de descendre plus bas au besoin.
 
-Le plus économique est probablement (2) pour les composés et (1) pour les
-motifs. Aucune de ces pistes n'a été implémentée ici : cette exécution est une
-mesure, pas une modification du protocole.
+2. **Bonferroni → Benjamini-Hochberg.** Contrôle de la proportion de fausses
+   découvertes parmi les rejets, plutôt que de la probabilité de la moindre
+   fausse découverte. C'est la garantie pertinente quand le produit de l'étude
+   est une liste de candidats à retester.
+
+**Pourquoi les deux et pas l'un des deux.** BH seul, à 200 tirages, n'aurait
+rien débloqué : au rang 6 il exige 8.3 × 10⁻⁴, encore sous le plancher de
+0.00498. Et 2000 tirages seuls, sous Bonferroni, resteraient sous le seuil des
+composés (6.9 × 10⁻⁷). Il fallait descendre le plancher **et** desserrer le
+seuil. Le test `test_un_plancher_trop_haut_ne_rejette_rien` verrouille ce
+raisonnement.
+
+La troisième piste envisagée — réduire le nombre d'hypothèses en amont — n'a
+pas été retenue : elle aurait amputé l'étude pour contourner un défaut
+d'instrument.
+
+### Effet de bord : une validation qui redevient un test
+
+`docs/MESURE_PATTERNS_SMC.md` §4 présentait « 0 découverte sur marche
+aléatoire » comme le test de non-régression le plus important du lot. Il ne
+prouvait rien : avec 30 884 hypothèses, un α de 1.6 × 10⁻⁶ et un plancher à
+0.00498, zéro était le **seul** résultat atteignable. Sous BH à 2000 tirages, le
+test peut désormais rejeter — et il continue de ne rien trouver sur du bruit.
+C'est seulement maintenant que cela veut dire quelque chose.
+
+### Ce qui reste à faire
+
+La re-mesure de BTC/USDC sous le nouveau protocole n'est **pas** encore dans ce
+document : les chiffres ci-dessus sont ceux du run de diagnostic (200 tirages,
+Bonferroni, données arrêtées au 2026-08-07). Ils sont conservés tels quels
+parce qu'ils documentent le défaut. Les conclusions de la section « Lecture »
+sur les amplitudes et le taux de 7,2 % restent valides — elles ne dépendent
+d'aucune correction.

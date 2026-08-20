@@ -143,5 +143,61 @@ class TestBudgetHypotheses:
             "p_inconditionnel": [0.0001, 0.0001],
             "ecart_decale": [1.0, 1.0],
         })
-        budget = {"alpha_bonferroni": 0.01, "z_requis": 2.6}
-        assert S.survivants(mesures, budget).height == 1
+        budget = {"n_hypotheses": 2, "alpha_nominal": 0.05}
+        survivants = S.survivants(mesures, budget)
+        assert survivants.height == 1
+        # C'est bien la ligne qui bat les DEUX témoins qui reste.
+        assert survivants["p_decale"].to_list() == [0.0001]
+
+
+class TestPlancherEtFDR:
+    """Le plancher du test et la correction qui s'y heurte.
+
+    À 200 tirages le plancher des p-values valait 0.00498, au-dessus de tous
+    les seuils de Bonferroni de l'étude : le « 0 survivant » était garanti par
+    construction. Ces tests verrouillent le diagnostic et le correctif.
+    """
+
+    def test_le_plancher_suit_le_nombre_de_tirages(self):
+        assert S.plancher_p(200) == pytest.approx(1 / 201)
+        assert S.plancher_p(2000) == pytest.approx(1 / 2001)
+        # Sans argument, c'est le réglage du module qui s'applique.
+        assert S.plancher_p() == pytest.approx(1 / (1 + S.N_TIRAGES_TEMOIN))
+
+    def test_seuil_bh_cas_verifiable_a_la_main(self):
+        # m=10, α=0.05 → seuils k·0.005. Rang 2 passe (0.004 ≤ 0.010),
+        # rang 3 non (0.02 > 0.015) : le seuil retenu est 0.004.
+        assert S.seuil_bh([0.001, 0.004, 0.02, 0.6, 0.9], m=10) == pytest.approx(0.004)
+
+    def test_bh_est_moins_severe_que_bonferroni(self):
+        p = [0.0005] * 6 + [0.001] * 20 + [0.5] * 334
+        assert S.seuil_bh(p, m=360) >= 0.05 / 360
+
+    def test_un_plancher_trop_haut_ne_rejette_rien(self):
+        """Le cœur du diagnostic : à 200 tirages, aucun rejet n'était possible."""
+        au_plancher = [1 / 201] * 6 + [2 / 201] * 20 + [0.5] * 334
+        assert S.seuil_bh(au_plancher, m=360) is None
+        # Le même profil, mesuré à 2000 tirages, redevient rejetable.
+        assert S.seuil_bh([1 / 2001] * 6 + [2 / 2001] * 20 + [0.5] * 334,
+                          m=360) is not None
+
+    def test_les_hypotheses_non_mesurees_comptent_au_denominateur(self):
+        """Filtrer par support puis corriger sur les survivants ne corrige rien."""
+        assert S.seuil_bh([1 / 2001] * 3, m=73010) is None
+        assert S.seuil_bh([1 / 2001] * 1000, m=73010) is not None
+
+    def test_entrees_vides_ou_non_finies(self):
+        assert S.seuil_bh([]) is None
+        assert S.seuil_bh([None, float("nan")], m=10) is None
+
+    def test_le_seuil_applique_est_publie(self):
+        """Le rapport doit pouvoir montrer le seuil réellement retenu."""
+        mesures = pl.DataFrame({
+            "significatif": [True, True],
+            "p_decale": [0.0001, 0.9],
+            "p_inconditionnel": [0.0001, 0.9],
+            "ecart_decale": [1.0, 1.0],
+        })
+        budget = {"n_hypotheses": 2, "alpha_nominal": 0.05}
+        S.survivants(mesures, budget)
+        assert budget["seuil_bh"] == pytest.approx(0.0001)

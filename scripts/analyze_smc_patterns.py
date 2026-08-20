@@ -102,15 +102,19 @@ def executer(args) -> dict:
         resultats[f"transitions_{tf}"] = S.transitions(
             journal, tf, fenetre=args.fenetre_transitions, n_barres=len(df))
 
-    mesures = S.mouvement_suivant(journal, frames, horizons=args.horizons)
-    budget = S.budget_hypotheses(mesures)
+    tirages = getattr(args, "tirages", None)
+    mesures = S.mouvement_suivant(journal, frames, horizons=args.horizons,
+                                  n_tirages=tirages)
+    budget = S.budget_hypotheses(mesures, n_tirages=tirages)
     resultats["mouvement"] = mesures
+    # `survivants` écrit le seuil BH retenu dans `budget` — le lire APRÈS.
     resultats["survivants"] = S.survivants(mesures, budget)
 
     fouille = C.mine(journal, fenetre_s=fenetre_s, longueurs=(2, 3))
     mes_comp = C.mouvement_apres_composes(
-        fouille, journal, frames, fenetre_s, tf_bas, horizons=args.horizons)
-    surv_comp = C.survivants_composes(mes_comp, fouille)
+        fouille, journal, frames, fenetre_s, tf_bas, horizons=args.horizons,
+        n_tirages=tirages)
+    surv_comp = C.survivants_composes(mes_comp, fouille, n_tirages=tirages)
     resultats["composes"] = fouille["candidats"]
     resultats["composes_mesures"] = mes_comp
     resultats["composes_survivants"] = surv_comp["survivants"]
@@ -121,7 +125,17 @@ def executer(args) -> dict:
         "evenements": journal.height,
         "motifs_distincts": int(journal["motif"].n_unique()),
         "hypotheses_motifs": budget["n_hypotheses"],
+        "correction": budget.get("methode", "benjamini-hochberg"),
+        "tirages_temoin": S._tirages(tirages),
+        # Plus petite p-value atteignable : un seuil sous ce plancher ne
+        # rejette JAMAIS, et le « 0 survivant » qui en résulte ne dit rien.
+        "plancher_p": budget.get("plancher_p"),
+        "seuil_bh_motifs": budget.get("seuil_bh"),
+        "seuil_bh_composes": surv_comp.get("seuil_bh"),
+        # Publié pour comparaison : c'est ce seuil-là qui rendait l'étude
+        # incapable de conclure quand il tombait sous le plancher.
         "alpha_bonferroni_motifs": budget["alpha_bonferroni"],
+        "alpha_bonferroni_composes": surv_comp.get("alpha_bonferroni"),
         "motifs_survivants": resultats["survivants"].height,
         "composes_enumeres": fouille["n_enumeres"],
         "composes_retenus": fouille["candidats"].height,
@@ -157,12 +171,24 @@ def afficher(paquet: dict) -> None:
 
     # Le décompte d'hypothèses va EN TÊTE : c'est lui qui dit combien de
     # chances le hasard a eues de produire ce qui suit.
-    print(f"\nHYPOTHÈSES TESTÉES  motifs : {resume['hypotheses_motifs']} "
-          f"(α corrigé {resume['alpha_bonferroni_motifs']:.2g})"
-          if resume["alpha_bonferroni_motifs"] else "\nHYPOTHÈSES TESTÉES : 0")
+    print(f"\nHYPOTHÈSES TESTÉES  motifs : {resume['hypotheses_motifs']}"
+          if resume["hypotheses_motifs"] else "\nHYPOTHÈSES TESTÉES : 0")
     print(f"                    composés énumérés : {resume['composes_enumeres']}, "
           f"retenus {resume['composes_retenus']}, "
           f"confirmés {resume['composes_confirmes']}")
+
+    # Le plancher va À CÔTÉ du seuil : c'est le seul moyen de voir qu'un
+    # « 0 survivant » vient du test et non des données.
+    plancher = resume.get("plancher_p")
+    print(f"\nCORRECTION  {resume.get('correction', '?')} sur α = 0.05, "
+          f"{resume.get('tirages_temoin', '?')} tirages par témoin")
+    if plancher:
+        print(f"            plancher des p-values : {plancher:.2g} "
+              f"(aucune p ne peut descendre plus bas)")
+    for nom, cle in (("motifs", "seuil_bh_motifs"), ("composés", "seuil_bh_composes")):
+        seuil = resume.get(cle)
+        print(f"            seuil retenu {nom:8} : "
+              + (f"{seuil:.2g}" if seuil else "aucun rejet à ce niveau"))
 
     with pl.Config(tbl_rows=15, fmt_str_lengths=48, tbl_width_chars=120):
         print("\n── Fréquence ──")
@@ -179,8 +205,22 @@ def afficher(paquet: dict) -> None:
     print(f"SURVIVANTS après correction — motifs : {resume['motifs_survivants']}, "
           f"composés : {resume['composes_survivants']}")
     if resume["motifs_survivants"] == 0 and resume["composes_survivants"] == 0:
-        print("Aucun motif ni composé ne se distingue de ses témoins sur cet")
-        print("échantillon. C'est un résultat, pas un échec de la mesure.")
+        # Deux causes très différentes, à ne PAS confondre : soit le test avait
+        # la résolution de rejeter et n'a rien trouvé (un résultat), soit son
+        # plancher était au-dessus du seuil exigé et le zéro était acquis
+        # d'avance (une limite d'instrument). Le second cas s'est produit tel
+        # quel à 200 tirages — cf. research/RESULTATS_smc_patterns_btc.md.
+        plancher = resume.get("plancher_p") or 0.0
+        exige = min(x for x in (resume.get("alpha_bonferroni_motifs"),
+                                resume.get("alpha_bonferroni_composes"), 1.0)
+                    if x)
+        if plancher and plancher > exige:
+            print(f"ATTENTION : plancher du test ({plancher:.2g}) au-dessus du seuil")
+            print(f"le plus strict ({exige:.2g}). Ce zéro ne mesure RIEN — monter")
+            print("--tirages pour que le test puisse rejeter.")
+        else:
+            print("Aucun motif ni composé ne se distingue de ses témoins sur cet")
+            print("échantillon. C'est un résultat, pas un échec de la mesure.")
     print("─" * 78 + "\n")
 
 
@@ -216,6 +256,11 @@ def main() -> int:
                         "(défaut 12). ⚠ le coût de l'énumération à 3 maillons "
                         "croît en carré : sur 4 TF, commencer à 4 "
                         "(cf. docs/MESURE_PATTERNS_SMC.md §5 bis)")
+    p.add_argument("--tirages", type=int, default=None,
+                   help="tirages par témoin (défaut : N_TIRAGES_TEMOIN = "
+                        "2000). Fixe le plancher des p-values à 1/(1+N) : "
+                        "monter ce nombre est le SEUL moyen de rendre "
+                        "détectables des écarts sous ce plancher")
     p.add_argument("--sortie", type=Path, default=Path("research/smc_patterns"),
                    help="répertoire de sortie (défaut research/smc_patterns)")
     p.add_argument("--sans-ecriture", action="store_true",

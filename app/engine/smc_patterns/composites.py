@@ -34,7 +34,7 @@ barres, qui ne sont pas comparables entre TF.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import polars as pl
@@ -201,7 +201,8 @@ def _candidats_vides() -> pl.DataFrame:
 def mouvement_apres_composes(resultat_mine: Dict[str, Any], journal: pl.DataFrame,
                              frames: Dict[str, pl.DataFrame], fenetre_s: int,
                              tf_mesure: str, horizons: Sequence[int] = (6, 12, 24),
-                             graine: int = 0) -> pl.DataFrame:
+                             graine: int = 0,
+                             n_tirages: Optional[int] = None) -> pl.DataFrame:
     """Rendement après les composés CONFIRMÉS, sur la seule tranche de confirmation.
 
     Mesurer sur tout l'historique réintroduirait exactement le biais que le
@@ -265,7 +266,7 @@ def mouvement_apres_composes(resultat_mine: Dict[str, Any], journal: pl.DataFram
             if len(obs) == 0:
                 continue
             s_obs = _stats_echantillon(obs)
-            moy_dec = _temoin_decale(bars, df, h, rng)
+            moy_dec = _temoin_decale(bars, df, h, rng, n_tirages)
             s_dec = _stats_echantillon(moy_dec)
             p_dec = p_valeur_empirique(s_obs["moyenne"], moy_dec)
             lignes.append({
@@ -287,30 +288,50 @@ def mouvement_apres_composes(resultat_mine: Dict[str, Any], journal: pl.DataFram
     return pl.DataFrame(lignes).sort("ecart_decale", descending=True, nulls_last=True)
 
 
-def survivants_composes(mesures: pl.DataFrame, resultat_mine: Dict[str, Any]
-                        ) -> Dict[str, Any]:
-    """Composés dont l'écart au témoin survit à la correction pour test multiple.
+def survivants_composes(mesures: pl.DataFrame, resultat_mine: Dict[str, Any],
+                        n_tirages: Optional[int] = None) -> Dict[str, Any]:
+    """Composés dont l'écart au témoin survit au contrôle du FDR.
 
     LE DÉCOMPTE D'HYPOTHÈSES EST CELUI DE L'ÉNUMÉRATION, pas celui des lignes
     mesurées. Corriger sur le nombre de survivants reviendrait à ne pas
     corriger du tout : les candidats ont déjà été filtrés par support, et c'est
     précisément ce filtrage qui a fait le tri. Sur une marche aléatoire, ce
-    module produit des composés à +3 % de rendement moyen ; c'est ce seuil-là
-    qui les élimine.
+    module produit des composés à +3 % de rendement moyen ; c'est cette
+    correction-là qui les élimine.
+
+    BENJAMINI-HOCHBERG PLUTÔT QUE BONFERRONI. Sur 73 000 hypothèses énumérées,
+    Bonferroni exigeait 6.9e-7 — mille fois moins que le plancher du test de
+    permutation (1 / (1 + tirages)). Aucun composé ne pouvait passer, quelles
+    que soient les données : le « 0 survivant » ne mesurait rien. BH contrôle
+    la proportion de fausses découvertes parmi les rejets, ce qui est la
+    garantie pertinente pour une liste de candidats à retester.
+
+    ``plancher_p`` est publié à côté du seuil : si le seuil retenu descend
+    jusqu'au plancher, c'est que la résolution du test redevient le facteur
+    limitant et qu'il faut monter ``n_tirages``.
     """
     from statistics import NormalDist
+    from app.engine.smc_patterns.stats import plancher_p, seuil_bh
 
     n_hyp = int(resultat_mine.get("n_enumeres") or 0)
+    plancher = plancher_p(n_tirages)
     vide = {"survivants": mesures.head(0), "n_hypotheses": n_hyp,
-            "z_requis": None, "alpha_bonferroni": None}
+            "z_requis": None, "alpha_bonferroni": None,
+            "methode": "benjamini-hochberg", "plancher_p": plancher,
+            "seuil_bh": None}
     if mesures.height == 0 or n_hyp <= 0:
         return vide
+
     alpha = 0.05 / n_hyp
     z = NormalDist().inv_cdf(1.0 - alpha / 2.0)
-    survivants = (mesures
-                  .filter(pl.col("significatif")
-                          & pl.col("p_decale").is_not_null()
-                          & (pl.col("p_decale") < alpha))
-                  .sort("ecart_decale", descending=True, nulls_last=True))
+    eligibles = mesures.filter(pl.col("significatif")
+                               & pl.col("p_decale").is_not_null())
+    seuil = seuil_bh(eligibles["p_decale"].to_list(), m=n_hyp, alpha=0.05)
+    survivants = (eligibles
+                  .filter(pl.col("p_decale") <= seuil)
+                  .sort("ecart_decale", descending=True, nulls_last=True)
+                  if seuil is not None else mesures.head(0))
     return {"survivants": survivants, "n_hypotheses": n_hyp,
-            "z_requis": round(z, 3), "alpha_bonferroni": alpha}
+            "z_requis": round(z, 3), "alpha_bonferroni": alpha,
+            "methode": "benjamini-hochberg", "plancher_p": plancher,
+            "seuil_bh": seuil}
