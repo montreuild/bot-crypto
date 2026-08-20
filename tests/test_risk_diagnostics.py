@@ -7,7 +7,7 @@ Les valeurs numeriques sont celles verifiees dans la spec (tableau
 """
 import pytest
 
-from app.core.risk_diagnostics import Diagnostic, diagnose, n_slots_max
+from app.core.risk.diagnostics import Diagnostic, diagnose, n_slots_max
 
 
 def _cfg(envelopes, venues_defs, *, min_slot_weight=0.0, stop_pct_reference=0.025,

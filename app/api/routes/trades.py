@@ -12,7 +12,7 @@ from app.api.helpers import verify_api_key
 from app.api.schemas import RiskOverviewResponse, TradesListResponse
 from app.core.bot_identity import build_slot_key
 from app.core.database import session_scope
-from app.core.risk_gate import _default_venue_capital
+from app.core.risk.gate import _default_venue_capital
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -168,7 +168,7 @@ def list_slots():
     if not state.cfg:
         raise HTTPException(503, "Configuration non chargée")
 
-    from app.core.risk_envelope import envelopes_for_active_slots
+    from app.core.risk.envelope import envelopes_for_active_slots
 
     envelopes = (getattr(state.trader, "envelopes", None) if state.trader else None)
     if not envelopes:

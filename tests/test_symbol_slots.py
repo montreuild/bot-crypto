@@ -80,7 +80,7 @@ def test_envelopes_are_keyed_per_symbol():
     """S12 : les enveloppes portent la meme cle 3-parties que les slots — un
     meme bot sur deux symboles a deux enveloppes distinctes, jamais une seule
     partagee."""
-    from app.core.risk_envelope import envelopes_for_active_slots
+    from app.core.risk.envelope import envelopes_for_active_slots
     cfg = _cfg()
     cfg["venues"] = {"default": "v", "defs": {"v": {"max_leverage": 1}}, "assign": {}}
     cfg["risk"] = {"profile": "p", "profiles": {"p": 0.02},

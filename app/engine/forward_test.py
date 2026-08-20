@@ -34,8 +34,8 @@ from app.core.oos_tracker import (
     save_records,
 )
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.risk_envelope import envelope_base as _envelope_base
-from app.core.risk_envelope import envelopes_for_active_slots
+from app.core.risk.envelope import envelope_base as _envelope_base
+from app.core.risk.envelope import envelopes_for_active_slots
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 
 logger = logging.getLogger(__name__)

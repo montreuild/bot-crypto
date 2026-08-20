@@ -4,7 +4,7 @@ import importlib
 import pytest
 
 from app.core.database import init_db, load_risk_state, session_scope
-from app.core.risk_gate import RiskManager
+from app.core.risk.gate import RiskManager
 
 
 def _cfg(**risk_over):

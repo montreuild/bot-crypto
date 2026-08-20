@@ -9,13 +9,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from app.core import ict, smc
-from app.core.smc_quality import (
+from app.core.smc.quality import (
     classe_liquidite,
     meilleure_cible,
     qualite_balayage,
     qualite_displacement,
 )
-from app.core.smc_state import sequence_label, state_label
+from app.core.smc.state import sequence_label, state_label
 from app.core.trade_economics import economic_edge_ok, net_rr, round_trip_cost
 from app.strategies.smart_money_setups import (
     _SETUP_CHECKERS,

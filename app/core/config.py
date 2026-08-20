@@ -438,7 +438,7 @@ def _validate_risk_envelopes(cfg: dict) -> None:
             f"risk.envelopes.<venue> pour chacune."
         )
 
-    from app.core.risk_envelope import trade_risk_pct
+    from app.core.risk.envelope import trade_risk_pct
     risk_pct = trade_risk_pct(cfg)
 
     for name, env in envelopes.items():

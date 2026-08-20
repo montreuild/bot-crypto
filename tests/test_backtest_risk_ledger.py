@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import polars as pl
 
-from app.core.risk_envelope import Envelope
+from app.core.risk.envelope import Envelope
 from app.engine.backtest import Backtester
 from app.engine.engine import BaseStrategy, Engine
 

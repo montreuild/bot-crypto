@@ -33,7 +33,7 @@ def _harness(tmp_path):
             # S12 : la clôture rend l'enveloppe et le budget de risque au
             # ledger — un vrai, pas un mock, pour que release() reste sincère.
             from app.core.rejections import RejectionCounter
-            from app.core.risk_ledger import RiskLedger
+            from app.core.risk.ledger import RiskLedger
             self.ledger = RiskLedger()
             self.rejections = RejectionCounter()
             self.SessionLocal = SessionLocal

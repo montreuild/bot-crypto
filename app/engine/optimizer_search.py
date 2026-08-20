@@ -271,7 +271,7 @@ class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
             return cached
         try:
             from app.core.bot_identity import build_slot_key, resolve_venue
-            from app.core.risk_envelope import resolve_envelope
+            from app.core.risk.envelope import resolve_envelope
             slot_key = build_slot_key(
                 self.strategy_name, self.timeframe or "1h", self.symbol)
             venue = resolve_venue(
@@ -349,7 +349,7 @@ class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
         }
         env = self._slot_envelope()
         if env is not None:
-            from app.core.risk_envelope import envelope_base
+            from app.core.risk.envelope import envelope_base
             out["envelope_base"] = envelope_base(env)
         return out
 

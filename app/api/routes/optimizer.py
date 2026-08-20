@@ -579,7 +579,7 @@ def optimizer_validate(
             raise HTTPException(400, "Le backtest avec les best_params n'a produit aucun trade")
 
         if method == "monte_carlo":
-            from app.core.risk_gate import _default_venue_capital
+            from app.core.risk.gate import _default_venue_capital
             from app.engine.monte_carlo import MonteCarlo
             mc = MonteCarlo(n_runs=cfg.get("backtest", {}).get("monte_carlo_runs", 200))
             mc_result = mc.run(trades, _default_venue_capital(cfg))

@@ -208,7 +208,7 @@ def main() -> int:
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    for bruyant in ("app.core.smc_structure", "app.core.config", "app.core.feature_store"):
+    for bruyant in ("app.core.smc.structure", "app.core.config", "app.core.feature_store"):
         logging.getLogger(bruyant).setLevel(logging.WARNING)
 
     paquet = executer(args)

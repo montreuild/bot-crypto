@@ -13,8 +13,8 @@ from app.core.execution import apply_exit_mode as _apply_exit_mode
 from app.core.execution import close_pnl as _close_pnl
 from app.core.execution import plan_partial_targets as _plan_partial_targets
 from app.core.execution import quantize_size as _quantize_size
-from app.core.risk_curve import risk_multiplier as _risk_multiplier
-from app.core.risk_sizer import _floor_to
+from app.core.risk.curve import risk_multiplier as _risk_multiplier
+from app.core.risk.sizer import _floor_to
 from app.core.timeframes import bar_to_days as _bar_to_days
 from app.live.protocols import LifecycleHost
 

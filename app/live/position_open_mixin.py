@@ -39,7 +39,7 @@ from app.core.execution import (
     venue_trade_cost,
 )
 from app.core.indicators import atr_val as _compute_atr
-from app.core.risk_envelope import resolve_envelope
+from app.core.risk.envelope import resolve_envelope
 from app.core.timeframes import HTF_MAP as _HTF_MAP
 from app.core.trailing import TrailingStopManager
 from app.live.protocols import LiveHost

@@ -22,7 +22,7 @@ import time
 
 from app.core.bot_identity import build_slot_key
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.risk_envelope import base_drift, envelopes_for_active_slots
+from app.core.risk.envelope import base_drift, envelopes_for_active_slots
 from app.engine.optimizer_search import RECOMMENDED_LIMIT, get_active_strategies_per_tf
 from app.live.protocols import OptimizerHost
 

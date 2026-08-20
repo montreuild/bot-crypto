@@ -151,7 +151,7 @@ class TestShippedConfig:
         import os
         os.environ.setdefault("WEB_API_KEY", "dummy")
         from app.core.config import load_config
-        from app.core.risk_envelope import trade_risk_pct
+        from app.core.risk.envelope import trade_risk_pct
         cfg = load_config("config.yaml")
         risk_pct = trade_risk_pct(cfg)
         for name, env in cfg["risk"]["envelopes"].items():
