@@ -324,11 +324,26 @@ def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
                 # ML est indépendant de l'optimiseur de paramètres), on passe 1
                 # (pas de correction Deflated Sharpe au niveau ML — le DSR est
                 # déjà appliqué au gate de l'optimiseur, cf. opt_scoring.py).
+                # ML-02 : deux précisions sur ce qui est transmis.
+                # 1. `n` est le nombre de lignes RÉELLEMENT scorées, publié par
+                #    le scorer. `gc_.holdout_bars` était la taille DEMANDÉE en
+                #    configuration : toujours ≥ 250 en pratique, ce qui rendait
+                #    le plancher MIN_SAMPLES (10) inatteignable, et surestimait
+                #    la précision dès qu'une ligne était écartée.
+                # 2. Les effectifs par classe de la métrique ACTIVE — amp et
+                #    dir n'ont pas le même équilibre de labels. Absents (scorer
+                #    tiers), le gate retombe sur l'hypothèse d'équilibre et le
+                #    signale par `classes_estimees`.
+                _suffixe = gc_.metric.replace("auc_", "", 1)
+                _n_scores = (candidate_metrics or {}).get("n")
                 overfitting_diagnostics = validate_model_quality(
                     auc_oos=float(cand_auc),
                     strategy_name=getattr(strategy, "name", recipe) or recipe,
-                    n_oos_samples=int(gc_.holdout_bars),
+                    n_oos_samples=int(_n_scores if _n_scores is not None
+                                      else gc_.holdout_bars),
                     n_trials_optimization=1,
+                    n_pos=(candidate_metrics or {}).get(f"n_pos_{_suffixe}"),
+                    n_neg=(candidate_metrics or {}).get(f"n_neg_{_suffixe}"),
                 )
                 # ML-01 : le verdict "block" BLOQUE. Il n'alimentait qu'un
                 # `logger.warning` et des métadonnées : le modèle était publié
