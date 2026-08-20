@@ -104,10 +104,14 @@ COPY tests/ ./tests/
 # erreurs d'import qui interrompaient toute la suite, et non deux échecs
 # isolés. Le défaut préexistait à la découpe en étages.
 #   scripts/audit_param_space.py  → tests/test_audit_param_space.py
+#   scripts/gen_frontend_types.py → tests/test_openapi_contracts.py, qui vérifie
+#                                   que generated.ts ne dérive pas des schémas
 #   frontend/next.config.mjs      → tests/test_legacy_redirects.py, qui compare
 #                                   les 308 du front aux redirections backend
-COPY scripts/audit_param_space.py ./scripts/
+#   frontend/src/types/generated.ts → lu par ce même test de contrat
+COPY scripts/audit_param_space.py scripts/gen_frontend_types.py ./scripts/
 COPY frontend/next.config.mjs ./frontend/
+COPY frontend/src/types/generated.ts ./frontend/src/types/
 
 # `scripts/` doit être importable : le test fait `from audit_param_space import …`.
 ENV PYTHONPATH=/app/scripts

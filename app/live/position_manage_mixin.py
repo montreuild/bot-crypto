@@ -39,6 +39,7 @@ from app.live.position_open_mixin import (
     _calc_unreal_pct,
     _order_fail_reason,
     _order_failed,
+    _order_rejected,
 )
 from app.live.protocols import LiveHost
 
@@ -322,7 +323,7 @@ class PositionManageMixin(LiveHost):
                         "tpOrdPx":         tp_limit,
                     },
                 )
-                if _order_failed(order):
+                if _order_rejected(order):
                     raise RuntimeError(f"OCO non posé — {_order_fail_reason(order)}")
                 pos["stop_order_id"] = order.get("id")
                 pos["_exchange_oco"] = True
@@ -336,7 +337,7 @@ class PositionManageMixin(LiveHost):
                     pos["symbol"], "limit", close_side, pos["size"], sl_limit,
                     params={"stopPrice": stop_price},
                 )
-                if _order_failed(order):
+                if _order_rejected(order):
                     raise RuntimeError(f"Stop non posé — {_order_fail_reason(order)}")
                 pos["stop_order_id"] = order.get("id")
                 pos.pop("_exchange_oco", None)
@@ -395,14 +396,26 @@ class PositionManageMixin(LiveHost):
         try:
             filled = self._cancel_exchange_stop(pos)
         except RuntimeError as e:
+            # LIVE-01 : ce chemin n'est atteint que lorsque le trailing veut
+            # RESSERRER le stop — il ne se déplace jamais dans l'autre sens.
+            # L'ancien niveau est donc plus ÉLOIGNÉ du prix que celui visé, et
+            # l'exposition plus grande que prévu. Le message annonçait
+            # « niveau plus prudent » : l'opérateur lisait l'inverse du risque
+            # réel et n'intervenait pas.
+            _reste = pos.get("stop")
+            _vise = pos.get("_stop_vise", pos.get("stop"))
             logger.error(
                 f"[StopExchange] Trailing {pos.get('symbol')} : annulation "
-                f"échouée ({e}) — l'ancien stop reste en place"
+                f"échouée ({e}) — stop NON resserré, l'ancien niveau "
+                f"({_reste}) reste actif alors que le trailing visait {_vise}"
             )
             if hasattr(self, "notif"):
                 self.notif.send(
-                    f"⚠️ *Stop exchange non remplacé* `{pos.get('symbol')}` : {e}\n"
-                    f"L'ancien stop reste en place (niveau plus prudent).",
+                    f"⚠️ *Stop exchange NON RESSERRÉ* `{pos.get('symbol')}` : {e}\n"
+                    f"L'ancien stop (`{_reste}`) reste actif ; le trailing "
+                    f"visait `{_vise}`, plus proche du prix.\n"
+                    f"L'exposition est donc PLUS GRANDE qu'attendu — vérifier "
+                    f"manuellement la position.",
                     async_=True,
                 )
             return None

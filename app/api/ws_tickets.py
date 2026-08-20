@@ -5,6 +5,21 @@ Le cookie HttpOnly reste le chemin nominal. Pour les clients qui ne
 peuvent pas poser de cookie (script, sonde), un ``POST /api/ws/ticket``
 authentifié délivre un jeton à usage unique, valable quelques secondes —
 jamais la clé API permanente en query string.
+
+⚠ SEC-01 — CONTRAINTE DE DÉPLOIEMENT : le registre ``_tickets`` vit en
+mémoire, dans le processus. L'API doit donc tourner en **process unique**,
+ce qui est le cas aujourd'hui (``cli.py --paper``, sans ``--workers`` ni
+gunicorn — cf. ``Dockerfile`` et ``docker-compose.yml``).
+
+Derrière plusieurs workers ou plusieurs conteneurs, un jeton émis par l'un
+serait inconnu de l'autre : le handshake ``/ws`` répondrait 4403 de façon
+**intermittente**, à une fréquence proportionnelle au nombre de workers — le
+pire profil à diagnostiquer, d'autant que le frontend redemande un jeton à
+chaque tentative de reconnexion. Avant de scaler horizontalement, déplacer ce
+registre vers un support partagé (Redis, ou la base déjà présente).
+
+``tests/test_sec_hardening.py`` vérifie que le lancement de l'API reste
+mono-processus : c'est ce qui rend cette hypothèse tenable.
 """
 from __future__ import annotations
 

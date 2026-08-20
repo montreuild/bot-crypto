@@ -1,13 +1,22 @@
 """Détection de trous OHLCV, calendrier-aware (D-03).
 
 ``detect_ohlcv_gaps`` comparait uniquement à ``1,5 × Δ`` : un week-end XPAR
-était un « trou ». Ici, un calendrier de séance élargit le seuil à
-``calendar.max_gap_seconds`` ; un marché 24/7 garde le seuil historique.
+était un « trou ». Puis une pile d'heuristiques a tenté d'élargir ce seuil —
+marge de fraîcheur, prochaine ouverture, échantillonnage du span — sans jamais
+décrire la réalité.
+
+La question posée est désormais la bonne : ``calendar.expected_bars_between``
+répond « combien de barres DEVRAIENT exister entre ces deux horodatages ». Une
+fermeture en produit zéro, une séance manquante en produit autant qu'il en
+manque.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 _TF_MINS = {
     "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
@@ -51,7 +60,20 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
     # couvre la quasi-totalité des barres.
     simple_allowed = expected_secs * 1.5
     for i in range(1, n):
-        delta_secs = (float(delta_secs_arr[i]) if delta_secs_arr is not None
+        # DAT-04 : un horodatage nul dans la colonne `time` produisait un nul
+        # dans `diff()`, donc `float(None)` et une TypeError. Elle était avalée
+        # par `_backfill_gaps` — rattrapage abandonné en silence — et remontait
+        # jusqu'à la route par `stats()`. Un écart n'est pas mesurable entre
+        # deux bornes dont une manque : on saute la paire en le signalant,
+        # plutôt que d'interrompre le scan de tout un fichier.
+        if times[i - 1] is None or times[i] is None:
+            logger.warning(
+                "[OHLCV] horodatage nul à l'index %d — paire ignorée, "
+                "la détection de trous ne peut pas la mesurer", i,
+            )
+            continue
+        _brut = delta_secs_arr[i] if delta_secs_arr is not None else None
+        delta_secs = (float(_brut) if _brut is not None
                       else _one_delta_secs(times[i - 1], times[i]))
         if delta_secs <= simple_allowed:
             continue
