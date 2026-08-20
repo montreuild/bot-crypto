@@ -326,7 +326,7 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
                         else:
                             logger.critical(
                                 f"[Stop] ⚠️ Position {pos_id} "
-                                f"({pos.get('symbol','?')}) NON clôturée après 3 tentatives "
+                                f"({(pos or {}).get('symbol', '?')}) NON clôturée après 3 tentatives "
                                 f"— vérifiez manuellement sur l'exchange."
                             )
                             self.notif.send(

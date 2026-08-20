@@ -250,7 +250,8 @@ class SlotLifecycleManager:
                               or bool(d.get("manual_active"))})
             for k, d in slots_data.items()
         }
-        transitions = []
+        # 2e element = etat PRECEDENT, None a la creation.
+        transitions: list[tuple[str, str | None, str, str]] = []
 
         # 1) Promotions / nouveaux slots : appliquées immédiatement.
         for key, prop in proposed.items():
@@ -263,12 +264,11 @@ class SlotLifecycleManager:
                 transitions.append((key, cur, prop, "promotion"))
 
         # 2) Rétrogradations : soumises au quota/jour ET au plancher de bots actifs.
-        demotions = [
-            (key, self._states.get(key), prop)
-            for key, prop in proposed.items()
-            if self._states.get(key) is not None
-            and _RANK[prop] < _RANK[self._states[key]]
-        ]
+        demotions: list[tuple[str, str, str]] = []
+        for key, prop in proposed.items():
+            cur_etat = self._states.get(key)
+            if cur_etat is not None and _RANK[prop] < _RANK[cur_etat]:
+                demotions.append((key, cur_etat, prop))
         # Les pires d'abord (plus grosse chute de rang).
         demotions.sort(key=lambda t: _RANK[t[2]] - _RANK[t[1]])
         for key, cur, prop in demotions:

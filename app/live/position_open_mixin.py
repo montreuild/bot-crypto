@@ -48,8 +48,11 @@ from app.live.protocols import LiveHost
 try:
     from app.core.events import publish_trade_closed, publish_trade_opened
 except Exception:  # pragma: no cover — fallback si events.py indisponible
-    def publish_trade_opened(*_a, **_kw): pass
-    def publish_trade_closed(*_a, **_kw): pass
+    def publish_trade_opened(*_a, **_kw):  # type: ignore[misc]  # repli sans events.py
+        pass
+
+    def publish_trade_closed(*_a, **_kw):  # type: ignore[misc]
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +134,8 @@ def _order_fail_reason(order: dict | None) -> str:
     if order is None:
         return "create_order a retourné None"
     status = order.get("status") or "inconnu"
-    info   = order.get("info") if isinstance(order.get("info"), dict) else {}
+    _info = order.get("info")
+    info: dict = _info if isinstance(_info, dict) else {}
     detail = order.get("failReason") or info.get("msg") or info.get("sMsg")
     return f"status={status}" + (f" — {detail}" if detail else "")
 
