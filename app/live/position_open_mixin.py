@@ -87,7 +87,44 @@ def _order_failed(order: dict | None) -> bool:
         return False
     if status in ("open", "new", "pending", "unfilled"):
         return True
-    return False
+    # LIVE-02 : rien de rempli et un statut qu'on ne reconnaît pas. Le repli
+    # valait False — « pas d'échec » — et l'appelant enregistrait alors une
+    # position au prix théorique, possiblement inexistante côté exchange. Le
+    # bot suivait un fantôme : stop posé sur du vide, capital engagé à tort.
+    # On refuse par défaut : ne pas ouvrir une position dont on n'a pas la
+    # preuve qu'elle existe. Le statut est journalisé pour compléter les listes
+    # ci-dessus au fil des connecteurs rencontrés.
+    logger.warning(
+        "[Ordre] statut inconnu %r avec filled=0 — traité comme un ÉCHEC "
+        "(LIVE-02). Compléter les listes de _order_failed si ce statut est "
+        "légitime pour votre connecteur.",
+        status or "<vide>",
+    )
+    return True
+
+
+def _order_rejected(order: dict | None) -> bool:
+    """L'ordre a-t-il été REFUSÉ par l'exchange ? — pour les ordres au repos.
+
+    ``_order_failed`` répond à « mon ordre au marché a-t-il été exécuté ? » :
+    un statut ``open``/``pending`` y est un échec, puisqu'un ordre au marché
+    doit se remplir immédiatement.
+
+    Un stop ou une jambe OCO, eux, sont posés pour **attendre** : ``open`` est
+    leur état nominal et ``filled=0`` la situation normale. Leur appliquer
+    ``_order_failed`` revenait à déclarer en échec toute pose de stop réussie
+    sur un exchange qui renvoie ``status="open"`` — le bot annulait alors un
+    stop bel et bien actif, ou renonçait à le poser.
+
+    Seul un refus explicite compte donc ici.
+    """
+    if order is None:
+        return True
+    status = str(order.get("status") or "").lower()
+    if status in _REJECTED_ORDER_STATUSES:
+        return True
+    # Un identifiant est la preuve que l'exchange a bien enregistré l'ordre.
+    return not (order.get("id") or order.get("orderId") or order.get("ordId"))
 
 
 def _order_fail_reason(order: dict | None) -> str:

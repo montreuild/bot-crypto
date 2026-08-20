@@ -122,7 +122,13 @@ def _live_close_pnl(margin: bool = True) -> float:
                 **({"margin_mode": "isolated", "max_leverage": 3} if margin else {}),
             }, "exchange": {"name": "okx", "margin": margin}}
             self.exchange = MagicMock()
-            self.exchange.create_order.return_value = {"price": EXIT, "id": "x"}
+            # LIVE-02 : le faux ordre doit porter un statut, comme tout ordre
+            # réel — `Exchange.create_order` pose `status="closed"` même en
+            # mode papier. Sans lui, `_order_failed` refuse désormais d'ouvrir
+            # une position dont rien ne prouve l'exécution, et le test mesurait
+            # alors un PnL nul des deux côtés.
+            self.exchange.create_order.return_value = {
+                "price": EXIT, "id": "x", "status": "closed", "filled": 1.0}
             self.risk = MagicMock()
             self.notif = MagicMock()
             # S12 : la clôture rend l'enveloppe et le budget au ledger.
