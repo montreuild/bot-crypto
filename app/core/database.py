@@ -333,9 +333,6 @@ def load_open_positions(session: Session) -> List[dict]:
     rows = session.query(OpenPosition).all()
     result = []
     for r in rows:
-        # `str(...)` explicite : le modèle est déclaré en style `Column(...)`
-        # hérité, donc mypy type `r.id` en `Column[str] | str`. Sur une
-        # INSTANCE c'est toujours une chaîne — le cast est un no-op au runtime.
         _sym, _strat, tf = parse_pos_key(str(r.id or ""))
         result.append({
             "id":        r.id,

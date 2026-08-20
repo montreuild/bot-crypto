@@ -178,6 +178,12 @@ def test_backtest_simulated_live_refreshes_and_publishes(tmp_path):
         "n_estimators": 20, "num_leaves": 7, "warmup_bars": 200,
         "retrain_every": 250, "gate_holdout_bars": 150,
         "gate_min_window_bars": 400, "gate_auc_floor": 0.0,
+        # ML-01 : on teste la CADENCE et la PUBLICATION en simulated_live, sur
+        # une série synthétique sans edge. Le garde-fou de sur-apprentissage y
+        # refuserait la promotion à raison (IC de l'AUC recouvrant 0,50) et il
+        # n'y aurait plus rien à publier. Le refus est couvert ailleurs
+        # (tests/test_ml01_gate_bloque.py).
+        "gate_overfitting_block": False,
     }})
     bt = Backtester(eng, cfg, ml_mode="simulated_live")
     result = bt.run(df, "BTC/USDC", "1h")

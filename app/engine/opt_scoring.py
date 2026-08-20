@@ -223,7 +223,12 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
     _exp_ok = (oos_expectancy is not None and b_exp is not None
                and oos_expectancy > b_exp)
     _pf_ok = (oos_pf is not None and b_pf is not None and oos_pf > b_pf)
-    if not (_sharpe_ok or _exp_ok or _pf_ok or oos_wr > b_wr):
+    # OPT-04 : la règle effective est « Sharpe OU expectancy OU profit factor ».
+    # Un `or oos_wr > b_wr` figurait ici, sans jamais changer la décision — le
+    # test suivant rejetait de toute façon le win-rate seul. Il ne servait qu'à
+    # aiguiller le message d'erreur ; on garde les deux messages, distincts,
+    # sans faire croire que le win-rate est une porte d'entrée.
+    if not (_sharpe_ok or _exp_ok or _pf_ok) and not oos_wr > b_wr:
         _sh_txt = "—" if oos_sharpe is None else f"{oos_sharpe:.2f}"
         _bsh_txt = "—" if b_sharpe is None else f"{b_sharpe:.2f}"
         return False, (f"aucune amélioration de qualité (WR {oos_wr:.1f}% vs "

@@ -226,3 +226,90 @@ def test_sans_exits_le_comportement_est_inchange():
     t = res.trades[0]
     assert t["exits"] == []
     assert t["size"] == pytest.approx(t["size_initial"], rel=1e-9)
+
+
+# ── TEST-01 — invariants comptables (jambes ET pyramidage) ──────────────────
+# Ces deux tests échouaient avant les correctifs FIN-01 / FIN-02 : le champ
+# `fees` était écrasé par `_close_at` (frais des jambes et des pyramidages
+# perdus), et `entry_fees` n'accumulait pas les frais d'entrée des pyramidages
+# (somme des PnL ≠ courbe d'équité). Une égalité, pas une inégalité : c'est
+# ce qui manquait à `test_le_pnl_du_trade_agrege_les_jambes_et_le_reliquat`.
+
+
+class _JambesEtPyramide(_AvecJambes):
+    """Jambes partielles ET pyramidage : le seul cas qui exerce les deux
+    accumulateurs de frais en même temps."""
+
+    name = "jambes_et_pyramide"
+
+    def score(self, df, params=None, df_htf=None, symbol: str = "") -> dict:
+        sig = super().score(df, params, df_htf, symbol)
+        sig["name"] = self.name
+        return sig
+
+    def check_scale_in(self, df, position: dict, params=None):
+        if position.get("scale_ins", 0) >= 2:
+            return None
+        return {"size_factor": 0.5, "reason": "pyramide"}
+
+
+def _run_en_mesurant_les_frais(strat):
+    """Rejoue un backtest en totalisant les frais RÉELLEMENT prélevés.
+
+    Les deux seules portes de sortie d'un frais : `_close_pnl` (sorties) et
+    `Backtester._fees` (entrée et pyramidages). On les instrumente plutôt que
+    de reconstruire le total — une reconstruction referait l'erreur qu'on teste.
+    """
+    import app.engine.position_lifecycle as _pl
+
+    preleves = {"total": 0.0}
+    _close_pnl_orig = _pl._close_pnl
+    _fees_orig = Backtester._fees
+
+    def _spy_close_pnl(**kw):
+        pnl, fees, borrow = _close_pnl_orig(**kw)
+        preleves["total"] += fees
+        return pnl, fees, borrow
+
+    def _spy_fees(self, price, size, maker=False, side="long", is_entry=True):
+        f = _fees_orig(self, price, size, maker=maker, side=side,
+                       is_entry=is_entry)
+        preleves["total"] += f
+        return f
+
+    _pl._close_pnl = _spy_close_pnl
+    Backtester._fees = _spy_fees
+    try:
+        res = _run(strat)
+    finally:
+        _pl._close_pnl = _close_pnl_orig
+        Backtester._fees = _fees_orig
+    return res, preleves["total"]
+
+
+@pytest.mark.parametrize("strat", [_AvecJambes, _JambesEtPyramide])
+def test_les_frais_journalises_egalent_les_frais_preleves(strat):
+    """FIN-01 : `_close_at` ajoute les frais de sortie au cumul, il ne l'écrase
+    pas. Sans cela, jambes et pyramidages disparaissent du coût affiché."""
+    res, preleves = _run_en_mesurant_les_frais(strat())
+    assert res.trades, "aucun trade"
+    journalises = sum(t["fees"] for t in res.trades)
+    assert journalises == pytest.approx(preleves, abs=1e-6), (
+        f"{journalises:.6f} journalisés contre {preleves:.6f} prélevés — "
+        f"écart {journalises - preleves:+.6f}"
+    )
+
+
+@pytest.mark.parametrize("strat", [_SansJambes, _AvecJambes, _JambesEtPyramide])
+def test_la_somme_des_pnl_egale_la_variation_de_capital(strat):
+    """FIN-02 : les frais d'entrée des pyramidages sont débités du capital ;
+    ils doivent donc être retranchés du PnL journalisé, sinon la somme des
+    trades et la courbe d'équité racontent deux histoires différentes."""
+    res = _run(strat())
+    assert res.trades, "aucun trade"
+    somme_pnl = sum(t["pnl"] for t in res.trades)
+    variation = res.equity_curve[-1] - res.equity_curve[0]
+    assert somme_pnl == pytest.approx(variation, abs=1e-4), (
+        f"somme des PnL {somme_pnl:.6f} contre variation de capital "
+        f"{variation:.6f} — écart {somme_pnl - variation:+.6f}"
+    )

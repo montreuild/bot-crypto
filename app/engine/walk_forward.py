@@ -66,7 +66,8 @@ class WalkForwardAnalyzer:
         out_sample_results = []
         n_failed = 0
         fold_errors: list[str] = []
-        _rr = bool((self.cfg.get("backtest") or {}).get("realistic_risk", False))
+        from app.core.is_oos import resolve_realistic_risk
+        _rr = resolve_realistic_risk(self.cfg)
 
         for k in range(self.n_folds):
             is_end  = fold_n * (k + 1)
