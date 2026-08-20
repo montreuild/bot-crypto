@@ -8,7 +8,7 @@ commandes exactes du workflow** `.github/workflows/ci.yml`.
 |---|---|---|
 | `lint` | `ruff check .` (ruff 0.15.8, version épinglée en CI) | **ROUGE — 3 erreurs** |
 | `mypy` | `mypy app/core app/engine app/api/ws_tickets.py app/live/protocols.py app/ml/overfitting_gate.py` | **ROUGE — 1 erreur** |
-| `test` | `pytest tests/ -q` | vert — 2 142 passés, 30 ignorés (241 s) |
+| `test` | `pytest tests/ -q --tb=short -m "not slow" --cov=app --cov-fail-under=64` (commande CI exacte) | vert — 2 126 passés, 27 ignorés, 19 déselectionnés ; **couverture 67,10 %** (188 s) |
 | `frontend` / lint | `npm run lint` | vert |
 | `frontend` / type-check | `npm run type-check` | vert |
 | `frontend` / test | `vitest run` | vert — 190 passés / 20 fichiers |
@@ -218,8 +218,13 @@ chaque module au job CI une fois propre, pour empêcher les retours en arrière.
 - **Jobs frontend** — `lint`, `type-check`, `test:coverage` et `build` sont
   tous câblés (`ci.yml:85-98`). Les trois premiers ont été reproduits et sont
   verts.
-- **Marqueur `slow`** — la CI lance `-m "not slow"`. Mon exécution locale n'a
-  pas filtré et a passé les 2 142 tests : le sous-ensemble CI est donc inclus
-  dans ce qui a été vérifié.
+- **Marqueur `slow`** — la CI lance `-m "not slow"`, soit 19 tests
+  déselectionnés. J'ai exécuté les deux : la suite complète (2 142 passés) et
+  le sous-ensemble CI (2 126 passés). Les deux sont verts.
+- **Seuil de couverture** — `--cov-fail-under=64` est présent dans **les deux**
+  pipelines (`.github/workflows/ci.yml:49-50`, commande pytest sur deux
+  lignes ; et `.gitlab-ci.yml:36`). Le gate passe : **67,10 %** de couverture
+  mesurée sur `app/` (29 533 instructions, 9 716 non couvertes), soit 3 points
+  de marge. Le pipeline GitLab est bien le miroir qu'il annonce être.
 - **Actions Node 24** — `38516b6` met à jour les actions et corrige l'export
   nommé de `eslint.config.mjs`. `npm run lint` est vert.
