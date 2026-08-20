@@ -5,12 +5,10 @@
  * Formulaire → `optimizer-config-form.tsx`. Jobs → `optimizer-jobs-panel.tsx`.
  */
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Activity } from 'lucide-react';
 import {
   useOptimizeSpaces,
-  useOptimizeResults,
   useOptimizeStatus,
 } from '@/hooks/use-api';
 import { ParamSpaceTable } from '@/components/optimizer/param-space-table';
@@ -20,7 +18,6 @@ import { normalizeOptimizeJobs } from '@/components/optimizer/optimizer-utils';
 
 export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   const { data: spaces, isLoading: spacesLoading } = useOptimizeSpaces();
-  const { data: resultsData } = useOptimizeResults();
   const {
     data: jobsData,
     isLoading: jobsLoading,
@@ -32,7 +29,6 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   const jobsError = jobsIsError
     ? (jobsErrorObj instanceof Error ? jobsErrorObj.message : 'Erreur de chargement')
     : null;
-  const activeResults = resultsData?.active_per_tf || {};
   const running = jobs.filter((j) => j.status === 'running').length;
 
   return (
@@ -57,34 +53,6 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
       <OptimizerConfigForm filterMl={filterMl} spaces={spaces} />
 
       {!spacesLoading && <ParamSpaceTable spaces={spaces || {}} />}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Résultats actifs par TF</CardTitle>
-          <Badge variant="success">appliqués</Badge>
-        </CardHeader>
-        <CardContent>
-          {Object.keys(activeResults).length === 0 ? (
-            <div className="text-sm text-muted text-center py-6">Aucun résultat actif</div>
-          ) : (
-            <div className="space-y-2">
-              {Object.entries(activeResults).map(([tf, strategies]) => (
-                <div
-                  key={tf}
-                  className="flex items-center justify-between p-3 rounded-lg bg-card-hover border border-border"
-                >
-                  <span className="font-mono font-semibold text-sm">{tf}</span>
-                  <div className="flex flex-wrap gap-1">
-                    {strategies.map((s) => (
-                      <Badge key={s} variant="info">{s}</Badge>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       <OptimizerJobsPanel
         jobs={jobs}

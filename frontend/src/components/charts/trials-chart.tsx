@@ -25,9 +25,11 @@ interface Props {
   /** Trials du job (déjà présents dans `OptimizeJob.trials`). */
   trials?: OptimizeTrial[];
   className?: string;
+  nTotal?: number;
+  topOnly?: boolean;
 }
 
-export function TrialsChart({ trials, className }: Props) {
+export function TrialsChart({ trials, className, nTotal, topOnly }: Props) {
   // Transforme les trials en données pour recharts
   const data = useMemo(() => {
     if (!Array.isArray(trials) || trials.length < 3) return [];
@@ -62,7 +64,9 @@ export function TrialsChart({ trials, className }: Props) {
           <TrendingUp className="w-4 h-4 text-cyan-400" />
           Courbe d&apos;apprentissage
           <span className="text-[10px] text-muted font-normal">
-            ({data.length} essais)
+            {topOnly
+              ? `${data.length} meilleurs trials (sur ${nTotal ?? data.length})`
+              : `${data.length} trials${nTotal && nTotal > data.length ? ` / ${nTotal}` : ''}`}
           </span>
         </CardTitle>
       </CardHeader>

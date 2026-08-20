@@ -24,7 +24,7 @@ import { TrialsChart } from '@/components/charts/trials-chart';
 import { OptimizerValidatePanel } from '@/components/cards/optimizer-validate-panel';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { timeAgoShort, Metric } from '@/components/optimizer/optimizer-utils';
-import { normalizeBaseline, deriveAfter, normalizeTopTrials } from '@/lib/backend-normalizers';
+import { normalizeBaseline, deriveAfter, normalizeTopTrials, formatPctPoints } from '@/lib/backend-normalizers';
 import { LiveProgress } from '@/components/optimizer/live-progress';
 import { STATUS_LABEL, STATUS_VARIANT } from '@/components/optimizer/status';
 
@@ -52,7 +52,9 @@ export function JobCard({
   // OPT-007 — carte repliable : dépliée par défaut pour les jobs en cours,
   // repliée pour les jobs terminés/annulés en erreur (le verdict OOS tient
   // en 5 KPIs dans l'en-tête ; le détail est volumineux).
-  const [expanded, setExpanded] = useState<boolean>(defaultExpanded ?? job.status === 'running');
+  const [expanded, setExpanded] = useState<boolean>(
+    defaultExpanded ?? (job.status === 'running' || job.status === 'done'),
+  );
 
   const handleApply = async () => {
     try {
@@ -187,7 +189,7 @@ export function JobCard({
                   <Metric label="Score val." value={(result.best_val_score ?? result.best_oos_score ?? 0).toFixed(4)} />
                   <Metric label="PnL val." value={formatUSD(result.best_val_pnl ?? result.best_oos_pnl ?? 0)} />
                   <Metric label="Trades val." value={String(result.best_val_trades ?? result.best_oos_trades ?? 0)} />
-                  <Metric label="Win rate val." value={`${((result.best_val_wr ?? result.best_oos_wr ?? 0) * 100).toFixed(1)}%`} />
+                  <Metric label="Win rate val." value={formatPctPoints(result.best_val_wr ?? result.best_oos_wr)} />
                   <Metric label="Sharpe val." value={(result.best_val_sharpe ?? result.best_oos_sharpe ?? 0).toFixed(2)} />
                   {/* P0-2 : Deflated Sharpe (probabilité que le Sharpe soit réel,
                       corrigée du biais de sélection multiple). */}
@@ -258,8 +260,11 @@ export function JobCard({
 
             {/* P1-3 — Courbe d'apprentissage (final_score + overfit au fil des trials).
                 Affichée seulement si ≥ 3 trials (sinon pas lisible). */}
-            {isDone && trials.length >= 3 && (
-              <TrialsChart trials={trials} />
+            {isDone && (job.trials?.length ?? 0) >= 3 && (
+              <TrialsChart trials={job.trials} nTotal={job.n_trials ?? job.trials_done} />
+            )}
+            {isDone && !(job.trials?.length) && trials.length >= 3 && (
+              <TrialsChart trials={trials} nTotal={job.n_trials ?? trials.length} topOnly />
             )}
 
             {/* Contexte facturé pendant l'optimisation : un `oos_score` n'est pas

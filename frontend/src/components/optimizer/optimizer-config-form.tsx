@@ -88,17 +88,6 @@ export function OptimizerConfigForm({
     setter(list.includes(value) ? list.filter((x) => x !== value) : [...list, value]);
   };
 
-  const recommendedTfsFor = (s: string): string[] => {
-    const info = spaces?.[s];
-    if (!info) return [];
-    return info.recommended_tfs ?? info.timeframes ?? [];
-  };
-  const hasNonRecommendedTf = (s: string): boolean => {
-    const recTfs = recommendedTfsFor(s);
-    if (recTfs.length === 0) return false;
-    return selectedTfs.some((tf) => !recTfs.includes(tf));
-  };
-
   const hasMlSelected = selectedStrategies.some((s) => spaces?.[s]?.is_ml);
   const hasOmnibusSelected = selectedStrategies.some((s) => /omnibus/i.test(s));
 
@@ -272,9 +261,9 @@ export function OptimizerConfigForm({
             </select>
           </div>
           <div>
-            <label className="text-xs text-dim block mb-1.5">n_trials</label>
+            <label className="text-xs text-dim block mb-1.5">Nombre d&apos;essais (trials)</label>
             <input
-              aria-label="n_trials"
+              aria-label="Nombre d'essais"
               type="number"
               min={5}
               max={500}
@@ -284,9 +273,9 @@ export function OptimizerConfigForm({
             />
           </div>
           <div>
-            <label className="text-xs text-dim block mb-1.5">n_jobs</label>
+            <label className="text-xs text-dim block mb-1.5">Workers parallèles</label>
             <input
-              aria-label="n_jobs"
+              aria-label="Workers parallèles"
               type="number"
               min={1}
               max={16}
@@ -322,68 +311,85 @@ export function OptimizerConfigForm({
           </div>
         </div>
 
-        <details className="pt-2 border-t border-border">
-          <summary className="text-[10px] uppercase tracking-wider text-dim font-semibold cursor-pointer hover:text-foreground py-2">
+        <div className="space-y-3 pt-2 border-t border-border">
+          <div className="text-[10px] uppercase tracking-wider text-dim font-semibold">
             Options avancées
-          </summary>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pt-2">
-            <div>
-              <label className="text-xs text-dim block mb-1.5" title="0 = désactivé.">
-                early_stopping (patience)
-              </label>
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1.5">Nombre de bougies</label>
+            <input
+              aria-label="Nombre de bougies"
+              type="number"
+              min={0}
+              max={50000}
+              step={100}
+              value={limitPerTf}
+              onChange={(e) => setLimitPerTf(Math.max(0, Math.min(50000, Number(e.target.value) || 0)))}
+              className="w-full max-w-xs px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+            />
+            <div className="flex flex-wrap gap-1 mt-1">
+              {[500, 2000, 5000, 8000, 50000].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setLimitPerTf(n)}
+                  className={cn(
+                    'px-2 py-0.5 rounded text-[10px] border transition-colors',
+                    limitPerTf === n
+                      ? 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border-cyan-500/40'
+                      : 'bg-surface border-border text-muted hover:text-foreground hover:border-border-hi',
+                  )}
+                >
+                  {n >= 1000 ? `${n / 1000}k` : n}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setLimitPerTf(0)}
+                className={cn(
+                  'px-2 py-0.5 rounded text-[10px] border',
+                  limitPerTf === 0
+                    ? 'bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border-cyan-500/40'
+                    : 'bg-surface border-border text-muted',
+                )}
+              >
+                Auto
+              </button>
+            </div>
+            <p className="text-[10px] text-dim mt-1">0 / Auto = profondeur max du cache par TF.</p>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <label className="cursor-pointer flex items-center gap-2">
+              Arrêt anticipé (patience)
               <input
-                aria-label="early_stopping"
+                aria-label="Arrêt anticipé (patience)"
                 type="number"
                 min={0}
                 max={50}
                 value={earlyStopping}
                 onChange={(e) => setEarlyStopping(Math.max(0, Math.min(50, Number(e.target.value) || 0)))}
-                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+                className="w-20 px-2 py-1 bg-card-hover border border-border rounded-md text-xs font-mono"
               />
-            </div>
-            <div>
-              <label className="text-xs text-dim block mb-1.5" title="0 = auto.">
-                limit_per_tf
-              </label>
-              <input
-                aria-label="limit_per_tf"
-                type="number"
-                min={0}
-                max={8000}
-                step={100}
-                value={limitPerTf}
-                onChange={(e) => setLimitPerTf(Math.max(0, Math.min(8000, Number(e.target.value) || 0)))}
-                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-              />
-            </div>
-            <div className="flex items-end">
-              {(!filterMl || hasMlSelected) && (
-                <label
-                  className={cn(
-                    'flex items-center gap-2 text-sm cursor-pointer h-10',
-                    !hasMlSelected && 'opacity-50 cursor-not-allowed',
-                  )}
-                  title={
-                    hasMlSelected
-                      ? 'Réglage des hyperparamètres du modèle ML en plus des params de stratégie.'
-                      : 'Sélectionnez une stratégie ML pour activer cette option.'
-                  }
-                >
-                  <input
-                    type="checkbox"
-                    checked={mlTuneHp}
-                    onChange={(e) => setMlTuneHp(e.target.checked)}
-                    disabled={!hasMlSelected}
-                    className="rounded"
-                  />
-                  {filterMl
-                    ? "Régler aussi les hyperparamètres d'entraînement (two-phase, plus lent)"
-                    : 'ml_tune_hp'}
-                </label>
-              )}
-            </div>
+              <span className="text-dim">0 = désactivé</span>
+            </label>
           </div>
-        </details>
+          {(!filterMl || hasMlSelected) && (
+            <div className="flex items-center gap-2 text-xs">
+              <input
+                id="opt-ml-tune"
+                type="checkbox"
+                checked={mlTuneHp}
+                onChange={(e) => setMlTuneHp(e.target.checked)}
+                disabled={!hasMlSelected}
+                className="rounded"
+              />
+              <label htmlFor="opt-ml-tune" className={cn('cursor-pointer', !hasMlSelected && 'opacity-50')}>
+                Régler aussi les hyperparamètres ML
+                <span className="text-dim ml-1">(plus lent, stratégies ML uniquement)</span>
+              </label>
+            </div>
+          )}
+        </div>
 
         {selectedStrategies.length > 0 && selectedTfs.length > 0 && selectedSymbols.length > 0 && (
           <div className="rounded-lg border border-border bg-card-hover/50 p-3 space-y-2">

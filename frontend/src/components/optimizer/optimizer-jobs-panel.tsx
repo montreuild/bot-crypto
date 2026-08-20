@@ -56,8 +56,8 @@ export function OptimizerJobsPanel({
     const groups: Array<{ key: string; label: string; jobs: OptimizeJob[]; defaultExpanded: boolean }> = [
       { key: 'running', label: 'En cours', jobs: [], defaultExpanded: true },
       { key: 'error', label: 'Erreurs', jobs: [], defaultExpanded: true },
-      { key: 'cancelled', label: 'Annulés', jobs: [], defaultExpanded: false },
-      { key: 'done', label: 'Terminés', jobs: [], defaultExpanded: false },
+      { key: 'cancelled', label: 'Annulés', jobs: [], defaultExpanded: true },
+      { key: 'done', label: 'Terminés', jobs: [], defaultExpanded: true },
     ];
     const map: Record<string, typeof groups[number]> = Object.fromEntries(groups.map((g) => [g.key, g]));
     for (const j of filteredJobs) {
