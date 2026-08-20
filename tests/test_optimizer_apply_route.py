@@ -176,3 +176,77 @@ def test_job_inconnu_ou_non_termine(monkeypatch, tmp_path):
         assert r.status_code == 404
     finally:
         app.dependency_overrides.pop(verify_api_key, None)
+
+
+# ── OPT-01 / OPT-02 — le chemin MANUEL applique le même garde-fou que l'auto ──
+# `auto_apply` est désactivé par défaut : la route ci-dessous est le chemin
+# réellement emprunté. Elle ne transmettait ni `oos_dd`, ni `oos_pf`, ni
+# `oos_expectancy`, si bien que le garde-fou de drawdown ajouté à
+# `beats_baseline` et ses critères de qualité y étaient inertes.
+
+BASELINE_RICHE = {"pnl": 50.0, "wr": 40.0, "sharpe": 1.0, "dd": 10.0,
+                  "profit_factor": 1.5, "expectancy": 2.0}
+
+
+def _job_avec_holdout(**holdout):
+    """Job dont le gate se prononce sur le holdout, comme en production."""
+    job = _job()
+    job["baseline"] = BASELINE_RICHE
+    job["gate_source"] = "holdout"
+    job["holdout"] = {"trades": 12, "pnl": 80.0, "wr": 45.0, "sharpe": 1.2,
+                      "dd": 10.0, "profit_factor": 2.0, "expectancy": 5.0}
+    job["holdout"].update(holdout)
+    return job
+
+
+def test_le_drawdown_degrade_est_refuse_sur_la_route_manuelle(monkeypatch, tmp_path):
+    """OPT-02 : un DD holdout de 80 % contre un baseline à 10 % passait."""
+    spath, cfgpath = _fixture_config(tmp_path)
+    client = _client(monkeypatch, tmp_path, _job_avec_holdout(dd=80.0))
+    try:
+        r = _appliquer(client, cfgpath)
+        assert r.status_code == 409, r.text
+        assert "drawdown" in r.json()["detail"].lower()
+        assert _params_ecrits(spath) == {}
+    finally:
+        app.dependency_overrides.pop(verify_api_key, None)
+
+
+def test_le_drawdown_degrade_reste_forcable(monkeypatch, tmp_path):
+    """Le refus est un garde-fou, pas un verrou : `force=true` passe outre."""
+    spath, cfgpath = _fixture_config(tmp_path)
+    client = _client(monkeypatch, tmp_path, _job_avec_holdout(dd=80.0))
+    try:
+        r = _appliquer(client, cfgpath, force=True)
+        assert r.status_code == 200, r.text
+        assert _params_ecrits(spath)["1h"]["BTC/USDC"]["params"] == {"st_period": 10}
+    finally:
+        app.dependency_overrides.pop(verify_api_key, None)
+
+
+def test_le_profit_factor_seul_suffit_a_la_qualite(monkeypatch, tmp_path):
+    """OPT-01 : Sharpe en retrait mais profit factor et expectancy nettement
+    meilleurs. La règle codée est « Sharpe OU expectancy OU profit factor » ;
+    elle était inapplicable, le baseline ne portant pas les deux dernières
+    clés et la route ne transmettant pas les valeurs OOS."""
+    spath, cfgpath = _fixture_config(tmp_path)
+    job = _job_avec_holdout(sharpe=0.99, wr=40.0, profit_factor=3.5,
+                            expectancy=15.0)
+    client = _client(monkeypatch, tmp_path, job)
+    try:
+        r = _appliquer(client, cfgpath)
+        assert r.status_code == 200, r.text
+        assert _params_ecrits(spath)["1h"]["BTC/USDC"]["params"] == {"st_period": 10}
+    finally:
+        app.dependency_overrides.pop(verify_api_key, None)
+
+
+def test_run_baseline_publie_profit_factor_et_expectancy():
+    """Contrat : `_run_baseline` alimente le baseline ET le holdout. Sans ces
+    deux clés, les branches correspondantes de `beats_baseline` comparent
+    systématiquement à None et ne peuvent jamais s'activer."""
+    import inspect
+
+    src = inspect.getsource(auto_opt._run_baseline)
+    assert '"profit_factor"' in src, "clé profit_factor absente du baseline"
+    assert '"expectancy"' in src, "clé expectancy absente du baseline"

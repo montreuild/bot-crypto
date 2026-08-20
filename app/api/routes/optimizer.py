@@ -352,6 +352,15 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
         _h.get("wr",     result.get("best_oos_wr", 0)),
         _h.get("sharpe", result.get("best_oos_sharpe", 0)),
         job.get("baseline", {}),
+        # OPT-02 : le garde-fou de drawdown et les critères profit factor /
+        # expectancy dépendent de ces trois arguments. Ils n'étaient pas
+        # transmis ici, si bien que le chemin MANUEL — le plus fréquent,
+        # `auto_apply` étant désactivé par défaut — appliquait un garde-fou
+        # strictement plus faible que l'auto-apply : un drawdown OOS de 80 %
+        # contre un baseline à 10 % passait sans rien déclencher.
+        oos_dd=_h.get("dd", result.get("best_oos_dd")),
+        oos_pf=_h.get("profit_factor"),
+        oos_expectancy=_h.get("expectancy"),
         # P0 — Deflated Sharpe gate (cf. auto_optimizer.py)
         n_trials=int(job.get("n_trials", 1)) or 1,
         min_deflated_sharpe=(
