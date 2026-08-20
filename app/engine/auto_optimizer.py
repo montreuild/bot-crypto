@@ -326,7 +326,10 @@ def _run_baseline(strategy_name: str, cfg: dict,
         mod = importlib.import_module(f"app.strategies.{strategy_name}")
         eng = Engine()
         eng.register(mod.Strategy())
-        bt  = Backtester(eng, cfg, realistic_risk=True)
+        # BT-01 : même résolution que le walk-forward, sinon le gate d'apply
+        # compare un baseline avec circuit breakers à des folds sans.
+        from app.core.is_oos import resolve_realistic_risk
+        bt  = Backtester(eng, cfg, realistic_risk=resolve_realistic_risk(cfg))
         # timeframe transmis pour que resolve_strategy_params superpose
         # optimizer_results[tf] : le baseline reflète ainsi le paramétrage
         # RÉELLEMENT actif (params: + optimizer_results), comme le live/comparatif,
@@ -340,6 +343,15 @@ def _run_baseline(strategy_name: str, cfg: dict,
             "wr":     round(res.get("win_rate", 0), 1),
             "dd":     round(res.get("max_drawdown", 0), 2),
             "alpha":  round(res["alpha"], 4) if res.get("alpha") is not None else None,
+            # OPT-01 : `beats_baseline` sait comparer le profit factor et
+            # l'expectancy, mais ses branches restaient mortes faute de ces
+            # deux clés côté baseline. Cette fonction sert AUSSI au holdout :
+            # les alimenter ici les rend disponibles des deux côtés de la
+            # comparaison d'un seul geste.
+            "profit_factor": (None if res.get("profit_factor") is None
+                              else round(res["profit_factor"], 3)),
+            "expectancy":    (None if res.get("expectancy") is None
+                              else round(res["expectancy"], 4)),
         }
     except Exception as e:
         logger.debug(f"[AutoOpt] baseline {strategy_name} KO : {e}")
@@ -598,6 +610,13 @@ class AutoOptimizer:
             best_oos_pnl = result.get("best_oos_pnl", 0)
             best_oos_wr = result.get("best_oos_wr", 0)
             best_oos_sharpe = result.get("best_oos_sharpe", 0)
+            # OPT-01 : l'optimiseur ne publie pas de best_oos_pf / expectancy ;
+            # seul le holdout les porte (via _run_baseline). None tant qu'il
+            # n'a pas tourné — les branches correspondantes restent alors
+            # inactives, ce qui est le repli honnête.
+            best_oos_pf = None
+            best_oos_expectancy = None
+            best_oos_dd = None
             if df_holdout is not None and result.get("best_params"):
                 _h = _run_baseline(strategy_name, _cfg_avec_params(
                     self.cfg, strategy_name, result["best_params"]),
@@ -608,6 +627,9 @@ class AutoOptimizer:
                     best_oos_pnl = _h.get("pnl", 0)
                     best_oos_wr = _h.get("wr", 0)
                     best_oos_sharpe = _h.get("sharpe", 0)
+                    best_oos_pf = _h.get("profit_factor")
+                    best_oos_expectancy = _h.get("expectancy")
+                    best_oos_dd = _h.get("dd")
                     _update_job(job_id, holdout=_h, gate_source="holdout")
                     _sh = ("—" if best_oos_sharpe is None
                            else f"{best_oos_sharpe:.2f}")
@@ -654,7 +676,11 @@ class AutoOptimizer:
                                  best_oos_sharpe, _baseline,
                                  n_trials=_ds_n_trials,
                                  min_deflated_sharpe=_ds_min_arg,
-                                 oos_dd=result.get("best_oos_dd") or result.get("best_val_dd"))
+                                 oos_dd=(best_oos_dd
+                                         or result.get("best_oos_dd")
+                                         or result.get("best_val_dd")),
+                                 oos_pf=best_oos_pf,
+                                 oos_expectancy=best_oos_expectancy)
                 if not ok:
                     logger.info(f"[AutoOpt] {job_id} : gate d'apply refusé "
                                 f"[{gate_source}] — {reason}")

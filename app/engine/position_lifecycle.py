@@ -61,9 +61,18 @@ class PositionLifecycleMixin(LifecycleHost):
                 position.get("funding_cost", 0.0) + funding, 8)
         slip_exit = (abs(exec_price - ref_price) * fill_size
                      if ref_price is not None else 0.0) + impact
-        # close_pnl = frais de sortie seulement ; additionner les frais d'entrée déjà prélevés.
+        # FIN-01/FIN-02 — deux accumulateurs distincts, à ne pas confondre :
+        #   `fees`       = TOUS les frais déjà prélevés (entrée initiale, jambes
+        #                  partielles, pyramidages) ;
+        #   `entry_fees` = le seul côté ENTRÉE (initiale + pyramidages), qu'il
+        #                  faut retrancher du PnL journalisé car il a été
+        #                  débité de `ctx.capital` à l'ouverture et à chaque
+        #                  scale-in, sans jamais passer par `_close_pnl`.
+        # `close_pnl` ne rend que les frais de la sortie finale : on les ajoute
+        # au cumul, on ne l'écrase pas (sinon jambes et pyramidages disparaissent).
+        frais_cumules = float(position.get("fees", 0.0) or 0.0)
         entry_fees = float(position.get("entry_fees", position.get("fees", 0.0)) or 0.0)
-        fees = entry_fees + fees
+        fees = frais_cumules + fees
         ctx.capital += pnl
         realized = position.pop("_realized_pnl", 0.0)
         gross_realized = position.pop("_gross_realized", 0.0)
@@ -459,6 +468,12 @@ class PositionLifecycleMixin(LifecycleHost):
                             position["notional"] + add_notional, 4)
                         position["fees"]     = round(
                             position.get("fees", 0.0) + add_fees, 6)
+                        # FIN-02 : `add_fees` est un frais d'ENTRÉE, débité de
+                        # ctx.capital ici. Sans cette ligne, `_close_at` ne le
+                        # retranche pas du PnL journalisé et la somme des PnL
+                        # de trades diverge de la courbe d'équité.
+                        position["entry_fees"] = round(
+                            position.get("entry_fees", 0.0) + add_fees, 6)
                         position["scale_ins"] = position.get("scale_ins", 0) + 1
                         ctx.diag["scale_ins"] = ctx.diag.get("scale_ins", 0) + 1
 

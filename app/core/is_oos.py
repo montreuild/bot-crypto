@@ -41,6 +41,22 @@ HOLDOUT_FRACTION_DEFAULT = 0.20
 EMBARGO_FRACTION_DEFAULT = 0.01
 
 
+def resolve_realistic_risk(cfg: dict | None) -> bool:
+    """BT-01 — régime de risque du backtest, résolu au MÊME endroit partout.
+
+    Le gate d'auto-apply compare un baseline (`_run_baseline`) à des folds
+    walk-forward. Les deux doivent tourner sous le même régime, sinon la
+    comparaison n'a pas de sens : le baseline était mesuré circuit breakers
+    actifs et le walk-forward sans, faute de clé en configuration.
+
+    Le défaut est ``True`` : le moteur live applique ses circuit breakers, et
+    un walk-forward qui les ignore promet un comportement que le live ne
+    reproduira pas. ``backtest.realistic_risk: false`` reste possible, mais
+    s'applique alors des deux côtés.
+    """
+    return bool(((cfg or {}).get("backtest") or {}).get("realistic_risk", True))
+
+
 def default_purge_embargo(n: int, lookahead: int = 0) -> tuple:
     """``(purge_bars, embargo_bars)`` pour un historique de ``n`` barres.
 

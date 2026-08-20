@@ -126,7 +126,14 @@ def _v11_strategy():
     return Strategy()
 
 
+# ML-01 : ces tests exercent la MÉCANIQUE de publication (registre, versions,
+# restauration du sortant) sur des séries synthétiques sans edge. Le garde-fou
+# de sur-apprentissage y refuserait la promotion à juste titre — l'AUC d'un
+# modèle entraîné sur du bruit a un IC qui recouvre 0,50. On le désactive donc
+# explicitement ici : c'est la publication qu'on teste, pas la qualité.
+# Le refus lui-même est couvert par tests/test_ml01_gate_bloque.py.
 _FAST_PARAMS = {"n_estimators": 30, "num_leaves": 7, "warmup_bars": 250,
+                "gate_overfitting_block": False,
                 "gate_holdout_bars": 250, "gate_min_window_bars": 700}
 
 

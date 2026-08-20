@@ -47,9 +47,19 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
     delta_secs_arr = _delta_seconds(df)
     gaps = []
     simple_allowed = expected_secs * 1.5
+    # Calculé une fois : décide si `max_gap_seconds` a un sens ici (DAT-01).
+    marche_247 = _est_24_7(cal)
     for i in range(1, n):
         delta_secs = float(delta_secs_arr[i]) if delta_secs_arr is not None else _one_delta_secs(times[i - 1], times[i])
-        if delta_secs <= simple_allowed and cal is None:
+        # PERF-01 : un écart déjà sous le seuil simple ne peut pas devenir un
+        # trou — `allowed` n'est construit que par des `max(...)`, il ne fait
+        # que croître. Le chemin calendaire coûte ~66× le chemin simple
+        # (3,2 µs/barre contre 212 mesurés) : le court-circuiter ici change le
+        # temps de scan du parc actions de ~392 s à quelques secondes.
+        # La garde portait auparavant `and cal is None`, jamais vrai :
+        # `calendar_for_symbol` renvoie ALWAYS_OPEN pour le crypto, et
+        # `candle_store` passe toujours un calendrier explicite.
+        if delta_secs <= simple_allowed:
             continue
         allowed = simple_allowed
         if cal is not None:
@@ -68,10 +78,25 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
                         allowed,
                         (nxt - ts).total_seconds() + expected_secs * 1.5,
                     )
-                try:
-                    allowed = max(allowed, float(cal.max_gap_seconds(ts, expected_secs)))
-                except Exception:
-                    pass
+                # DAT-01 : `max_gap_seconds` mesure la fraîcheur tolérée d'une
+                # donnée LIVE (« mon cache est-il périmé ? »), pas la taille
+                # acceptable d'un trou historique. Sur un marché à séances
+                # elle vaut « temps jusqu'à la prochaine ouverture + marge »,
+                # ce qui couvre légitimement nuits, week-ends et fériés — on
+                # la garde. Sur un marché 24/7 elle se réduit à une marge
+                # forfaitaire de 3×tf, sans aucun sens calendaire : un marché
+                # qui ne ferme jamais n'a pas de fermeture à tolérer. L'y
+                # appliquer portait le seuil de 1,5×tf à 3×tf et masquait tout
+                # trou de 1 à 2 barres (15 trous réels non détectés sur
+                # BTC_USDC 1h, 4 sur 4h).
+                if not marche_247:
+                    try:
+                        allowed = max(
+                            allowed,
+                            float(cal.max_gap_seconds(ts, expected_secs)),
+                        )
+                    except Exception:
+                        pass
             except Exception:
                 pass
         if delta_secs > allowed:
@@ -84,6 +109,30 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
                 "gap_duration": str(times[i] - times[i - 1]),
             })
     return gaps
+
+
+def _est_24_7(cal) -> bool:
+    """True si le calendrier n'a aucune fermeture (crypto).
+
+    Sondé plutôt que testé par type : ``get_calendar`` peut retomber sur
+    ``ALWAYS_OPEN`` quand une venue est inconnue, et le repli doit alors être
+    traité comme du 24/7. Deux sondes un samedi et un dimanche suffisent —
+    aucune bourse à séances n'est ouverte ces jours-là.
+    """
+    if cal is None:
+        return True
+    try:
+        from app.core.market_calendar import ALWAYS_OPEN
+        if cal is ALWAYS_OPEN:
+            return True
+    except Exception:
+        pass
+    try:
+        samedi = datetime(2021, 1, 2, 3, 0, tzinfo=timezone.utc)
+        dimanche = datetime(2021, 1, 3, 12, 0, tzinfo=timezone.utc)
+        return bool(cal.is_open(samedi)) and bool(cal.is_open(dimanche))
+    except Exception:
+        return False
 
 
 def _calendar_closed_span(cal, ts: datetime, after: datetime, expected_secs: float) -> bool:
