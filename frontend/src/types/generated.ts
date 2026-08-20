@@ -254,6 +254,7 @@ export interface StrategyStats {
   initial_capital?: number;
   buy_and_hold_pnl?: number;
   alpha?: number;
+  alpha_vs_bh?: number;
   equity_curve?: Array<EquityPoint>;
   recommendations?: Array<BacktestRecommendation>;
   recommendations_summary?: BacktestRecommendationsSummary | null;

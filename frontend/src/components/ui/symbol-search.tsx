@@ -133,10 +133,13 @@ export function SymbolSearchInput({
   const exact = filtered.some((o) => o.symbol.toLowerCase() === text.trim().toLowerCase());
   const showCustom = text.trim() !== '' && !exact;
 
-  const items: Array<{ symbol: string; hint?: string; custom?: boolean; group?: SymbolGroup }> = [
-    ...(showCustom ? [{ symbol: text.trim(), custom: true as const }] : []),
-    ...filtered,
-  ];
+  const items = useMemo(() => {
+    const rows: Array<{ symbol: string; hint?: string; custom?: boolean; group?: SymbolGroup }> = [
+      ...(showCustom ? [{ symbol: text.trim(), custom: true as const }] : []),
+      ...filtered,
+    ];
+    return rows;
+  }, [filtered, showCustom, text]);
 
   useEffect(() => { setHi(0); }, [text, open]);
 

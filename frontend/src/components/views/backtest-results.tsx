@@ -42,6 +42,9 @@ type StrategyPanel = StrategyStats & {
   equity_final?: number;
   final_equity?: number;
   buy_and_hold_pct?: number;
+  alpha?: number;
+  alpha_vs_bh?: number;
+  initial_capital?: number;
 };
 
 function unwrapBacktest(result: BacktestResult | BacktestResult[]): BacktestResult {
