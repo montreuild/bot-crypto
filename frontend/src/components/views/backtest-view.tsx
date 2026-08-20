@@ -204,7 +204,7 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
   const enabledStrategies: string[] = settings?.strategies || [];
   const availableStrategies = allStrategies;
 
-  const LIMIT_PRESETS = [500, 2000, 5000, 8000];
+  const LIMIT_PRESETS = [500, 2000, 5000, 8000, 50000];
   const isLoading = runBacktest.isPending || !!startedAt;
 
   return (

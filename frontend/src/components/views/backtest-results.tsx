@@ -12,11 +12,10 @@ import { MonteCarloPanel } from '@/components/charts/monte-carlo-panel';
 import { TradesScatter } from '@/components/charts/trades-scatter';
 import { BacktestEquityChart } from '@/components/charts/backtest-equity-chart';
 import { CostBreakdownCard } from '@/components/cards/cost-breakdown-card';
-import { CostModelCard } from '@/components/cards/cost-model-card';
 import { toast } from 'sonner';
 import {
   AlertCircle, CheckCircle2, TrendingUp, Rocket,
-  Maximize2, FileDown, X, Shield,
+  Maximize2, FileDown, X, Shield, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { cn, formatMoney, quoteCurrency } from '@/lib/utils';
 import { LoadingState, ErrorState } from '@/components/ui/query-state';
@@ -29,7 +28,7 @@ import { TradesStatsPanel } from '@/components/cards/trades-stats-panel';
 import { MLBacktestPanel } from '@/components/cards/ml-backtest-panel';
 import { CostSimulatorPanel } from '@/components/cards/cost-simulator-panel';
 import { recommendedThreshold } from '@/lib/strat-thresholds';
-import { normalizeDiagnostics, equityFinal, buyHold } from '@/lib/backend-normalizers';
+import { normalizeDiagnostics, equityFinal, buyHold, equityValues, alphaPct, formatDrawdownPct } from '@/lib/backend-normalizers';
 import type { BacktestResult, StrategyStats, BacktestTrade } from '@/types';
 
 type StrategyPanel = StrategyStats & {
@@ -157,6 +156,7 @@ export function BacktestResults({
   error?: string | null;
 }) {
   const [fsStrategy, setFsStrategy] = useState<string | null>(null);
+  const [collapsedTrades, setCollapsedTrades] = useState<Record<string, boolean>>({});
   if (loading) {
     return <LoadingState label="Backtest en cours…" className="min-h-[300px]" />;
   }
@@ -224,17 +224,64 @@ export function BacktestResults({
 
   return (
     <div className="space-y-4">
-      {/* Verdict en clair */}
+      {r?.ohlcv && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Bougies OHLCV ({r.symbol} · {r.timeframe})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-muted">
+              {r.n_bars} bougies · {r.date_from} → {r.date_to}
+              {(r.requested_start_date || r.requested_end_date) && (
+                <span className="text-dim ml-2">
+                  (demandé : {r.requested_start_date || '…'} → {r.requested_end_date || '…'})
+                </span>
+              )}
+              {r.refreshed && (
+                <Badge variant="success" className="text-[0.55rem] px-1 py-0 ml-2 align-middle">
+                  données rafraîchies
+                </Badge>
+              )}
+              {r.gaps_warning && (
+                <span className="text-amber-400 ml-2">⚠ {r.gaps_warning}</span>
+              )}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       <Verdict result={result} />
 
-      {/* QW-6 — Badge realistic_risk + diagnostics du risk gate si actif */}
+      <div className="flex items-center justify-end gap-2 flex-wrap">
+        <CsvExportButton
+          filename="backtest"
+          rows={csvRows}
+          headers={{
+            strategy: 'Stratégie',
+            total_trades: 'Trades',
+            win_rate: 'Win rate',
+            total_pnl: 'PnL',
+            sharpe: 'Sharpe',
+            max_drawdown: 'Max DD',
+          }}
+        />
+        <JsonExportButton filename="backtest" data={result} />
+        <Button size="sm" variant="outline" onClick={exportPdf}>
+          <FileDown className="w-3.5 h-3.5" />
+          PDF
+        </Button>
+      </div>
+
+      {comparisonStrategies.length >= 2 && (
+        <StrategyComparisonTable strategies={comparisonStrategies} />
+      )}
+
       {r?.realistic_risk && (
         <Card className="border-l-4 border-l-blue-500">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
               <Shield className="w-4 h-4 text-blue-400" />
               Mode realistic_risk actif
-              <Badge variant="info" className="text-[10px]">QW-6</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
@@ -303,38 +350,6 @@ export function BacktestResults({
         </Card>
       )}
 
-      {/* Contexte facturé : sans lui, un PnL n'est pas interprétable (spot ou
-          margin ? quel levier ? quels frais ?) et deux runs ne sont pas
-          comparables. Cf. app/core/execution.py::cost_model. */}
-      <CostModelCard model={r?.cost_model} />
-
-      {/* L0/L2 — où passe l'argent entre le brut et le net. Un profit factor
-          > 1 peut coexister avec un PnL net négatif : sans cette carte, l'écart
-          reste invisible (cf. docs/MESURE_SYSTEMES_DE_SORTIE.md §2). */}
-      <CostBreakdownCard result={r} />
-
-      {/* QW-4 — Simulateur de coûts : compare 3 presets (spot, margin×3,
-          margin×10) en relançant des backtests avec cost_override. */}
-      <CostSimulatorPanel
-        symbol={r?.symbol ?? ''}
-        timeframe={r?.timeframe ?? ''}
-        strategies={strategies.map(([n]) => n).join(',')}
-        limit={r?.limit ?? 500}
-        currentCostModel={r?.cost_model}
-      />
-
-      {/* QW-5 — Recommandations d'amélioration post-backtest (12 règles :
-          échantillon, PnL, outliers, frais, Sharpe, DD, alpha, win-rate,
-          borrow, régimes, points forts). Affichées par stratégie. */}
-      {Object.entries(byStrategy).map(([name, stats]) => (
-        <RecommendationsPanel
-          key={`reco-${name}`}
-          strategy={name}
-          recommendations={stats?.recommendations}
-          summary={stats?.recommendations_summary ?? undefined}
-        />
-      ))}
-
       {/* BT-011 — avertissements globaux : seuil recommandé et taille
           d'échantillon. Affichés au-dessus des KPIs pour être vus avant tout. */}
       {strategies.length > 0 && (() => {
@@ -398,32 +413,6 @@ export function BacktestResults({
         );
       })()}
 
-      <div className="flex items-center justify-end gap-2 flex-wrap">
-        <CsvExportButton
-          filename="backtest"
-          rows={csvRows}
-          headers={{
-            strategy: 'Stratégie',
-            total_trades: 'Trades',
-            win_rate: 'Win rate',
-            total_pnl: 'PnL',
-            sharpe: 'Sharpe',
-            max_drawdown: 'Max DD',
-          }}
-        />
-        <JsonExportButton filename="backtest" data={result} />
-        <Button size="sm" variant="outline" onClick={exportPdf}>
-          <FileDown className="w-3.5 h-3.5" />
-          PDF
-        </Button>
-      </div>
-
-      {/* BT-007 — tableau comparatif multi-stratégies (best value ✦).
-          Nécessite ≥ 2 stratégies ; sinon le composant renvoie null. */}
-      {comparisonStrategies.length >= 2 && (
-        <StrategyComparisonTable strategies={comparisonStrategies} />
-      )}
-
       {/* Fullscreen chart modal (complément ChartFullscreen déjà dans le composant) */}
       {fsStrategy && byStrategy[fsStrategy] && (
         <div className="fixed inset-0 z-50 bg-black/80 flex flex-col p-4" role="dialog" aria-modal="true" aria-label="Chart plein écran">
@@ -436,7 +425,7 @@ export function BacktestResults({
           <div className="flex-1 min-h-0 bg-card rounded-lg border border-border p-2 overflow-auto">
             <BacktestEquityChart
               strategy={fsStrategy}
-              equityCurve={byStrategy[fsStrategy]?.equity_curve?.map((p) => p.equity)}
+              equityCurve={equityValues(byStrategy[fsStrategy]?.equity_curve)}
               initialCapital={byStrategy[fsStrategy]?.initial_capital}
               buyAndHoldPnl={byStrategy[fsStrategy]?.buy_and_hold_pnl}
               alpha={byStrategy[fsStrategy]?.alpha}
@@ -448,13 +437,13 @@ export function BacktestResults({
       {/* BT-006 — KPIs par stratégie. 9 métriques au lieu de 5 : PnL Net (+%),
           Win Rate (+n trades), Sharpe (⚠ si < 30 trades), Max DD, Expectancy,
           Profit Factor, Equity Finale, Buy & Hold (+%), Alpha. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         {strategies.map(([name, stats]) => {
           const nTrades = stats?.total_trades ?? 0;
           const smallSample = nTrades < 30;
           const eqFinal = equityFinal(stats ?? {});
           const bh = buyHold(stats ?? {});
-          const alpha = stats?.alpha;
+          const alphaDisplay = alphaPct(stats?.alpha, stats?.initial_capital, stats?.alpha_vs_bh);
           const bhPct = bh.pct;
           const pnlPct = stats?.total_pnl && stats?.initial_capital
             ? (stats.total_pnl / stats.initial_capital) * 100
@@ -462,8 +451,11 @@ export function BacktestResults({
           return (
             <Card key={name}>
               <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="font-mono text-sm font-semibold">{name}</span>
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <span className="font-mono text-sm font-semibold truncate">
+                    {name}
+                    {r?.timeframe && <span className="text-dim font-normal"> · {r.timeframe}</span>}
+                  </span>
                   <Badge variant={stats.total_pnl >= 0 ? 'success' : 'danger'}>
                     {stats.total_pnl >= 0 ? '+' : ''}{formatMoney(stats.total_pnl, ccy)}
                     {pnlPct != null && (
@@ -504,7 +496,7 @@ export function BacktestResults({
                   <div>
                     <div className="text-dim">Max DD</div>
                     <div className="font-mono font-semibold text-red-400">
-                      {stats.max_drawdown?.toFixed(2) ?? '—'}%
+                      {formatDrawdownPct(stats.max_drawdown)}
                     </div>
                   </div>
                   <div>
@@ -540,13 +532,29 @@ export function BacktestResults({
                       )}
                     </div>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-dim">Alpha</div>
-                    <div className={cn('font-mono font-semibold', (alpha ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-                      {alpha != null ? `${alpha >= 0 ? '+' : ''}${alpha.toFixed(2)}%` : '—'}
+                    <div className={cn(
+                      'font-mono font-semibold whitespace-nowrap',
+                      (alphaDisplay ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400',
+                    )}>
+                      {alphaDisplay != null
+                        ? `${alphaDisplay >= 0 ? '+' : ''}${alphaDisplay.toFixed(1)}%`
+                        : '—'}
                     </div>
                   </div>
                 </div>
+                {stats?.recommendations && stats.recommendations.length > 0 && (
+                  <div className="mt-3">
+                    <RecommendationsPanel
+                      strategy={name}
+                      recommendations={stats.recommendations}
+                      summary={stats.recommendations_summary ?? undefined}
+                      defaultCollapsed
+                      className="border-0 shadow-none p-0 bg-transparent"
+                    />
+                  </div>
+                )}
 
               </CardContent>
             </Card>
@@ -554,41 +562,33 @@ export function BacktestResults({
         })}
       </div>
 
-      {/*
-        Détail par stratégie : courbe d'équité (+ Buy & Hold), Walk-Forward,
-        Monte-Carlo et scatter des trades.
-
-        Ces blocs remplacent deux lignes de résumé qui lisaient des champs
-        inexistants (`walk_forward.folds`, `walk_forward.oos_pnl`,
-        `monte_carlo.p5/.p50/.p95`) et affichaient donc « 0 folds » et « P5:
-        $0.00 · P50: $0.00 · P95: $0.00 » quel que soit le résultat. Les
-        composants ci-dessous sont écrits sur les contrats réels du backend.
-
-        Le Walk-Forward et le Monte-Carlo ne sont plus derrière `expertMode` :
-        ils ne sont calculés QUE si l'utilisateur a explicitement coché la case
-        correspondante avant de lancer. Les masquer une seconde fois revenait à
-        cacher un résultat demandé.
-      */}
-      {strategies.map(([name, stats]) => {
+      {strategies.map(([name, stats], idx) => {
         const trades = Array.isArray(stats?.trades) ? stats.trades : [];
         const hasDetail = stats?.equity_curve?.length || stats?.walk_forward
           || stats?.monte_carlo || stats?.runs || trades.length > 0;
         if (!hasDetail) return null;
-        // BT-001 — `candles` vient de la racine (r.ohlcv), partagées par toutes
-        // les stratégies ; `trades` est filtré par stratégie via le loop.
         const candles = r?.ohlcv;
         const isMl = String(name).startsWith('ml_');
+        const tradesClosed = collapsedTrades[name] ?? false;
         return (
           <div key={`detail-${name}`} className="space-y-4">
             <div className="flex items-center justify-between pt-2">
-              <h3 className="text-xs uppercase tracking-wide text-dim">{name}</h3>
+              <h3 className="text-xs uppercase tracking-wide text-dim">
+                {name}{r?.timeframe ? ` · ${r.timeframe}` : ''}
+              </h3>
               <Button size="sm" variant="ghost" onClick={() => setFsStrategy(name)} title="Plein écran">
                 <Maximize2 className="w-3.5 h-3.5" />
                 Plein écran
               </Button>
             </div>
 
-            {/* BT-001 — chart prix + signaux (markers entrée/sortie + stops). */}
+            {stats.runs && (
+              <StudyVsLiveCard
+                runs={stats.runs as React.ComponentProps<typeof StudyVsLiveCard>['runs']}
+                envelope={stats.envelope as React.ComponentProps<typeof StudyVsLiveCard>['envelope']}
+              />
+            )}
+
             {process.env.NEXT_PUBLIC_LAB_PRICE_CHART !== 'false' && candles && (
               <Card>
                 <CardHeader>
@@ -602,48 +602,12 @@ export function BacktestResults({
 
             <BacktestEquityChart
               strategy={name}
-              equityCurve={stats.equity_curve?.map((p) => p.equity)}
+              equityCurve={equityValues(stats.equity_curve)}
               initialCapital={stats.initial_capital}
               buyAndHoldPnl={stats.buy_and_hold_pnl}
               alpha={stats.alpha}
             />
-            {stats.runs && (
-              <StudyVsLiveCard
-                runs={stats.runs as React.ComponentProps<typeof StudyVsLiveCard>['runs']}
-                envelope={stats.envelope as React.ComponentProps<typeof StudyVsLiveCard>['envelope']}
-              />
-            )}
             {stats.walk_forward && <WalkForwardTable data={stats.walk_forward} />}
-
-            {/* BT-002 — tableau des trades (sortable, paginé, expandable, CSV). */}
-            {trades.length > 0 && (
-              <TradesTable
-                trades={trades}
-                meta={{
-                  symbol: r?.symbol ?? '',
-                  timeframe: r?.timeframe ?? '',
-                  strategy: name,
-                }}
-              />
-            )}
-
-            {/* BT-008 — statistiques agrégées des trades (par setup, par sortie). */}
-            {trades.length > 0 && (
-              <TradesStatsPanel trades={trades} />
-            )}
-
-            {/* BT-003 — diagnostics de recherche de signaux (rejets, per-strat). */}
-            <DiagnosticsPanel diagnostics={normalizeDiagnostics(stats?.diagnostics ?? r?.diagnostics)} />
-
-            {/* BT-010 — panneau ML (AUC, n_features) pour les stratégies `ml_*`. */}
-            {isMl && (
-              <MLBacktestPanel
-                mlInfo={stats?.ml_info}
-                strategy={name}
-                nTrades={stats?.total_trades ?? 0}
-              />
-            )}
-
             {stats.monte_carlo && (
               <MonteCarloPanel
                 data={stats.monte_carlo}
@@ -651,43 +615,63 @@ export function BacktestResults({
                 nTrades={stats.total_trades}
               />
             )}
+            {trades.length > 0 && (
+              <TradesStatsPanel trades={trades} />
+            )}
+            {trades.length > 0 && (
+              <Card>
+                <CardHeader
+                  className="cursor-pointer"
+                  onClick={() => setCollapsedTrades((m) => ({ ...m, [name]: !tradesClosed }))}
+                >
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    Trades ({trades.length})
+                    <span className="ml-auto">
+                      {tradesClosed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                {tradesClosed ? null : (
+                  <CardContent className="p-0">
+                    <TradesTable
+                      trades={trades}
+                      meta={{
+                        symbol: r?.symbol ?? '',
+                        timeframe: r?.timeframe ?? '',
+                        strategy: name,
+                      }}
+                    />
+                  </CardContent>
+                )}
+              </Card>
+            )}
+
+            {idx === 0 && (
+              <>
+                <CostBreakdownCard result={r} />
+                <CostSimulatorPanel
+                  symbol={r?.symbol ?? ''}
+                  timeframe={r?.timeframe ?? ''}
+                  strategies={strategies.map(([n]) => n).join(',')}
+                  limit={r?.limit ?? r?.n_bars ?? 500}
+                  currentCostModel={r?.cost_model}
+                />
+              </>
+            )}
+
+            <DiagnosticsPanel diagnostics={normalizeDiagnostics(stats?.diagnostics ?? r?.diagnostics)} />
+
+            {isMl && (
+              <MLBacktestPanel
+                mlInfo={stats?.ml_info}
+                strategy={name}
+                nTrades={stats?.total_trades ?? 0}
+              />
+            )}
             <TradesScatter trades={trades} symbol={r?.symbol} />
           </div>
         );
       })}
-
-      {/* Equity curve (si disponible) */}
-      {r?.ohlcv && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Prix OHLCV ({r.symbol} · {r.timeframe})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted">
-              {r.n_bars} bougies · {r.date_from} → {r.date_to}
-              {/* QW-2 — rappeler la plage DEMANDÉE à côté de la plage OBTENUE.
-                  Les deux diffèrent dès que le cache est plus court que la
-                  demande ; sans ce rappel, l'écart passe inaperçu. */}
-              {(r.requested_start_date || r.requested_end_date) && (
-                <span className="text-dim ml-2">
-                  (demandé : {r.requested_start_date || '…'} → {r.requested_end_date || '…'})
-                </span>
-              )}
-              {/* QW-3 — distinguer un run sur cache d'un run sur données
-                  fraîchement récupérées : la même config peut donner deux
-                  résultats différents selon ce que le cache contenait. */}
-              {r.refreshed && (
-                <Badge variant="success" className="text-[0.55rem] px-1 py-0 ml-2 align-middle">
-                  données rafraîchies
-                </Badge>
-              )}
-              {r.gaps_warning && (
-                <span className="text-amber-400 ml-2">⚠ {r.gaps_warning}</span>
-              )}
-            </p>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

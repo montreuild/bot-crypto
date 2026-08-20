@@ -20,16 +20,17 @@
  * (bouton « Lancer la comparaison ») — pas automatiquement au chargement.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { api } from '@/lib/api';
 import type { CostModel, StrategyStats } from '@/types';
+import { CostModelCard } from '@/components/cards/cost-model-card';
+import { formatDrawdownPct } from '@/lib/backend-normalizers';
 import { toast } from 'sonner';
 import {
-  Calculator, ChevronDown, ChevronRight, Loader2, AlertCircle,
+  Calculator, Loader2, AlertCircle,
 } from 'lucide-react';
 import {cn, formatUSD, errorMessage} from '@/lib/utils';
 
@@ -98,9 +99,9 @@ interface ComparisonRow {
 export function CostSimulatorPanel({
   symbol, timeframe, strategies, limit, currentCostModel, className,
 }: Props) {
-  const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Record<string, ComparisonRow>>({});
+  const [ran, setRan] = useState(false);
 
   async function runComparison() {
     if (!symbol || !timeframe || !strategies) {
@@ -167,8 +168,15 @@ export function CostSimulatorPanel({
     for (const r of rows) newResults[r.presetKey] = r;
     setResults(newResults);
     setLoading(false);
-    toast.success('Comparaison terminée');
+    setRan(true);
   }
+
+  useEffect(() => {
+    if (ran || loading) return;
+    if (!symbol || !timeframe || !strategies) return;
+    void runComparison();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol, timeframe, strategies, limit]);
 
   // Colonnes pour la table comparative
   const columns: DataTableColumn<ComparisonRow>[] = [
@@ -235,7 +243,7 @@ export function CostSimulatorPanel({
       align: 'right',
       render: (r) => (
         <span className="font-mono text-red-400">
-          {r.max_dd == null ? '—' : `-${(r.max_dd * 100).toFixed(1)}%`}
+          {r.max_dd == null ? '—' : formatDrawdownPct(r.max_dd)}
         </span>
       ),
     },
@@ -243,7 +251,7 @@ export function CostSimulatorPanel({
       key: 'win_rate',
       header: 'WR',
       align: 'right',
-      render: (r) => <span className="font-mono">{r.win_rate == null ? '—' : `${(r.win_rate * 100).toFixed(1)}%`}</span>,
+      render: (r) => <span className="font-mono">{r.win_rate == null ? '—' : `${r.win_rate.toFixed(1)}%`}</span>,
     },
   ];
 
@@ -254,54 +262,20 @@ export function CostSimulatorPanel({
   });
 
   return (
-    <Card className={cn(className)}>
+    <div className={cn('space-y-3', className)}>
+      <CostModelCard model={currentCostModel} />
+      <Card>
       <CardHeader>
-        <CardTitle className="flex items-center justify-between cursor-pointer" >
-          <span
-            className="flex items-center gap-2"
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-            <Calculator className="w-4 h-4" />
-            Simulateur de coûts (what-if)
-          </span>
-          {expanded && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={runComparison}
-              disabled={loading || !symbol || !strategies}
-              className="h-7"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                  Calcul...
-                </>
-              ) : (
-                'Lancer la comparaison'
-              )}
-            </Button>
-          )}
+        <CardTitle className="flex items-center gap-2">
+          <Calculator className="w-4 h-4" />
+          Simulateur de coûts
+          {loading && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted" />}
         </CardTitle>
-        {expanded && (
-          <p className="text-[11px] text-muted-foreground">
-            Compare l&apos;impact des frais et du levier sur la stratégie en
-            relançant 3 backtests avec différents <code className="text-cyan-400">cost_override</code>.
-            {currentCostModel && (
-              <span className="ml-1">
-                Contexte actuel :{' '}
-                <Badge variant="muted" className="text-[10px]">
-                  {currentCostModel.market_type ?? 'spot'} · levier {currentCostModel.max_leverage ?? 1}
-                </Badge>
-              </span>
-            )}
-          </p>
-        )}
+        <p className="text-[11px] text-muted-foreground font-normal">
+          Spot / margin×3 / margin×10 — même fenêtre, calculé automatiquement.
+        </p>
       </CardHeader>
-      {expanded && (
-        <CardContent>
-          {/* Description des presets */}
+      <CardContent>
           <div className="mb-3 grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
             {PRESETS.map((p) => (
               <div key={p.key} className="flex items-start gap-2 p-2 rounded-md bg-card-hover/30">
@@ -313,7 +287,6 @@ export function CostSimulatorPanel({
             ))}
           </div>
 
-          {/* Table comparative */}
           <DataTable
             columns={columns}
             rows={rows}
@@ -321,10 +294,9 @@ export function CostSimulatorPanel({
             initialSortKey="pnl"
             initialSortAsc={false}
             rowKey={(r) => r.presetKey}
-            emptyLabel="Cliquez « Lancer la comparaison » pour voir les résultats"
+            emptyLabel="Calcul des presets en cours…"
           />
 
-          {/* Avertissement */}
           <p className="text-[10px] text-dim mt-3 italic">
             ⚠ Les backtests what-if utilisent les mêmes données et stratégies
             que le backtest principal — seul le cost_model est surchargé pour
@@ -332,7 +304,7 @@ export function CostSimulatorPanel({
             cost (margin hourly rate × durée de position).
           </p>
         </CardContent>
-      )}
     </Card>
+    </div>
   );
 }

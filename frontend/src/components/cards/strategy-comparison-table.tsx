@@ -16,6 +16,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
+import { formatDrawdownPct, alphaPct } from '@/lib/backend-normalizers';
 import type { BacktestResult } from '@/types';
 
 type CmpRow = Partial<BacktestResult> & { strategy: string };
@@ -89,7 +90,7 @@ export function StrategyComparisonTable({ strategies }: Props) {
       key: 'win_rate',
       header: 'Win Rate',
       align: 'right',
-      render: (s) => renderCell(s.win_rate, allWr, (v) => `${(v * 100).toFixed(1)}%`),
+      render: (s) => renderCell(s.win_rate, allWr, (v) => `${v.toFixed(1)}%`),
     },
     {
       key: 'total_pnl',
@@ -103,7 +104,7 @@ export function StrategyComparisonTable({ strategies }: Props) {
       key: 'max_drawdown',
       header: 'Max DD',
       align: 'right',
-      render: (s) => renderCell(s.max_drawdown, allDd, (v) => `-${(v * 100).toFixed(1)}%`, false),
+      render: (s) => renderCell(s.max_drawdown, allDd, (v) => formatDrawdownPct(v), false),
     },
     {
       key: 'sharpe',
@@ -140,7 +141,10 @@ export function StrategyComparisonTable({ strategies }: Props) {
       key: 'alpha',
       header: 'Alpha',
       align: 'right',
-      render: (s) => renderCell(s.alpha ?? 0, allAlpha, (v) => fmt(v, 1, v >= 0 ? '+' : '', '%')),
+      render: (s) => {
+        const pct = alphaPct(s.alpha, s.initial_capital, s.alpha_vs_bh);
+        return renderCell(pct, allAlpha.map((a, i) => alphaPct(a, strategies[i]?.initial_capital, strategies[i]?.alpha_vs_bh)), (v) => fmt(v, 1, v >= 0 ? '+' : '', '%'));
+      },
     },
   ];
 
