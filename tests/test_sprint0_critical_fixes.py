@@ -27,8 +27,8 @@ class TestSizingParity:
 
     @staticmethod
     def _rm_and_env():
-        from app.core.risk_envelope import Envelope
-        from app.core.risk_gate import RiskGate
+        from app.core.risk.envelope import Envelope
+        from app.core.risk.gate import RiskGate
         rm = RiskGate({
             "trading": {"max_trades_per_minute": 3,
                         "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20},

@@ -20,7 +20,7 @@ import polars as pl
 import pytest
 
 from app.core.smc import analyze
-from app.core.smc_state import (
+from app.core.smc.state import (
     CODE,
     STATES,
     sequence_label,

@@ -19,8 +19,8 @@ from app.core.execution import venue_trade_cost as _venue_trade_cost
 from app.core.log_throttle import log_throttled
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, resolve_strategy_params
 from app.core.rejections import RejectionCounter
-from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
-from app.core.risk_envelope import with_reference_envelope
+from app.core.risk.envelope import trade_risk_pct as _trade_risk_pct
+from app.core.risk.envelope import with_reference_envelope
 from app.core.trade_economics import funding_cost as _funding_cost
 from app.core.trailing import TrailingStopManager
 from app.engine.backtest_result import BacktestResult
@@ -206,7 +206,7 @@ class Backtester(PositionLifecycleMixin):
         """
         if self.envelope is not None:
             return self.envelope
-        from app.core.risk_envelope import Envelope
+        from app.core.risk.envelope import Envelope
         base = float(self._sizing_base(ctx) or 0.0) or float(ctx.capital or 0.0)
         venue = self._venue
         wide = max(base, 1.0) * 1e6
@@ -421,7 +421,7 @@ class Backtester(PositionLifecycleMixin):
             risk_gate=None,
         )
         # R-02 : un seul RiskLedger pour le run — plus de plafonds recopiés.
-        from app.core.risk_ledger import RiskLedger
+        from app.core.risk.ledger import RiskLedger
         ctx.ledger = RiskLedger()
         ctx.ledger_env = self._ledger_envelope(ctx)
         # L2 (§27) — série de funding pour les venues perp. Absente = pas de
@@ -728,7 +728,7 @@ class Backtester(PositionLifecycleMixin):
         (études libres, walk-forward historique)."""
         if self.envelope is not None:
             return self.envelope.slot_envelope
-        from app.core.risk_gate import _default_venue_capital
+        from app.core.risk.gate import _default_venue_capital
         return _default_venue_capital(cfg) or 1000.0
 
     def _funding_cost(self, ctx, position: dict, i: int,

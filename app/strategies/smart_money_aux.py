@@ -11,7 +11,7 @@ from app.core import ict, smc
 from app.core.indicators_core import choppiness as _choppiness
 from app.core.indicators_core import engulfing as _engulfing
 from app.core.indicators_core import pin_bar as _pin_bar
-from app.core.smc_state import structure_states
+from app.core.smc.state import structure_states
 from app.core.timeframes import HTF_SECONDS_MAP as _HTF_SEC_MAP
 
 logger = logging.getLogger(__name__)

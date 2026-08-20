@@ -53,7 +53,7 @@ class TestGetRisk:
 
     def test_every_engaged_amount_comes_with_its_base(self, client, cfg, monkeypatch):
         """L'invariant d'affichage : jamais un risque sans son enveloppe."""
-        from app.core.risk_envelope import envelopes_for_active_slots
+        from app.core.risk.envelope import envelopes_for_active_slots
         envs = envelopes_for_active_slots(
             cfg, {"1h": [{"name": "trend_rider", "symbol": "BTC/USDC"}]})
 
@@ -73,7 +73,7 @@ class TestGetRisk:
             assert {"envelope", "risk_amount", "risk_engaged", "weight"} <= set(slot)
 
     def test_venue_usage_ratio_is_reported(self, client, cfg, monkeypatch):
-        from app.core.risk_envelope import envelopes_for_active_slots
+        from app.core.risk.envelope import envelopes_for_active_slots
         envs = envelopes_for_active_slots(
             cfg, {"1h": [{"name": "trend_rider", "symbol": "BTC/USDC"}]})
 
@@ -121,7 +121,7 @@ class TestDiagnostics:
                                       if d["severity"] == "error"])
 
     def test_each_diagnostic_carries_a_code_and_a_scope(self, client, cfg, monkeypatch):
-        from app.core.risk_envelope import envelopes_for_active_slots
+        from app.core.risk.envelope import envelopes_for_active_slots
         envs = envelopes_for_active_slots(
             cfg, {"1h": [{"name": "trend_rider", "symbol": "BTC/USDC"}]})
 
@@ -183,7 +183,7 @@ class TestPostEnvelopes:
         notionnel minimum de la venue -> 400, pas une config morte."""
         cfg["venues"]["defs"]["okx-t"]["min_notional"] = 200.0
 
-        from app.core.risk_envelope import envelopes_for_active_slots
+        from app.core.risk.envelope import envelopes_for_active_slots
         envs = envelopes_for_active_slots(
             cfg, {"1h": [{"name": "trend_rider", "symbol": "BTC/USDC"}]})
 

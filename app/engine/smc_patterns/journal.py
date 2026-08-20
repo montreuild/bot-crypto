@@ -170,7 +170,7 @@ def _contexte_htf(df_ltf: pl.DataFrame, df_htf: pl.DataFrame,
         return vide
 
     from app.core.smc import analyze as smc_analyze
-    from app.core.smc_state import structure_states
+    from app.core.smc.state import structure_states
 
     res_htf = smc_analyze(df_htf)
     etats_htf = structure_states(df_htf, res_htf)
@@ -241,8 +241,8 @@ def journal_un_tf(df: pl.DataFrame, tf: str, symbol: str,
     """
     from app.core.ict import silver_bullet_flags
     from app.core.smc import analyze as smc_analyze
-    from app.core.smc_sessions import killzone_flags, session_label
-    from app.core.smc_state import sequence_label, state_label, structure_states
+    from app.core.smc.sessions import killzone_flags, session_label
+    from app.core.smc.state import sequence_label, state_label, structure_states
 
     n = len(df)
     if n < 20:

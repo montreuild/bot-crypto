@@ -316,7 +316,7 @@ def _eval_worker(args: tuple) -> dict:
         try:
             from app.core.bot_identity import build_slot_key as _bsk
             from app.core.bot_identity import resolve_venue as _rv
-            from app.core.risk_envelope import resolve_envelope as _re
+            from app.core.risk.envelope import resolve_envelope as _re
             _sk = _bsk(strategy_name, timeframe or "1h", symbol)
             _env = _re(_cfg_copy, _rv(_cfg_copy, strategy_name, timeframe, symbol),
                        symbol, _sk, peers=[_sk], edges={_sk: None})

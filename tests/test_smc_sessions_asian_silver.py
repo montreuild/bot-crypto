@@ -21,7 +21,7 @@ import pytest
 # seconde version dans `smc_sessions` aurait créé deux définitions des mêmes
 # fenêtres, qui auraient fini par diverger.
 from app.core.ict import SILVER_BULLET_UTC, silver_bullet_flags
-from app.core.smc_sessions import SESSIONS, asian_range_levels
+from app.core.smc.sessions import SESSIONS, asian_range_levels
 
 
 def _serie(n_jours: int = 4) -> pl.DataFrame:

@@ -58,8 +58,8 @@ from app.api.routes import (
 )
 from app.core.database import init_db
 from app.core.events import event_hub
-from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
-from app.core.risk_gate import _default_venue_capital
+from app.core.risk.envelope import trade_risk_pct as _trade_risk_pct
+from app.core.risk.gate import _default_venue_capital
 
 logger = logging.getLogger(__name__)
 

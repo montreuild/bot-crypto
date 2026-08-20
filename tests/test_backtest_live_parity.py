@@ -9,10 +9,10 @@ Cf. docs/CONCEPTION_ENVELOPPES_DE_RISQUE.md §5 et §9.
 """
 import pytest
 
-from app.core.risk_curve import risk_multiplier
-from app.core.risk_envelope import Envelope
-from app.core.risk_gate import RiskGate
-from app.core.risk_sizer import _floor_to
+from app.core.risk.curve import risk_multiplier
+from app.core.risk.envelope import Envelope
+from app.core.risk.gate import RiskGate
+from app.core.risk.sizer import _floor_to
 
 
 def _cfg(profile_pct=0.025, capital=1000.0):
@@ -105,7 +105,7 @@ class TestSameRejectionReason:
         vocabulaire partage, un backtest qui trade et un live qui refuse ne
         sont pas comparables."""
         from app.core.rejections import REASONS
-        from app.core.risk_ledger import RiskLedger
+        from app.core.risk.ledger import RiskLedger
 
         env = _env(slot_envelope=100.0, min_notional=200.0)
         gate = RiskGate(_cfg())

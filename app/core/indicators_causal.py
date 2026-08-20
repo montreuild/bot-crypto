@@ -152,7 +152,7 @@ def htf_trend_ema_series(full_df: pl.DataFrame, ema_period: int = 50,
     if d.size == 0 or d[0] <= 0 or not bool(np.all(d == d[0])):
         return None                     # grille irrégulière → repli exact
 
-    from app.core.smc_sessions import _htf_buckets
+    from app.core.smc.sessions import _htf_buckets
     htf_df, idx, htf_sec, _ = _htf_buckets(full_df, None, mult)
     out = np.zeros(n, dtype=np.int8)
     if htf_df is None or htf_sec <= 0:

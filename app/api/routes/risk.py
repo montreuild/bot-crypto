@@ -19,8 +19,8 @@ from app.api import state
 from app.api.helpers import verify_api_key
 from app.api.routes._config_helpers import _save_yaml
 from app.api.schemas import RiskEnvelopesBody, RiskOverviewResponse
-from app.core.risk_diagnostics import diagnose
-from app.core.risk_envelope import envelopes_for_active_slots
+from app.core.risk.diagnostics import diagnose
+from app.core.risk.envelope import envelopes_for_active_slots
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

@@ -12,8 +12,8 @@ from app.api.helpers import _discover_strategies, verify_api_key
 from app.api.routes._config_helpers import _save_yaml
 from app.api.schemas import MarginConfigBody, TradingParamsBody
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
-from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
-from app.core.risk_gate import _default_venue_capital
+from app.core.risk.envelope import trade_risk_pct as _trade_risk_pct
+from app.core.risk.gate import _default_venue_capital
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

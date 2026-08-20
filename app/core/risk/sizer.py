@@ -1,7 +1,7 @@
 """RiskSizer — mixin de sizing des positions (ARCH-011, réécrit S12).
 
 Mixin (pas d'``__init__``, pas d'état propre) : les méthodes opèrent sur
-``self.*`` fournis par ``RiskGate.__init__``. Importé par ``app.core.risk_gate``
+``self.*`` fournis par ``RiskGate.__init__``. Importé par ``app.core.risk.gate``
 via héritage multiple.
 
 S12 — une seule base : l'enveloppe du slot

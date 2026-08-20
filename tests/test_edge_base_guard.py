@@ -8,7 +8,7 @@ d'ou la garde de derive.
 """
 import pytest
 
-from app.core.risk_envelope import Envelope, base_drift, envelope_base
+from app.core.risk.envelope import Envelope, base_drift, envelope_base
 from app.live.slot_lifecycle import LifecycleState, SlotLifecycleManager
 
 

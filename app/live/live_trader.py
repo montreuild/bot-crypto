@@ -37,8 +37,8 @@ from app.core.exchange import RobustExchange
 from app.core.notifications import Notifier
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.core.rejections import RejectionCounter
-from app.core.risk_gate import RiskManager, _default_venue_capital
-from app.core.risk_ledger import RiskLedger
+from app.core.risk.gate import RiskManager, _default_venue_capital
+from app.core.risk.ledger import RiskLedger
 from app.engine.engine import Engine
 from app.engine.scanner import MarketScanner
 from app.live.auto_opt_mixin import AutoOptMixin

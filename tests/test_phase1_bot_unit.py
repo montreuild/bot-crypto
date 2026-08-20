@@ -1,7 +1,7 @@
 """Phase 1 — le bot comme unité : identité/venue, sizing par bot, vetos shadow."""
 
 import app.core.bot_identity as bi
-from app.core.risk_gate import RiskManager
+from app.core.risk.gate import RiskManager
 
 
 def _base_cfg(**over):
@@ -68,7 +68,7 @@ def test_venue_default_from_globals_then_named():
 def test_sizing_caps_on_slot_envelope_times_leverage():
     """`per_bot_sizing` disparaît : il n'existe plus qu'UNE base, l'enveloppe
     du slot (§2.2). Le plafond notionnel en dérive directement."""
-    from app.core.risk_envelope import Envelope
+    from app.core.risk.envelope import Envelope
 
     def _env(slot_envelope, leverage):
         return Envelope(

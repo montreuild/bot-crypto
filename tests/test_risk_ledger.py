@@ -11,8 +11,8 @@ import threading
 
 import pytest
 
-from app.core.risk_envelope import Envelope
-from app.core.risk_ledger import Decision, RiskLedger
+from app.core.risk.envelope import Envelope
+from app.core.risk.ledger import Decision, RiskLedger
 
 
 def _env(**over) -> Envelope:

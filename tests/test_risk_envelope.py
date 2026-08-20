@@ -9,7 +9,7 @@ alloué au slot, pas un multiple).
 import pytest
 
 from app.core.bot_identity import Venue
-from app.core.risk_envelope import (
+from app.core.risk.envelope import (
     resolve_envelope,
     slot_weights,
     trade_risk_pct,
