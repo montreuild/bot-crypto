@@ -79,4 +79,45 @@ describe('StrategyPicker', () => {
     expect(screen.getByText('1h')).toBeInTheDocument();
     expect(screen.getByText('4h')).toBeInTheDocument();
   });
+
+  it("annonce l'état de chaque puce via aria-pressed", () => {
+    render(
+      <StrategyPicker strategies={STRATS} value={['breakout']} onChange={() => {}} />,
+    );
+    expect(screen.getByRole('button', { name: /breakout/ })).toHaveAttribute(
+      'aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /trend_rider/ })).toHaveAttribute(
+      'aria-pressed', 'false');
+  });
+
+  it('groupe les puces sous le libellé du compteur', () => {
+    render(<StrategyPicker strategies={STRATS} value={[]} onChange={() => {}} />);
+    expect(screen.getByRole('group', { name: /Stratégies/ })).toBeInTheDocument();
+  });
+
+  it('porte le badge ML et les TF dans le nom accessible, pas dans un title inerte', () => {
+    render(
+      <StrategyPicker
+        strategies={STRATS}
+        value={['supertrend_macd']}
+        onChange={() => {}}
+        spaces={SPACES}
+        selectedTfs={['15m']}
+      />,
+    );
+    const nom = screen.getByRole('button', { name: /supertrend_macd/ })
+      .getAttribute('aria-label') ?? '';
+    expect(nom).toMatch(/^supertrend_macd/);   // WCAG 2.5.3 : le texte visible d'abord
+    expect(nom).toContain('ML');
+    expect(nom).toContain('1h, 4h');
+    expect(nom).toContain('pas recommandé');
+    expect(nom).toContain('sélectionnée');
+  });
+
+  it('garde le texte visible comme nom des actions groupées', () => {
+    // Un aria-label qui remplace « Toutes » casserait la commande vocale.
+    render(<StrategyPicker strategies={STRATS} value={[]} onChange={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Toutes' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Aucune' })).toBeInTheDocument();
+  });
 });
