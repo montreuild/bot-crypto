@@ -14,7 +14,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -411,10 +411,13 @@ class MLStrategyTrainer:
         if not art.train_end:
             return f"modèle sans provenance datée (version={art.version_id}) — fraîcheur non mesurable"
         try:
-            train_end_dt = datetime.strptime(art.train_end, "%Y-%m-%dT%H:%M:%S")
+            # `train_end` est un instant UTC sans marqueur : on le rend aware
+            # pour pouvoir le soustraire d'un `now` aware.
+            train_end_dt = datetime.strptime(
+                art.train_end, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
         except (ValueError, TypeError):
             return None
-        age_hours = (datetime.utcnow() - train_end_dt).total_seconds() / 3600.0
+        age_hours = (datetime.now(timezone.utc) - train_end_dt).total_seconds() / 3600.0
         if interval_h > 0 and age_hours > stale_factor * interval_h:
             return (f"modèle vieux de {age_hours / 24:.1f}j "
                     f"(> {stale_factor:.0f}× l'intervalle de réentraînement {interval_h:.1f}h) "

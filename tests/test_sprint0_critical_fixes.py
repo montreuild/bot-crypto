@@ -285,13 +285,13 @@ class TestFormingCandleDropped:
 
     def test_drop_forming_candle_removes_last_incomplete_bar(self):
         """Si la dernière bougie est encore en formation, elle est retirée."""
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         import polars as pl
 
         from app.live.ohlcv_cache import OHLCVCache
         # Construit un DF avec 10 bougies 1h, la dernière en formation
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         # 9 bougies clôturées (il y a 10h à 2h) + 1 bougie en cours (il y a 30min)
         times = [now - timedelta(hours=i) for i in range(10, 0, -1)]
         # La dernière bougie est "now - 30min", donc en formation (close dans 30min)
@@ -314,12 +314,12 @@ class TestFormingCandleDropped:
 
     def test_drop_forming_candle_noop_when_last_closed(self):
         """Si la dernière bougie est clôturée, aucune action."""
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         import polars as pl
 
         from app.live.ohlcv_cache import OHLCVCache
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         # 10 bougies toutes clôturées (la dernière il y a 1h+1s)
         times = [now - timedelta(hours=i) for i in range(11, 1, -1)]
         df = pl.DataFrame({

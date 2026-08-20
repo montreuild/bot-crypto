@@ -444,7 +444,7 @@ def set_pin(tf: str, recipe: str, version_id: str,
         return False
     path = _pin_path(base_dir, tf, recipe)
     payload = {"version_id": version_id,
-              "pinned_at": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
+              "pinned_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
@@ -523,7 +523,7 @@ def publish(tf: str, recipe: str, tmp_path_prefix: str, *,
     train_start_s = to_iso(train_start)
     train_end_s   = to_iso(train_end)
     rhash = recipe_hash(recipe_cfg)
-    created_at = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    created_at = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     version_id = _version_id(train_end_s, rhash)
     version_dir = os.path.join(_recipe_dir(base_dir, tf, recipe), version_id)
     os.makedirs(version_dir, exist_ok=True)
@@ -604,7 +604,7 @@ def set_decision(tf: str, recipe: str, version_id: str,
         return False
 
     _append_decision(base_dir, tf, recipe, {
-        "ts": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "ts": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "version_id": version_id, "decision": decision, "source": "manual",
         "reason": reason, "previous_decision": previous,
     })
