@@ -250,3 +250,68 @@ def test_run_baseline_publie_profit_factor_et_expectancy():
     src = inspect.getsource(auto_opt._run_baseline)
     assert '"profit_factor"' in src, "clé profit_factor absente du baseline"
     assert '"expectancy"' in src, "clé expectancy absente du baseline"
+
+
+# ── OPT-03 — plafond ABSOLU de drawdown, ancré sur la limite du moteur live ──
+# Le plafond relatif (+25 % sur le baseline) se laisse contourner par cliquet :
+# le baseline EST le paramétrage déjà appliqué, donc chaque application décale
+# la référence. Sans ancrage, la suite 10 → 12,5 → 15,6 → 19,5 → 24,4 % passe
+# en quatre auto-applies dont aucun n'est refusé — et la dernière dépasse la
+# limite que `RiskManager` fait respecter en production.
+
+def test_le_cliquet_du_plafond_relatif_est_reel():
+    """Documente le mécanisme que le plafond absolu vient arrêter."""
+    from app.engine.opt_scoring import beats_baseline
+
+    dd = 10.0
+    passes = []
+    for _ in range(4):
+        suivant = dd * 1.25
+        ok, _ = beats_baseline(20, 300.0, 60.0, 2.0,
+                               {"pnl": 50.0, "wr": 40.0, "sharpe": 1.0, "dd": dd},
+                               oos_dd=suivant)
+        passes.append((round(dd, 1), round(suivant, 1), ok))
+        dd = suivant
+    assert all(ok for *_, ok in passes), passes
+    assert passes[-1][1] > 20.0, (
+        f"le cliquet doit franchir la limite live de 20 % : {passes}"
+    )
+
+
+def test_le_plafond_absolu_arrete_le_cliquet():
+    from app.engine.opt_scoring import beats_baseline
+
+    base = {"pnl": 50.0, "wr": 40.0, "sharpe": 1.0, "dd": 19.5}
+    ok, raison = beats_baseline(20, 300.0, 60.0, 2.0, base,
+                                oos_dd=24.4, dd_max_abs=20.0)
+    assert ok is False
+    assert "plafond absolu" in raison, raison
+
+
+def test_le_plafond_absolu_se_deduit_de_la_config_live():
+    """Même source que `RiskManager.global_dd_limit` : une fraction sous
+    `trading`, convertie en pourcentage."""
+    from app.engine.opt_scoring import resolve_dd_max_abs
+
+    assert resolve_dd_max_abs({"trading": {"max_drawdown_global": 0.2}}) == 20.0
+    assert resolve_dd_max_abs({}) == 20.0                 # même défaut que le gate
+    assert resolve_dd_max_abs({"trading": {"max_drawdown_global": 0}}) is None
+
+
+def test_la_route_manuelle_applique_le_plafond_absolu(monkeypatch, tmp_path):
+    """Un drawdown holdout sous le +25 % relatif mais au-delà du plafond
+    absolu doit être refusé — c'est le cas que le cliquet fabrique."""
+    spath, cfgpath = _fixture_config(tmp_path)
+    job = _job_avec_holdout(dd=24.0)
+    job["baseline"] = dict(BASELINE_RICHE, dd=19.5)   # +23 % : passe le relatif
+    client = _client(monkeypatch, tmp_path, job)
+    from app.api import state
+    monkeypatch.setattr(state, "cfg",
+                        {"trading": {"max_drawdown_global": 0.2}}, raising=False)
+    try:
+        r = _appliquer(client, cfgpath)
+        assert r.status_code == 409, r.text
+        assert "plafond absolu" in r.json()["detail"], r.json()["detail"]
+        assert _params_ecrits(spath) == {}
+    finally:
+        app.dependency_overrides.pop(verify_api_key, None)

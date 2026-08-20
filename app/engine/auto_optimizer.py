@@ -614,8 +614,10 @@ class AutoOptimizer:
             # seul le holdout les porte (via _run_baseline). None tant qu'il
             # n'a pas tourné — les branches correspondantes restent alors
             # inactives, ce qui est le repli honnête.
-            best_oos_pf = None
-            best_oos_expectancy = None
+            # OPT-01 : la tranche de sélection les publie désormais aussi
+            # (optimizer_search) ; le holdout les écrase plus bas s'il tourne.
+            best_oos_pf = result.get("best_oos_pf")
+            best_oos_expectancy = result.get("best_oos_expectancy")
             best_oos_dd = None
             if df_holdout is not None and result.get("best_params"):
                 _h = _run_baseline(strategy_name, _cfg_avec_params(
@@ -660,6 +662,9 @@ class AutoOptimizer:
             # biais de multiple testing quand n_trials > 1. Désactivable via
             # `optimizer.deflated_sharpe_gate: false` dans config.yaml.
             from app.engine.opt_scoring import beats_baseline as _bb
+            from app.engine.opt_scoring import (
+                resolve_dd_max_abs as _resolve_dd_max_abs,
+            )
 
             # Lecture de la config du gate Deflated Sharpe (P0)
             _opt_cfg = (self.cfg.get("optimizer") or {})
@@ -680,7 +685,8 @@ class AutoOptimizer:
                                          or result.get("best_oos_dd")
                                          or result.get("best_val_dd")),
                                  oos_pf=best_oos_pf,
-                                 oos_expectancy=best_oos_expectancy)
+                                 oos_expectancy=best_oos_expectancy,
+                                 dd_max_abs=_resolve_dd_max_abs(self.cfg))
                 if not ok:
                     logger.info(f"[AutoOpt] {job_id} : gate d'apply refusé "
                                 f"[{gate_source}] — {reason}")
