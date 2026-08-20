@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatMoney, formatPct, errorMessage, quoteCurrency } from '@/lib/utils';
 import { LoadingState, EmptyState, ErrorState } from '@/components/ui/query-state';
-import { useBacktestSettings } from '@/hooks/use-api';
+import { useBacktestSettings, useOptimizeSpaces } from '@/hooks/use-api';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import {
@@ -123,6 +123,7 @@ function cellColor(key: SortKey, value: ResultRow[SortKey] | undefined): string 
 
 export function CompareView() {
   const { data: settings } = useBacktestSettings();
+  const { data: spaces } = useOptimizeSpaces();
   const availableStrategies = settings?.strategies || DEFAULT_STRATEGIES;
 
   const [symbol, setSymbol] = useState('BTC/USDC');
@@ -383,6 +384,8 @@ export function CompareView() {
             strategies={availableStrategies}
             value={selected}
             onChange={setSelected}
+            spaces={spaces}
+            selectedTfs={[timeframe]}
             extra={
               <button
                 type="button"

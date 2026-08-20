@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {cn, formatUSD, formatPct, errorMessage} from '@/lib/utils';
 import { toast } from 'sonner';
-import { useRunReplay, useCancelReplay, useBacktestSettings } from '@/hooks/use-api';
+import { useRunReplay, useCancelReplay, useBacktestSettings, useOptimizeSpaces } from '@/hooks/use-api';
 import {
   Play, Loader2, StopCircle, AlertCircle, BarChart3,
   TrendingUp, Clock,
@@ -201,6 +201,7 @@ export function MultiTfBatchView() {
   const [result, setResult] = useState<ReplayResult | null>(null);
 
   const { data: settings } = useBacktestSettings();
+  const { data: spaces } = useOptimizeSpaces();
   const availableStrategies: string[] = settings?.all_strategies ?? settings?.strategies ?? [];
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [months, setMonths] = useState(3);
@@ -307,6 +308,8 @@ export function MultiTfBatchView() {
             strategies={availableStrategies}
             value={strategies}
             onChange={setStrategies}
+            spaces={spaces}
+            selectedTfs={selectedTfs}
           />
 
           <div className="flex items-center gap-6">

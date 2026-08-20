@@ -25,7 +25,8 @@ import { SymbolSearchInput } from '@/components/ui/symbol-search';
 import { StrategyPicker } from '@/components/ui/strategy-picker';
 import { toast } from 'sonner';
 import { Loader2, AlertCircle, Play, TrendingUp, Activity, Zap, Eye, Layers, Clock } from 'lucide-react';
-import { useRunBacktest, useCancelBacktest, useBacktestSettings } from '@/hooks/use-api';
+import { useRunBacktest, useCancelBacktest, useBacktestSettings, useOptimizeSpaces } from '@/hooks/use-api';
+import type { OptimizeSpaces } from '@/types';
 import { useReplayEngine, type CandleRow } from '@/hooks/use-replay-engine';
 import { useReplayKeyboard } from '@/hooks/use-replay-keyboard';
 import { monthsToBougies } from '@/lib/limit-hint';
@@ -81,6 +82,7 @@ export function ReplayView() {
   const runBacktest = useRunBacktest();
   const cancelBacktest = useCancelBacktest();
   const { data: settings } = useBacktestSettings();
+  const { data: spaces } = useOptimizeSpaces();
 
   // Stratégies disponibles (depuis /api/backtest/settings).
   const availableStrategies: string[] = useMemo(() => {
@@ -209,6 +211,7 @@ export function ReplayView() {
           strategies={strategies}
           setStrategies={setStrategies}
           availableStrategies={availableStrategies}
+          spaces={spaces}
           hintBougies={hintBougies}
           onLoad={handleLoad}
           isLoading={false}
@@ -254,6 +257,7 @@ export function ReplayView() {
           strategies={strategies}
           setStrategies={setStrategies}
           availableStrategies={availableStrategies}
+          spaces={spaces}
           hintBougies={hintBougies}
           onLoad={handleLoad}
           isLoading
@@ -315,6 +319,7 @@ export function ReplayView() {
             strategies={strategies}
             setStrategies={setStrategies}
             availableStrategies={availableStrategies}
+            spaces={spaces}
             hintBougies={hintBougies}
             onLoad={handleLoad}
             isLoading={runBacktest.isPending}
@@ -404,6 +409,7 @@ interface ReplayConfigCardProps {
   strategies: string[];
   setStrategies: (v: string[]) => void;
   availableStrategies: string[];
+  spaces?: OptimizeSpaces;
   hintBougies: number;
   onLoad: () => void;
   isLoading: boolean;
@@ -421,6 +427,7 @@ function ReplayConfigCard({
   strategies,
   setStrategies,
   availableStrategies,
+  spaces,
   hintBougies,
   onLoad,
   isLoading,
@@ -459,10 +466,11 @@ function ReplayConfigCard({
         </div>
         <div>
           <StrategyPicker
-            label="Stratégie overlay"
             strategies={availableStrategies}
             value={strategies}
             onChange={setStrategies}
+            spaces={spaces}
+            selectedTfs={[timeframe]}
           />
         </div>
         <div className="flex gap-2">

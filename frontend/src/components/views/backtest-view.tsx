@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { useBacktestSettings, useRunBacktest, useCancelBacktest, useBacktestRange } from '@/hooks/use-api';
+import { useBacktestSettings, useRunBacktest, useCancelBacktest, useBacktestRange, useOptimizeSpaces } from '@/hooks/use-api';
 import { useBacktestStatus, useBacktestSession } from '@/hooks/use-backtest-session';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
@@ -44,6 +44,7 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
   const settingsQuery = useBacktestSettings();
   const runBacktest = useRunBacktest();
   const cancelBacktest = useCancelBacktest();
+  const { data: spaces } = useOptimizeSpaces();
   const qc = useQueryClient();
   const { defaultTf, timeframes: activeTfs } = useTradingTimeframes('1h');
 
@@ -201,7 +202,6 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
   };
 
   const allStrategies = settings?.all_strategies || settings?.strategies || [];
-  const enabledStrategies: string[] = settings?.strategies || [];
   const availableStrategies = allStrategies;
 
   const LIMIT_PRESETS = [500, 2000, 5000, 8000, 50000];
@@ -405,7 +405,8 @@ export function BacktestView({ expertMode }: { expertMode: boolean }) {
             strategies={availableStrategies}
             value={config.strategies}
             onChange={(strategies) => setConfig((c) => ({ ...c, strategies }))}
-            enabled={enabledStrategies}
+            spaces={spaces}
+            selectedTfs={[config.timeframe]}
           />
 
           {/* Mode expert : options avancées */}
