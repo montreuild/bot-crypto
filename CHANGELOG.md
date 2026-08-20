@@ -36,9 +36,22 @@ indissociables, parce qu'aucun des deux ne suffit seul :
 Le rapport publie désormais le plancher **à côté** du seuil retenu et distingue
 les deux causes d'un zéro : « le test pouvait rejeter et n'a rien trouvé » vs
 « le seuil était sous le plancher ». `alpha_bonferroni` reste publié pour
-comparaison. Effet de bord notable : la validation « 0 découverte sur marche
-aléatoire » redevient un vrai test — elle était vide de sens tant que zéro était
-le seul résultat atteignable.
+comparaison.
+
+**Re-mesure BTC/USDC** (146 496 événements, 74 280 composés énumérés, 12 min) :
+**0 motif** survivant — et c'en est un vrai, le seuil BH au rang 4 étant
+au-dessus du plancher — mais **10 083 composés**, soit 21,3 × l'attendu sous H₀.
+La même chaîne sur une marche aléatoire à échelle comparable rend **0
+survivant** (ratio 1,24) : la correction n'est pas devenue trop faible. Ce
+contrôle, seul test empirique de l'hypothèse de dépendance de BH sur des
+composés massivement recouvrants, est verrouillé par un nouveau test `slow`.
+Réserve à lever avant d'appeler ces lignes des découvertes : les survivants se
+concentrent à **h = 1 barre** (2 997 contre 629 à h = 24), ce qui ressemble
+autant à un couplage de définition qu'à une prédiction.
+
+Effet de bord notable : la validation « 0 découverte sur marche aléatoire »
+redevient un vrai test — elle était vide de sens tant que zéro était le seul
+résultat atteignable, et elle n'existait qu'à une échelle jouet.
 
 ### 🔬 Motifs SMC BTC/USDC : le « 0 survivant » était un plafond de méthode
 

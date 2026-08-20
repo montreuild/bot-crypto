@@ -67,6 +67,7 @@ def test_detect_ohlcv_gaps_xpar_weekend_is_not_a_hole():
 def test_detect_ohlcv_gaps_xpar_daily_weekend_is_not_a_hole():
     """CS.PA 1d : vendredi minuit → lundi minuit n'est pas un trou (week-end)."""
     import polars as pl
+
     from app.core.market_calendar import get_calendar
     from app.core.ohlcv_gaps import detect_ohlcv_gaps
     cal = get_calendar("XPAR")
@@ -84,6 +85,7 @@ def test_detect_ohlcv_gaps_xpar_daily_weekend_is_not_a_hole():
 def test_detect_ohlcv_gaps_xpar_afterhours_weekend_is_not_a_hole():
     """1h : ven. 16:00 UTC → lun. 09:00 UTC (65 h, séance fermée) n'est pas un trou."""
     import polars as pl
+
     from app.core.market_calendar import get_calendar
     from app.core.ohlcv_gaps import detect_ohlcv_gaps
     cal = get_calendar("XPAR")
@@ -101,6 +103,7 @@ def test_detect_ohlcv_gaps_xpar_afterhours_weekend_is_not_a_hole():
 def test_detect_ohlcv_gaps_xpar_weekday_hole_is_flagged():
     """1d : vendredi → mardi (lundi manquant) reste un trou."""
     import polars as pl
+
     from app.core.market_calendar import get_calendar
     from app.core.ohlcv_gaps import detect_ohlcv_gaps
     cal = get_calendar("XPAR")

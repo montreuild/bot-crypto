@@ -311,6 +311,7 @@ def survivants_composes(mesures: pl.DataFrame, resultat_mine: Dict[str, Any],
     limitant et qu'il faut monter ``n_tirages``.
     """
     from statistics import NormalDist
+
     from app.engine.smc_patterns.stats import plancher_p, seuil_bh
 
     n_hyp = int(resultat_mine.get("n_enumeres") or 0)

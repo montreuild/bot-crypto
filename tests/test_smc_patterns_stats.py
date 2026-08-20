@@ -201,3 +201,52 @@ class TestPlancherEtFDR:
         budget = {"n_hypotheses": 2, "alpha_nominal": 0.05}
         S.survivants(mesures, budget)
         assert budget["seuil_bh"] == pytest.approx(0.0001)
+
+
+@pytest.mark.slow
+class TestBruitAEchelleReelle:
+    """Le garde-fou du module, à l'échelle où il compte vraiment.
+
+    ``TestGardeFouPrincipal`` tourne sur deux séries courtes. À cette taille,
+    et tant que la correction était un Bonferroni sous le plancher du test,
+    « 0 découverte » était le SEUL résultat atteignable : le test passait sans
+    rien prouver. Sous Benjamini-Hochberg le rejet redevient possible, donc ce
+    zéro-ci doit être vérifié à une échelle comparable à celle d'un vrai run —
+    même ordre d'hypothèses énumérées, mêmes dépendances entre composés.
+
+    C'est aussi le seul contrôle empirique de l'hypothèse de dépendance de BH :
+    les composés se recouvrent massivement (mêmes événements, cinq horizons
+    corrélés). Si cette dépendance gonflait le FDR, elle le ferait ici.
+    """
+
+    @staticmethod
+    def _serie_alignee(jours, par_jour, seed, pas_ms):
+        # Tous les TF couvrent la MÊME fenêtre : sinon la tranche de
+        # confirmation peut tomber après la fin du TF de mesure, et la mesure
+        # rend zéro ligne — un faux « 0 survivant » qui ne teste rien.
+        return _serie(jours * par_jour, seed, pas_ms)
+
+    def test_aucun_compose_ne_survit_a_BH_sur_du_bruit(self):
+        jours, m = 200, 15 * 60_000
+        frames = {
+            "15m": self._serie_alignee(jours, 96, 11, m),
+            "30m": self._serie_alignee(jours, 48, 12, 2 * m),
+            "1h": self._serie_alignee(jours, 24, 13, 4 * m),
+            "4h": self._serie_alignee(jours, 6, 14, 16 * m),
+        }
+        journal = journal_multi_tf(frames, "NOISE/USDC")
+        fenetre = 2 * 15 * 60
+        fouille = C.mine(journal, fenetre_s=fenetre, longueurs=(2, 3))
+        # Le test ne vaut que si l'espace d'hypothèses est du bon ordre.
+        assert fouille["n_enumeres"] > 50_000
+
+        mesures = C.mouvement_apres_composes(
+            fouille, journal, frames, fenetre, "15m", horizons=(1, 3, 6, 12, 24))
+        # Garde-fou du garde-fou : une mesure vide rendrait 0 survivant sans
+        # rien prouver.
+        assert mesures.height > 10_000
+
+        resultat = C.survivants_composes(mesures, fouille)
+        assert resultat["survivants"].height == 0, (
+            f"{resultat['survivants'].height} composés « découverts » sur une "
+            "marche aléatoire — la correction ne fait plus son travail")

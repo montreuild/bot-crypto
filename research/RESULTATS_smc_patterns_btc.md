@@ -160,11 +160,64 @@ prouvait rien : avec 30 884 hypothèses, un α de 1.6 × 10⁻⁶ et un plancher
 test peut désormais rejeter — et il continue de ne rien trouver sur du bruit.
 C'est seulement maintenant que cela veut dire quelque chose.
 
-### Ce qui reste à faire
+---
 
-La re-mesure de BTC/USDC sous le nouveau protocole n'est **pas** encore dans ce
-document : les chiffres ci-dessus sont ceux du run de diagnostic (200 tirages,
-Bonferroni, données arrêtées au 2026-08-07). Ils sont conservés tels quels
-parce qu'ils documentent le défaut. Les conclusions de la section « Lecture »
-sur les amplitudes et le taux de 7,2 % restent valides — elles ne dépendent
-d'aucune correction.
+## Re-mesure sous le nouveau protocole
+
+Même commande, 2000 tirages, Benjamini-Hochberg, données rafraîchies
+(jusqu'au **2026-08-20**) : 146 496 événements, 74 280 composés énumérés,
+20 077 retenus, 14 574 confirmés. Durée : **12 min 33**.
+
+```
+CORRECTION  benjamini-hochberg sur α = 0.05, 2000 tirages par témoin
+            plancher des p-values : 0.0005
+            seuil retenu motifs   : aucun rejet à ce niveau
+            seuil retenu composés : 0.0065
+
+SURVIVANTS — motifs : 0, composés : 10 083
+```
+
+### Motifs : zéro, et cette fois c'en est un
+
+Le seuil BH au rang 4 vaut 5.6 × 10⁻⁴, **au-dessus** du plancher de 5 × 10⁻⁴ :
+il suffisait de quatre motifs au plancher pour obtenir des rejets. Aucun n'y
+est. C'est donc un vrai résultat négatif, contrairement à celui du run de
+diagnostic — et il confirme la lecture faite plus haut sur les amplitudes.
+
+### Composés : 10 083 survivants, et ce n'est pas un défaut de correction
+
+Le chiffre surprend : 10 083 lignes sur 72 870 mesurées, soit **21,3 fois**
+l'attendu sous l'hypothèse nulle (~474 à p ≤ 0.0065). Trois vérifications :
+
+**La correction n'est pas devenue trop faible.** La même chaîne, appliquée à
+une marche aléatoire à échelle comparable (72 345 hypothèses énumérées contre
+74 280, 26 160 lignes mesurées), rend **0 survivant** — et 211 lignes sous
+p ≤ 0.0065 contre ~170 attendues, soit un ratio de 1,24. Le contraste avec le
+ratio de 21,3 des données réelles est la mesure elle-même. Ce contrôle est
+désormais verrouillé par `test_aucun_compose_ne_survit_a_BH_sur_du_bruit`
+(marqué `slow`).
+
+**C'est aussi le seul contrôle empirique de l'hypothèse de dépendance de BH.**
+Les composés se recouvrent massivement — mêmes événements, cinq horizons
+corrélés — et BH ne garantit le FDR que sous indépendance ou dépendance
+positive. Si cette dépendance gonflait le FDR, elle le ferait sur le bruit
+aussi. Elle ne le fait pas.
+
+**Mais l'interprétation demande de la prudence, pour deux raisons :**
+
+- **Le profil par horizon est à l'envers de celui d'un edge exploitable** :
+  2 997 survivants à h = 1 barre contre 629 à h = 24. Un effet concentré sur la
+  barre qui suit immédiatement la détection ressemble autant à un couplage de
+  définition qu'à une prédiction. La règle de « barre de connaissabilité » de
+  `journal.py` est censée l'exclure ; c'est le premier point à réexaminer.
+- **n médian = 37 occurrences** chez les survivants, et le sens se répartit à
+  4 145 positifs pour 5 938 négatifs.
+
+Rien de tout cela n'invalide le chiffre — mais avant d'appeler ces 10 083
+lignes des « découvertes », il faut trancher la question de l'horizon 1.
+
+### Ce que la re-mesure ne change pas
+
+Les conclusions de la section « Lecture » sur les amplitudes (écarts sous le
+coût d'un aller-retour) et sur le taux de 7,2 % restent valides : elles ne
+dépendaient d'aucune correction.
