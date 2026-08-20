@@ -31,16 +31,52 @@ describe('StrategyPicker', () => {
     expect(onChange).toHaveBeenCalledWith(['breakout', 'trend_rider']);
   });
 
-  it('affiche le badge ML et les TF recommandés depuis spaces', () => {
+  const SPACES = {
+    supertrend_macd: {
+      is_ml: true,
+      recommended_tfs: ['1h', '4h'],
+      timeframes: ['1h'],
+      params: {},
+      n_combos: 1,
+    },
+  };
+
+  it('affiche le badge ML depuis spaces', () => {
+    render(
+      <StrategyPicker strategies={STRATS} value={[]} onChange={() => {}} spaces={SPACES} />,
+    );
+    expect(screen.getByText('ML')).toBeInTheDocument();
+  });
+
+  it("n'affiche pas les TF recommandés quand la sélection les respecte", () => {
+    // Les badges de TF ne sont montrés que lorsqu'ils servent à quelque chose,
+    // c'est-à-dire en présence d'un avertissement (`hasWarn`) : les afficher en
+    // permanence saturait la puce sans rien apprendre.
     render(
       <StrategyPicker
         strategies={STRATS}
-        value={[]}
+        value={['supertrend_macd']}
         onChange={() => {}}
-        spaces={{ supertrend_macd: { is_ml: true, recommended_tfs: ['1h', '4h'], timeframes: ['1h'], params: {}, n_combos: 1 } }}
+        spaces={SPACES}
+        selectedTfs={['1h']}
       />,
     );
-    expect(screen.getByText('ML')).toBeInTheDocument();
+    expect(screen.queryByText('4h')).not.toBeInTheDocument();
+    expect(screen.queryByText('⚠')).not.toBeInTheDocument();
+  });
+
+  it('affiche les TF recommandés et un avertissement sur un TF non recommandé', () => {
+    render(
+      <StrategyPicker
+        strategies={STRATS}
+        value={['supertrend_macd']}
+        onChange={() => {}}
+        spaces={SPACES}
+        selectedTfs={['15m']}
+      />,
+    );
+    expect(screen.getByText('⚠')).toBeInTheDocument();
     expect(screen.getByText('1h')).toBeInTheDocument();
+    expect(screen.getByText('4h')).toBeInTheDocument();
   });
 });
