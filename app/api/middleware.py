@@ -189,7 +189,10 @@ def setup_middleware(app: FastAPI) -> None:
     """
     # Handler SlowAPI pour ``RateLimitExceeded`` : convertit l'exception
     # du limiter en réponse 429 standard.
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_exception_handler(
+        RateLimitExceeded,
+        _rate_limit_exceeded_handler,  # type: ignore[arg-type]
+    )
 
     # Filet de sécurité global (avant les middlewares, ordre sans importance
     # pour ``add_exception_handler`` — lookup par type d'exception).

@@ -153,7 +153,9 @@ def ml_recipes():
         why = supports(name)
         try:
             r = load_recipe(name)
-            catalog, scheme, heads = r.features_catalog, r.label_scheme, r.heads
+            catalog: Optional[str] = r.features_catalog
+            scheme: Optional[str] = r.label_scheme
+            heads: list = r.heads
         except Exception:
             catalog = scheme = None
             heads = []
@@ -544,21 +546,22 @@ def ml_registry_decisions_recent(request: Request, limit: int = 100):
     """
     try:
         import app.ml.model_registry as registry
-        recipes = registry.list_recipes()
+        # `list_recipes` rend déjà des entrées {tf, recipe, ...} : itérer
+        # dessus. La version précédente appelait `list_versions(None, nom)` en
+        # traitant chaque entrée comme un simple nom de recette — `tf=None`
+        # levait un TypeError, avale par le `except` ci-dessous, et l'endpoint
+        # ne renvoyait JAMAIS la moindre décision.
         all_decisions = []
-        for recipe_name in recipes:
+        for entree in registry.list_recipes():
+            tf = entree.get("tf")
+            recipe_name = entree.get("recipe")
+            if not tf or not recipe_name:
+                continue
             try:
-                # Lire les décisions pour tous les TFs de cette recette
-                versions = registry.list_versions(None, recipe_name)
-                tfs_seen = set()
-                for v in versions:
-                    if v.tf and v.tf not in tfs_seen:
-                        tfs_seen.add(v.tf)
-                        decs = registry.read_decisions(v.tf, recipe_name, limit=50)
-                        for d in (decs or []):
-                            d["_recipe"] = recipe_name
-                            d["_tf"] = v.tf
-                            all_decisions.append(d)
+                for d in (registry.read_decisions(tf, recipe_name, limit=50) or []):
+                    d["_recipe"] = recipe_name
+                    d["_tf"] = tf
+                    all_decisions.append(d)
             except Exception:
                 continue
         # Trier par timestamp décroissant (plus récent d'abord)

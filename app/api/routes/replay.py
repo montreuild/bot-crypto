@@ -155,7 +155,7 @@ def run_replay(
                     f"⚠ {len(ohlcv_gaps)} gap(s) — {total_missing} bougies manquantes."
                 )
 
-            by_timeframe[tf] = {
+            entree: dict = {
                 "n_bars":       actual_bars,
                 "date_from":    date_from,
                 "date_to":      date_to,
@@ -164,6 +164,7 @@ def run_replay(
                 "by_strategy":  by_strategy,
                 "gaps_warning": gaps_warning,
             }
+            by_timeframe[tf] = entree
 
         cross_tf_summary.sort(key=lambda x: x["pnl"], reverse=True)
 
