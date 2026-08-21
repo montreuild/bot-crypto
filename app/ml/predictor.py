@@ -389,7 +389,14 @@ class StatePredictor:
 #: ``persistence:`` de la recette → implémentation. C'est ce qui remplace le
 #: reniflage de format (et donc ``unsupported_format``) : une recette DIT
 #: comment elle persiste, on ne le devine plus depuis les fichiers présents.
-_BY_PERSISTENCE = {
+class _FabriquePredictor(Protocol):
+    """Ce que le registre attend d'une implémentation."""
+
+    def from_artifact(self, path_prefix: str, *, recipe: str = ...,
+                      version_id: str = ...) -> Any: ...
+
+
+_BY_PERSISTENCE: Dict[str, Any] = {
     "lgbm_amp_dir_bundle": LgbmBundlePredictor,
     "lgbm_scaler": LgbmScalerPredictor,
     "lgbm_single": LgbmSinglePredictor,

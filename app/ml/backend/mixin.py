@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 
 
 class MLBackendMixin:
+    #: Fournis par la stratégie qui mélange ce mixin (cf. LiveHost côté live).
+    name: str
+    _DEFAULTS: dict
+
     """Cycle de vie ML délégué à ``MLBackend``.
 
     La stratégie hôte doit définir ``name``, ``model_dir`` et ``_DEFAULTS``, et

@@ -117,9 +117,9 @@ def detect_timeframe(df: pl.DataFrame) -> Optional[str]:
             return None
         try:
             med_us = deltas.dt.total_microseconds().median()
-            med_s  = float(med_us) / 1_000_000.0
+            med_s = float(med_us) / 1_000_000.0  # type: ignore[arg-type]
         except Exception:
-            med_s = float(deltas.median().total_seconds())
+            med_s = float(deltas.median().total_seconds())  # type: ignore[union-attr]
     except Exception:
         arr = times.to_numpy()
         try:
@@ -393,7 +393,7 @@ def build_features(raw_df: pl.DataFrame) -> Optional[pl.DataFrame]:
     dn[1:] = -(l_np[1:] - l_np[:-1])
     plus_dm  = np.where((up > dn) & (up > 0), up, 0.0)
     minus_dm = np.where((dn > up) & (dn > 0), dn, 0.0)
-    c_prev = np.concatenate(([np.nan], c_np[:-1]))
+    c_prev = np.concatenate((np.array([np.nan]), c_np[:-1]))
     tr  = np.maximum.reduce([h_np - l_np, np.abs(h_np - c_prev), np.abs(l_np - c_prev)])
     atr = _ewm_alpha_np(tr, a)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -416,7 +416,7 @@ def build_features(raw_df: pl.DataFrame) -> Optional[pl.DataFrame]:
     # 9. Trend duration
     strong = df["trend_strong"].to_numpy().astype(np.int64)
     if len(strong) > 0:
-        shifted = np.concatenate(([0], strong[:-1]))
+        shifted = np.concatenate((np.zeros(1, dtype=np.int64), strong[:-1]))
         grp = np.cumsum((strong != shifted).astype(np.int64))
         td = np.zeros(len(strong), dtype=np.int64)
         cur_grp, running = grp[0] if len(grp) > 0 else 0, 0

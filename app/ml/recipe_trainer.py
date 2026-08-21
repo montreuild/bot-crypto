@@ -358,7 +358,7 @@ def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
         boosters[head] = booster
         early = float(booster.best_score.get("valid_0", {}).get("auc", 0.0))
         raw_va = booster.predict(X_valid)
-        report = rank_auc(y_va[cut:], raw_va[cut:]) if cut else None
+        report = rank_auc(y_va[cut:], np.asarray(raw_va)[cut:]) if cut else None
         published = float(report) if report is not None else early
         meta[f"auc_{head}"] = round(published, 4)
         meta[f"auc_{head}_earlystop"] = round(early, 4)

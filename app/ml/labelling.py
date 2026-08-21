@@ -154,7 +154,7 @@ def _atr_causal(high: np.ndarray, low: np.ndarray, close: np.ndarray,
     utilisé. Sinon la même recette produirait des labels différents selon les
     entrées, et deux modèles ne seraient plus comparables.
     """
-    prev = np.concatenate(([close[0]], close[:-1]))
+    prev = np.concatenate((close[:1], close[:-1]))
     tr = np.maximum(high - low, np.maximum(np.abs(high - prev), np.abs(low - prev)))
     out = np.full(len(tr), np.nan)
     if len(tr) >= periode:

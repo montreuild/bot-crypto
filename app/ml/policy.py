@@ -140,22 +140,22 @@ def decide_gate(candidate_metrics: Optional[Dict[str, Any]],
                           candidate_metrics or {}, incumbent_metrics)
     if cand_auc < auc_floor:
         return GateResult("keep", f"{metric} candidat={cand_auc:.3f} < plancher={auc_floor:.3f}",
-                          candidate_metrics, incumbent_metrics)
+                          candidate_metrics or {}, incumbent_metrics)
 
     inc_auc = (incumbent_metrics or {}).get(metric)
     if inc_auc is None:
         if incumbent_metrics is None:
             reason = f"{metric} candidat={cand_auc:.3f} >= plancher={auc_floor:.3f} ; aucun sortant"
-            return GateResult("initial", reason, candidate_metrics, incumbent_metrics)
+            return GateResult("initial", reason, candidate_metrics or {}, incumbent_metrics)
         reason = (f"{metric} candidat={cand_auc:.3f} >= plancher={auc_floor:.3f} ; "
                  f"sortant non mesurable sur ce holdout, promu par défaut")
-        return GateResult("promote", reason, candidate_metrics, incumbent_metrics)
+        return GateResult("promote", reason, candidate_metrics or {}, incumbent_metrics)
 
     if cand_auc >= inc_auc - epsilon:
         reason = f"{metric} candidat={cand_auc:.3f} >= sortant({inc_auc:.3f}) - eps({epsilon:.3f})"
-        return GateResult("promote", reason, candidate_metrics, incumbent_metrics)
+        return GateResult("promote", reason, candidate_metrics or {}, incumbent_metrics)
     reason = f"{metric} candidat={cand_auc:.3f} < sortant({inc_auc:.3f}) - eps({epsilon:.3f}) : régression"
-    return GateResult("keep", reason, candidate_metrics, incumbent_metrics)
+    return GateResult("keep", reason, candidate_metrics or {}, incumbent_metrics)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
