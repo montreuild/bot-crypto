@@ -72,11 +72,9 @@ def data_refetch(request: Request, symbol: str | None = None, tf: str | None = N
     for s in symbols:
         for t in tfs:
             try:
-                # Un refetch explicite redemande TOUT, y compris les créneaux
-                # que la source avait confirmé ne pas publier : c'est le seul
-                # geste par lequel l'opérateur dit « refais la mesure ».
-                from app.core import ohlcv_absents as _abs
-                _abs.oublier(store._path(s, t), s, t)
+                # Un refetch explicite redemande TOUT : créneaux confirmés
+                # absents, historique déclaré épuisé, cooldown de recousage.
+                store.oublier_memos(s, t)
                 df = store.fetch(exchange, s, t, total=int(bars))
                 n = df.height if df is not None else 0
                 results.append({"symbol": s, "tf": t, "bars": n, "ok": n > 0})
@@ -172,6 +170,10 @@ def data_backfill_equities(request: Request, tf: str = "1d", years: int = 20):
             for sym in all_symbols:
                 job_dict["progress"]["current_symbol"] = sym
                 try:
+                    # Même geste explicite que `refetch` : un backfill sur 20 ans
+                    # ne doit pas être court-circuité par un « épuisé » posé par
+                    # le live dans les 6 h précédentes.
+                    store.oublier_memos(sym, tf)
                     df = store.fetch(exchange, sym, tf, total=total_bars)
                     n = df.height if df is not None else 0
                     job_dict["results"].append({

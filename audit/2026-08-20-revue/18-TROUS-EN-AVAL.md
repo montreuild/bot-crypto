@@ -252,13 +252,23 @@ d'une énumération faite sur l'horloge, pas sur le calendrier.
 Supprimer les 366 fichiers format 1 est possible mais sans effet fonctionnel :
 ils ne sont ni lus ni comptés.
 
-### Une réserve, antérieure et non introduite ici
+### Une réserve, antérieure — corrigée depuis
 
-`_history_exhausted` (mémoire vive, 6 h) empêche un backfill profond de rejouer
-une demande que le provider a déjà déclarée épuisée, tant que la borne basse du
-cache n'a pas bougé. Un backfill lancé dans les 6 h suivant un passage du live
-ou du scanner sautera donc ces symboles, en log `DEBUG`. Ni `refetch` ni
-`backfill-equities` ne remettent ce marqueur à zéro — seule l'arrivée de
-nouvelles bougies le fait (`candle_store.py:321`). Le marqueur ne survit pas au
-redémarrage du processus.
+`_history_exhausted` (mémoire vive, 6 h) empêchait un backfill profond de
+rejouer une demande que le provider avait déjà déclarée épuisée, tant que la
+borne basse du cache n'avait pas bougé. Un backfill lancé dans les 6 h suivant
+un passage du live ou du scanner sautait donc ces symboles, en log `DEBUG` —
+donc invisible. Ni `refetch` (qui n'effaçait que les créneaux absents) ni
+`backfill-equities` ne remettaient le marqueur à zéro.
+
+`CandleStore.oublier_memos(symbol, tf)` efface désormais les **trois** mémos —
+créneaux confirmés absents, historique épuisé, cooldown de recousage — et les
+deux routes l'appellent. Un bouton qui dit « refais » et qui ne refait pas est
+le motif même que cet audit poursuit : un garde-fou relié à aucune décision
+visible.
+
+Le coût est réel et assumé : chaque geste redemande vraiment l'historique
+profond. Sur un backfill sbf120 × 20 ans, ~120 requêtes `max` à Yahoo qui
+étaient parfois évitées — le cooldown de `_note_rate_limit` reste la protection
+en cas de limitation.
 

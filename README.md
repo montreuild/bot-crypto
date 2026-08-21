@@ -459,6 +459,9 @@ les options.
 | `POST` | `/api/ml/train` | Lance un entraînement (params: symbols, max_symbols, compare_solo, publish, as_of) |
 | `GET` | `/api/ml/jobs` | Jobs ML récents (train + sweep, filtrables) |
 | `GET` | `/api/ml/versioning/audit` | Audit du versioning (modèles avec/sans hash, incompatibles) |
+| `GET` | `/api/data/status` | Inventaire du cache OHLCV (bougies, plage, trous, complétude) |
+| `POST` | `/api/data/refetch` | Redemande un couple (symbole, TF) — efface les mémos de non-disponibilité |
+| `POST` | `/api/data/backfill-equities` | Backfill actions (yfinance) des univers actifs, en tâche de fond |
 | `GET` | `/api/config` | Configuration actuelle du bot |
 | `POST` | `/api/config/strategies` | Change les stratégies activées |
 | `POST` | `/api/config/timeframes` | Change les timeframes actifs |
@@ -546,6 +549,23 @@ bot-crypto/
 [API] Backtest error : Aucune donnée reçue
 ```
 → Vérifier que l'exchange (OKX) fonctionne, augmenter le `--limit`, essayer un autre symbol
+
+### Des trous qui ne se comblent jamais ?
+```
+[CandleStore] XXX.PA/1h — 12 trou(s), +0 bougie
+```
+→ Sur un titre peu liquide, c'est souvent **normal** : pas d'échange sur la
+barre = pas de bougie chez la source. Ces créneaux sont mémorisés une fois
+(`data/ohlcv/{SYMBOL}/{TF}.absent.json`), cessent d'être redemandés et sortent
+du calcul de complétude. Pour forcer une nouvelle mesure malgré tout :
+`POST /api/data/refetch?symbol=XXX.PA&tf=1h` — il efface les trois mémos
+(créneaux absents, historique épuisé, cooldown de recousage).
+
+### Un résultat de backtest marqué « complétude faible » ?
+La série contient moins de barres que le calendrier de la place n'en attend
+sur la période. C'est **informatif, pas bloquant** : le backtest tourne, mais
+drawdown et ratios sont mesurés sur une série trouée. L'avertissement remonte
+jusqu'à l'UI avec le pourcentage.
 
 ### Performance lente ?
 - Réduire `--limit` pour backtest
