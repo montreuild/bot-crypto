@@ -207,3 +207,58 @@ Le travail sur la détection de trous a rendu la mesure fiable ; il n'a rien
 changé à ce que le moteur en fait. `DOWN-01` est le plus rentable : il fausse
 une métrique qui alimente un gate de promotion, et le calendrier sait déjà
 donner la bonne réponse.
+
+---
+
+## Le registre des créneaux absents n'est pas à réinitialiser (2026-08-22)
+
+Question posée à l'occasion du correctif `/api/data/backfill-equities` : ce
+backfill inerte a-t-il pollué la détection de trous ?
+
+**Non, sur les deux axes.**
+
+*Le backfill n'a jamais atteint le store.* La boucle levait un `AttributeError`
+sur `provider.fetch_bars` avant tout appel au `CandleStore`. Or le store est le
+seul écrivain de la détection de trous et du registre `<tf>.absent.json`. Un
+job qui n'a rien écrit n'a rien pu corrompre.
+
+*Le registre existant se répare seul.* Mesuré sur `data/ohlcv` (378 fichiers,
+46 087 créneaux) :
+
+| Format | Fichiers | Créneaux | Contenu |
+|---|---|---|---|
+| 1 (pré-calendaire) | 366 | 37 235 | actions — **62 à 77 % de week-ends et de nuits** |
+| 2 (post-calendaire) | 12 | 8 852 | crypto uniquement (BTC/ETH/XRP) — 24/7, créneaux légitimes |
+
+`ohlcv_absents._FORMAT = 2` fait déjà le travail : `charger()` ignore tout
+fichier d'un format antérieur et reconstruit. Les 366 registres d'actions sont
+inertes, et la première mémorisation réécrit le fichier en format 2. **Aucun
+symbole action n'a encore de registre format 2.**
+
+Le détail qui rend ces 37 235 créneaux illisibles : en heure de Paris, les
+registres 1 h portent exactement 396 créneaux à **chaque** heure de la journée,
+02 h et 04 h comprises, pour un marché ouvert de 09 h à 17 h 30 — la signature
+d'une énumération faite sur l'horloge, pas sur le calendrier.
+
+*Le modèle actuel ne les reproduit pas.* Vérifié sur les Parquet réels :
+
+| Symbole / TF | Barres | Trous | Créneaux énumérés | Hors séance |
+|---|---|---|---|---|
+| AC.PA 1 h | 4 701 | 1 | 2 (lundi) | **0** |
+| AC.PA 1 d | 6 843 | 5 | 0 | **0** |
+| BNP.PA 15 m | 2 073 | 0 | 0 | **0** |
+| BNP.PA 1 h | 4 737 | 1 | 2 (lundi) | **0** |
+
+Supprimer les 366 fichiers format 1 est possible mais sans effet fonctionnel :
+ils ne sont ni lus ni comptés.
+
+### Une réserve, antérieure et non introduite ici
+
+`_history_exhausted` (mémoire vive, 6 h) empêche un backfill profond de rejouer
+une demande que le provider a déjà déclarée épuisée, tant que la borne basse du
+cache n'a pas bougé. Un backfill lancé dans les 6 h suivant un passage du live
+ou du scanner sautera donc ces symboles, en log `DEBUG`. Ni `refetch` ni
+`backfill-equities` ne remettent ce marqueur à zéro — seule l'arrivée de
+nouvelles bougies le fait (`candle_store.py:321`). Le marqueur ne survit pas au
+redémarrage du processus.
+
