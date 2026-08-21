@@ -117,6 +117,9 @@ _NO_HISTORY_RETRY_S = 6 * 3600.0
 # d'un 15m sur plusieurs années. Le reliquat (maintenance exchange) est
 # mémoïsé 6 h.
 _MAX_GAP_SPAN_PAGES = 200
+# Au-delà, un trou n'est plus un créneau non tradé mais de l'historique
+# manquant : on continue de le redemander au lieu de le déclarer inexistant.
+_MAX_ABSENT_GAP_BARS = 12
 _GAP_FILL_PAGE = 1000
 
 
@@ -421,12 +424,14 @@ class CandleStore:
         if len(df) == 0:
             return {"symbol": symbol, "tf": tf, "bars": 0,
                     "from": None, "to": None, "size_kb": 0}
+        from app.core import ohlcv_absents as _abs
         from app.core.ohlcv_gaps import (
             calendar_for_symbol,
             completeness_from_gaps,
             detect_ohlcv_gaps,
         )
-        gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol))
+        gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol),
+                                 absents=_abs.charger(path, symbol, tf))
         return {
             "symbol":  symbol,
             "tf":      tf,
@@ -564,16 +569,20 @@ class CandleStore:
         les gros trous et spammaient le journal. Reliquat = barres que
         l'exchange ne publie pas (maintenance) : un essai, puis 6 h.
         """
+        from app.core import ohlcv_absents as _abs
         from app.core.ohlcv_gaps import (
             calendar_for_symbol,
             completeness_from_gaps,
+            creneaux_manquants,
             detect_ohlcv_gaps,
         )
         tf_ms = TF_MS.get(tf)
         if not tf_ms:
             return df
+        absents = _abs.charger(path, symbol, tf)
         try:
-            gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol))
+            gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol),
+                                     absents=absents)
         except Exception as e:
             logger.debug("[CandleStore] detect_ohlcv_gaps %s/%s KO : %s",
                          symbol, tf, e)
@@ -609,7 +618,20 @@ class CandleStore:
         )
         known = set(df["time"].dt.epoch("ms").to_list()) if len(df) else set()
         n_before = len(df)
-        raw, pages, reached = self._fetch_span(
+        # On ne confirme l'absence que des MICRO-trous. Mesuré sur le parc :
+        # côté actions 15 m aucun trou ne dépasse 4 barres (329 trous), et le
+        # seul gros trou crypto fait 3 939 barres — de l'historique manquant,
+        # que l'exchange détient peut-être. Entre 4 et 3 939, rien : la borne
+        # sépare deux populations réelles, elle n'arbitre pas un continuum.
+        vises = []
+        for g in gaps:
+            j = int(g.get("index") or 0)
+            if int(g.get("gap_bars") or 0) > _MAX_ABSENT_GAP_BARS:
+                continue
+            if 1 <= j < len(df):
+                vises += creneaux_manquants(df["time"][j - 1], df["time"][j],
+                                            tf_ms / 1000.0)
+        raw, pages, reached, couvert = self._fetch_span(
             exchange, symbol, tf, start_ms, end_ms, known)
 
         if raw:
@@ -623,10 +645,28 @@ class CandleStore:
                 self._save(path, df, log_gaps=False)
 
         filled = len(df) - n_before
+        # La source a répondu sur `couvert` : tout créneau visé qui s'y trouve
+        # et manque encore n'existe pas. C'est sa réponse, pas une supposition.
+        n_confirmes = 0
+        if couvert:
+            deb, fin = couvert
+            presents = set(df["time"].dt.epoch("ms").to_list()) if len(df) else set()
+            # La dernière barre du span peut être en formation : on ne conclut pas.
+            confirmes = [t for t in vises
+                         if deb <= t < fin and t not in presents]
+            n_confirmes = _abs.ajouter(path, symbol, tf, confirmes)
+            if n_confirmes:
+                absents = _abs.charger(path, symbol, tf)
+                logger.info(
+                    "[CandleStore] %s/%s — %d créneau(x) confirmé(s) absent(s) "
+                    "à la source (marché ouvert, aucune transaction) : ils ne "
+                    "seront plus redemandés ni comptés comme manquants",
+                    symbol, tf, n_confirmes,
+                )
         left, left_missing, left_comp = [], 0, 100.0
         try:
             left = detect_ohlcv_gaps(
-                df, tf, calendar=calendar_for_symbol(symbol))
+                df, tf, calendar=calendar_for_symbol(symbol), absents=absents)
             left_missing = sum(int(g.get("gap_bars") or 0) for g in left)
             left_comp = completeness_from_gaps(len(df), left) * 100
         except Exception:
@@ -666,8 +706,12 @@ class CandleStore:
 
         Prefère ``fetch_ohlcv_max`` (une requête, réponse définitive). Sinon
         pagination ccxt jusqu'à ``end_ms``. Retourne
-        ``(rows, pages, reached_end)``.
+        ``(rows, pages, reached_end, couvert)`` où ``couvert`` est l'intervalle
+        ``(min_ms, max_ms)`` que la réponse couvre RÉELLEMENT — ``None`` si
+        rien. Hors de cet intervalle la source ne dit pas « ça n'existe pas »,
+        elle ne dit rien : on n'y confirme aucune absence.
         """
+        couvert: tuple[int, int] | None
         deep = getattr(_provider_for(exchange, symbol), "fetch_ohlcv_max", None)
         if callable(deep):
             try:
@@ -677,6 +721,8 @@ class CandleStore:
                                symbol, tf, e)
                 rows = []
             if rows:
+                tous = [r[0] for r in rows]
+                couvert = (min(tous), max(tous))
                 fresh = []
                 for r in rows:
                     ts = r[0]
@@ -684,10 +730,19 @@ class CandleStore:
                         continue
                     known_ts.add(ts)
                     fresh.append(r)
-                return fresh, 1, True
-        return self._fetch_gap_range(
+                return fresh, 1, True, couvert
+        rows, pages, reached = self._fetch_gap_range(
             exchange, symbol, tf, start_ms, end_ms, known_ts,
             pages_left=_MAX_GAP_SPAN_PAGES)
+        # Pagination : la source a été interrogée sur tout [start, end) si elle
+        # est allée au bout. Sinon on ne couvre que jusqu'à la dernière barre vue.
+        if reached:
+            couvert = (start_ms, end_ms)
+        elif rows:
+            couvert = (start_ms, max(r[0] for r in rows))
+        else:
+            couvert = None
+        return rows, pages, reached, couvert
 
     def _fetch_gap_range(self, exchange, symbol: str, tf: str,
                          start_ms: int, end_ms: int, known_ts: set,
@@ -1032,6 +1087,7 @@ class CandleStore:
         DEBUG pour ne pas répéter le même WARNING à chaque barre incrémentale.
         """
         try:
+            from app.core import ohlcv_absents as _abs
             from app.core.ohlcv_gaps import (
                 calendar_for_symbol,
                 completeness_from_gaps,
@@ -1039,7 +1095,8 @@ class CandleStore:
             )
             tf = path.stem
             symbol = path.parent.name.replace("_", "/", 1)
-            gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol))
+            gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol),
+                                     absents=_abs.charger(path, symbol, tf))
             missing = sum(int(g.get("gap_bars") or 0) for g in gaps)
             comp = completeness_from_gaps(len(df), gaps)
             try:
