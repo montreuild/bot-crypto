@@ -3,7 +3,7 @@
 Historique des versions du Crypto Bot.
 
 > X-07 : l'état **actuel** des constats d'audit est dans
-> [`audit/20-REVISION-2026-08-18.md`](audit/20-REVISION-2026-08-18.md),
+> [`audit/2026-08-20-revue/98-SUIVI.md`](audit/2026-08-20-revue/98-SUIVI.md),
 > pas dans ce fichier (narratif historique, parfois en retard).
 
 ---
@@ -77,6 +77,60 @@ Le rapport imprime `α`, `→` et les tableaux polars (`┌`, `─`, `┆`), don
 n'existe en cp1252 — l'encodage d'un stdout redirigé sous Windows. Le script
 mourait sur `UnicodeEncodeError` **après** avoir fait tout le calcul, sans rien
 écrire. `main()` force désormais UTF-8 sur stdout/stderr.
+
+### 🔒 Audit du 20 août — les 11 P1 clos
+
+Registre : [`audit/2026-08-20-revue/`](audit/2026-08-20-revue/) ; état des
+corrections : [`98-SUIVI.md`](audit/2026-08-20-revue/98-SUIVI.md).
+
+**Moteur financier** — `_close_at` écrasait `position["fees"]` : les frais des
+sorties partielles et des pyramidages disparaissaient du reporting (−11 % à
+−24 % mesurés). Les frais d'entrée des pyramidages n'étaient retranchés nulle
+part, si bien que la somme des PnL divergeait de la courbe d'équité. Deux
+invariants comptables verrouillent désormais l'égalité.
+
+**Données** — la détection de trous passe par le calendrier
+(`expected_bars_between`) au lieu d'une pile d'heuristiques. `max_gap_seconds`
+mesurait la fraîcheur d'une donnée live, pas la taille d'un trou historique :
+l'utiliser masquait 15 trous réels sur BTC_USDC 1 h. Au passage, ×3,4 plus
+rapide qu'avant, et les faux trous de week-end restent corrigés.
+
+**Optimiseur** — le garde-fou de drawdown n'était pas transmis par la route
+d'application manuelle, le chemin par défaut : un DD OOS de 80 % contre un
+baseline à 10 % passait. Les critères profit factor et expectancy ne pouvaient
+jamais s'activer, ni côté baseline ni côté appelants. Un plafond **absolu**
+(`trading.max_drawdown_global`) ancre désormais le seuil relatif.
+
+**ML** — le verdict `block` du garde-fou de sur-apprentissage n'alimentait
+qu'un log : le modèle refusé était publié quand même. La borne de confiance
+sur l'AUC supposait des classes équilibrées, ce qui la rendait trop permissive
+exactement sur les labels déséquilibrés — le cas normal ici.
+
+**Backtest** — le walk-forward et son baseline tournent à nouveau sous le même
+régime de risque, via un résolveur unique.
+
+**Live** — `_order_failed` était appliquée à la **pose** des stops : toute pose
+réussie sur un exchange renvoyant `status="open"` était déclarée en échec. Un
+ordre au repos a maintenant sa propre question (`_order_rejected`).
+
+### 🏗 Architecture
+
+- Les 15 shims `risk_*` / `smc_*` sont supprimés : 90 imports migrés vers les
+  paquets `app/core/risk/` et `app/core/smc/`, `_compat.py` retiré.
+- `app/live` passe sous mypy en CI — 176 erreurs à 0, `check_untyped_defs`
+  actif sur le paquet. `AutoOptMixin` héritait du contrat du moteur
+  d'optimisation au lieu de celui de `LiveTrader`.
+- Contrat de schéma sur `build_features` : 462 colonnes, hash figé.
+
+### ♿ Accessibilité
+
+- `StrategyPicker` : `aria-pressed`, `role="group"`, information des badges
+  remontée dans le nom accessible du bouton, coche non colorée pour l'état.
+
+### 🧹 Dette
+
+- `datetime.utcnow()` déprécié retiré (14 occurrences) — formats de
+  sérialisation préservés à l'octet près là où ils sont relus.
 
 ### 🔧 CI
 

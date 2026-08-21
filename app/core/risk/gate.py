@@ -17,7 +17,7 @@ Architecture (Option B — mixin) :
   état propre : ils opèrent sur ``self.*`` via héritage.
 - ``RiskManager = RiskGate`` : alias de compatibilité pour les consommateurs
   existants. La façade ``app/core/risk.py`` a été **supprimée** (ARCH-011) ;
-  tous les imports doivent pointer vers ``app.core.risk_gate``.
+  tous les imports doivent pointer vers ``app.core.risk.gate``.
 """
 import logging
 import threading
@@ -338,6 +338,6 @@ class RiskGate(RiskSizer, RiskNotifier):
 # ── Alias de compatibilité (ARCH-011) ───────────────────────────────────────
 # La façade ``app/core/risk.py`` a été supprimée : les consommateurs doivent
 # importer ``RiskGate`` (ou l'alias ``RiskManager`` ci-dessous) depuis
-# ``app.core.risk_gate``. L'alias évite un churn nom partout dans le code live
+# ``app.core.risk.gate``. L'alias évite un churn nom partout dans le code live
 # et les tests — signature d'API strictement préservée.
 RiskManager = RiskGate

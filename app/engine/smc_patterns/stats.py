@@ -390,7 +390,7 @@ def mouvement_suivant(journal: pl.DataFrame, frames: Dict[str, pl.DataFrame],
 
 
 def sous_sessions(df: pl.DataFrame) -> List[str]:
-    from app.core.smc_sessions import session_label
+    from app.core.smc.sessions import session_label
     ep = df["time"].dt.epoch(time_unit="s").to_numpy()
     return [session_label(float(t)) for t in ep]
 

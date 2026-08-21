@@ -48,6 +48,6 @@ def test_backtester_tracks_peak_and_applies_curve():
 def test_risk_manager_delegates_to_shared_curve():
     import inspect
 
-    from app.core.risk_gate import RiskManager
+    from app.core.risk.gate import RiskManager
     src = inspect.getsource(RiskManager.compute_risk)
     assert "risk_multiplier" in src

@@ -9,7 +9,7 @@ import logging
 import os
 import threading
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ def save_optimizer_results(strategy_name: str, timeframe: str,
         with _config_write_lock:
             data = _load_strategy_file(strat_path)
             data.setdefault("optimizer_results", {})[timeframe] = {
-                "run_date":  datetime.utcnow().strftime("%Y-%m-%d"),
+                "run_date":  datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 "oos_score": round(float(oos_score), 6),
                 "params":    deepcopy(params),
             }
@@ -150,7 +150,7 @@ def apply_best_params(strategy_name: str, params: dict,
     strat_path = _strategy_file_path(strategy_name, config_path)
     old_params_snapshot = {}
     entry = {
-        "run_date":  datetime.utcnow().strftime("%Y-%m-%d"),
+        "run_date":  datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "oos_score": round(float(oos_score), 6),
         "params":    deepcopy(params),
     }
@@ -205,7 +205,7 @@ def _append_changelog(config_path: str, strategy: str, timeframe: str,
     abs_config = config_path if os.path.isabs(config_path) else os.path.abspath(config_path)
     changelog_path = os.path.join(os.path.dirname(abs_config), "optimizer_changelog.json")
     entry: Dict[str, Any] = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source":    "optimizer",
         "strategy":  strategy,
         "timeframe": timeframe or "",

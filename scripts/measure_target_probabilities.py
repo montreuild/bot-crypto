@@ -33,7 +33,7 @@ import polars as pl
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from app.core.is_oos import split_is_oos  # noqa: E402
-from app.core.smc_quality import POIDS_CLASSE, frequences_atteinte  # noqa: E402
+from app.core.smc.quality import POIDS_CLASSE, frequences_atteinte  # noqa: E402
 from app.engine.backtest import Backtester  # noqa: E402
 from app.engine.engine import Engine  # noqa: E402
 

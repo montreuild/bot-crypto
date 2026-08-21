@@ -67,28 +67,46 @@ def _rankdata_average(a: np.ndarray) -> np.ndarray:
     return ranks
 
 
-def rank_auc(y_true: np.ndarray, scores: np.ndarray) -> Optional[float]:
-    """AUC ROC via la statistique de Mann-Whitney U (équivalente à l'AUC,
-    Wilcoxon rank-sum) — ``None`` si une seule classe est présente (AUC non
-    définie, PAS 0.5 : ne pas confondre "pas de signal" et "pas mesurable")."""
+def rank_auc_counts(y_true: np.ndarray,
+                    scores: np.ndarray) -> tuple[Optional[float], int, int]:
+    """``(auc, n_pos, n_neg)`` — l'AUC **et** les effectifs qui la fondent.
+
+    ML-02 : la précision d'une AUC ne dépend pas du nombre de lignes mais des
+    effectifs de CHAQUE classe. Sur des labels construits par seuil
+    d'amplitude — le cas normal ici — le déséquilibre est la règle, et une AUC
+    calculée sur 20 positifs contre 180 négatifs est bien plus incertaine que
+    la même sur 100 contre 100. Les compter est gratuit : la statistique de
+    Mann-Whitney les utilise déjà. Les jeter obligeait le garde-fou de
+    sur-apprentissage à supposer l'équilibre, donc à sous-estimer la variance.
+
+    Les effectifs renvoyés sont ceux RÉELLEMENT utilisés, après retrait des
+    scores non finis.
+    """
     y = np.asarray(y_true)
     s = np.asarray(scores, dtype=np.float64)
     if len(y) == 0 or len(y) != len(s):
-        return None
+        return None, 0, 0
     n_pos = int((y == 1).sum())
     n_neg = int((y == 0).sum())
     if n_pos == 0 or n_neg == 0:
-        return None
+        return None, n_pos, n_neg
     finite = np.isfinite(s)
     if not finite.all():
         y, s = y[finite], s[finite]
         n_pos, n_neg = int((y == 1).sum()), int((y == 0).sum())
         if n_pos == 0 or n_neg == 0:
-            return None
+            return None, n_pos, n_neg
     ranks = _rankdata_average(s)
     sum_ranks_pos = float(ranks[y == 1].sum())
     u = sum_ranks_pos - n_pos * (n_pos + 1) / 2.0
-    return u / (n_pos * n_neg)
+    return u / (n_pos * n_neg), n_pos, n_neg
+
+
+def rank_auc(y_true: np.ndarray, scores: np.ndarray) -> Optional[float]:
+    """AUC ROC via la statistique de Mann-Whitney U (équivalente à l'AUC,
+    Wilcoxon rank-sum) — ``None`` si une seule classe est présente (AUC non
+    définie, PAS 0.5 : ne pas confondre "pas de signal" et "pas mesurable")."""
+    return rank_auc_counts(y_true, scores)[0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -154,7 +172,10 @@ def score_amp_dir_bundle(path_prefix: str, holdout_df, *,
     amp_scores = predict_batch_raw(bundle["amp_model"], bundle.get("amp_cal"),
                                    bundle["features"], bundle["medians"], scored_feats)
     if amp_scores is not None:
-        out["auc_amp"] = rank_auc(y_amp, amp_scores)
+        # ML-02 : les effectifs par classe accompagnent l'AUC, sans quoi le
+        # garde-fou de sur-apprentissage doit supposer l'équilibre.
+        out["auc_amp"], out["n_pos_amp"], out["n_neg_amp"] = rank_auc_counts(
+            y_amp, amp_scores)
     # V4 legacy : amp/dir peuvent avoir des features/médianes distinctes
     # (cf. persistence.save_amp_dir_bundle) — None = partagées (cas courant).
     dir_feats = bundle.get("dir_features") if bundle.get("dir_features") is not None else bundle["features"]
@@ -162,7 +183,8 @@ def score_amp_dir_bundle(path_prefix: str, holdout_df, *,
     dir_scores = predict_batch_raw(bundle.get("dir_model"), bundle.get("dir_cal"),
                                    dir_feats, dir_meds, scored_feats)
     if dir_scores is not None:
-        out["auc_dir"] = rank_auc(y_dir, dir_scores)
+        out["auc_dir"], out["n_pos_dir"], out["n_neg_dir"] = rank_auc_counts(
+            y_dir, dir_scores)
     return out
 
 

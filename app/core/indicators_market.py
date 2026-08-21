@@ -96,7 +96,7 @@ def htf_trend(df_htf, ema_period: int = 50, *, df_ltf=None,
                     return int(arr[pos])
                 fb_key = (id(full_df), full_df.height, int(ema_period), int(mult), "fb")
                 if fb_key not in cache:
-                    from app.core.smc_sessions import _htf_buckets
+                    from app.core.smc.sessions import _htf_buckets
                     htf_df_f, idx_f, _, _ = _htf_buckets(full_df, None, mult)
                     if htf_df_f is None or len(htf_df_f) < ema_period + 3:
                         cache[fb_key] = (None, None)
@@ -115,7 +115,7 @@ def htf_trend(df_htf, ema_period: int = 50, *, df_ltf=None,
                     hi = int(idx_f[pos])
                     if 0 <= hi < len(arr_h):
                         return int(arr_h[hi])
-        from app.core.smc_sessions import _htf_buckets
+        from app.core.smc.sessions import _htf_buckets
         htf_df, idx, _, _ = _htf_buckets(df_ltf, None, mult)
         if htf_df is None or idx[-1] < 0:
             return 0

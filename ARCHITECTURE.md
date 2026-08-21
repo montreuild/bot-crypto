@@ -183,7 +183,7 @@ Sources uniques (ne jamais recopier ces littéraux) :
   unique (`trading.timeframes`, repli `trading.timeframe`).
 - **Split IS/OOS** : `app/core/is_oos.py` ; seuils statistiques :
   `app/core/stats_thresholds.py` ; courbe de risque DD :
-  `app/core/risk_curve.py`.
+  `app/core/risk/curve.py`.
 
 ### Composition du LiveTrader (fichiers < 500 lignes)
 
@@ -201,9 +201,9 @@ Sources uniques (ne jamais recopier ces littéraux) :
 - `health_mixin.py` — heartbeat/dead-man, reprise réseau, purge,
   `status` (API), agrégats DB.
 
-Le moteur SMC est scindé de même : `app/core/smc.py` est une **façade**
-(`smc_primitives` / `smc_structure` / `smc_geometry` / `smc_volume` /
-`smc_sessions`), et la logique métier des routes scanner vit dans
+Le moteur SMC est scindé de même : `app/core/smc/__init__.py` est une **façade**
+(paquet `app/core/smc/` : `primitives`, `structure`, `geometry`, `volume`,
+`sessions`, `quality`, `state`), et la logique métier des routes scanner vit dans
 `app/api/services/scanner_service.py`.
 
 ---
@@ -413,7 +413,7 @@ perdant, et n'entre jamais dans la file de ré-optimisation. Le défaut est `[]`
 
 ### Comptabilité du risque engagé (`RiskLedger`)
 
-`app/core/risk_ledger.py` — instancié dans `LiveTrader.__init__` sous
+`app/core/risk/ledger.py` — instancié dans `LiveTrader.__init__` sous
 `self.ledger`.
 
 - **Réservation avant l'ordre**, pas budget par slot : `reserve(env, risk=,
@@ -421,7 +421,7 @@ perdant, et n'entre jamais dans la file de ré-optimisation. Le défaut est `[]`
   l'envoi de l'ordre. `release` la rend à la clôture.
 - Trois axes de comptage simultanés — **venue**, **symbole** et **slot**
   `strategy::tf::symbol` — chacun plafonné par l'enveloppe applicable
-  (`app/core/risk_envelope.py`).
+  (`app/core/risk/envelope.py`).
 - **Aucune tolérance de dépassement.** `_FP_EPS = 1e-9` est un garde de bruit
   flottant, pas une marge : risque réservé et plafond sont calculés par deux
   chemins différents, et à l'égalité exacte le dernier ulp suffisait à refuser
@@ -552,12 +552,16 @@ class LiveTrader:
 
 ---
 
-### `app/optimizer/optimizer.py`
+### `app/engine/optimizer_search.py`
 
 **Responsabilité** : Optimisation paramètres (Grid/Random/Bayesian)
 
+La façade `app/optimizer/optimizer.py` a été supprimée (ARCH-007) ; le moteur
+vit dans `app/engine/` et est scindé en recherche / scoring / persistance /
+workers. `StrategyOptimizer` reste un alias de `OptimizerSearchEngine`.
+
 ```
-StrategyOptimizer(strategy, cfg, df_train, df_test, param_space)
+OptimizerSearchEngine(strategy, cfg, df_train, df_test, param_space)
   ├─> grid_search()    [Brute force]
   ├─> random_search()  [Monte Carlo]
   └─> bayesian_search()[UCB + GP]

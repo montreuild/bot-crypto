@@ -271,7 +271,7 @@ class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
             return cached
         try:
             from app.core.bot_identity import build_slot_key, resolve_venue
-            from app.core.risk_envelope import resolve_envelope
+            from app.core.risk.envelope import resolve_envelope
             slot_key = build_slot_key(
                 self.strategy_name, self.timeframe or "1h", self.symbol)
             venue = resolve_venue(
@@ -349,7 +349,7 @@ class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
         }
         env = self._slot_envelope()
         if env is not None:
-            from app.core.risk_envelope import envelope_base
+            from app.core.risk.envelope import envelope_base
             out["envelope_base"] = envelope_base(env)
         return out
 
@@ -771,6 +771,9 @@ class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
             "best_is_trades": best["is_trades"],
             "best_oos_trades":best["oos_trades"],
             "best_oos_wr":    round(best.get("oos_wr", 0.0), 1),
+            # OPT-01 : discriminants de qualité du gate d'application.
+            "best_oos_pf":         best.get("oos_pf"),
+            "best_oos_expectancy": best.get("oos_expectancy"),
             # O-01 : alias honnêtes — cette tranche a servi à sélectionner.
             "best_val_score": self._penalized_score(best),
             "best_val_pnl":   best["oos_pnl"],

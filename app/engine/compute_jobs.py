@@ -113,7 +113,7 @@ def run_strategy_job(payload: dict) -> tuple:
         if cancel is not None and cancel.is_set():
             return name, {"error": "Backtest annulé", "trades": []}
 
-        from app.core.risk_gate import _default_venue_capital
+        from app.core.risk.gate import _default_venue_capital
         from app.engine.backtest import (
             Backtester,
             MonteCarlo,

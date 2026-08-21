@@ -25,6 +25,28 @@ from app.core.stats_thresholds import (  # noqa: E402
 )
 
 
+def resolve_dd_max_abs(cfg: dict | None) -> Optional[float]:
+    """Plafond ABSOLU de drawdown, en %, pour le gate d'application.
+
+    Ancre l'optimiseur sur la limite que le moteur d'exécution fait déjà
+    respecter (``RiskManager.global_dd_limit``, cf. app/core/risk/gate.py) :
+    admettre un paramétrage dont le drawdown OOS dépasse ce que le live
+    tolérera n'a pas de sens — il sera coupé en production.
+
+    ``trading.max_drawdown_global`` est une FRACTION (0.2), les drawdowns
+    manipulés ici sont des POURCENTAGES (20.0).
+    """
+    t = ((cfg or {}).get("trading") or {})
+    brut = t.get("max_drawdown_global", 0.20)
+    try:
+        val = abs(float(brut))
+    except (TypeError, ValueError):
+        return None
+    if val <= 0:
+        return None
+    return val * 100.0
+
+
 def composite_score(res, min_trades: int = MIN_SIGNIFICANT_TRADES) -> float:
     """Score composite d'un résultat de backtest (dict ou BacktestResult).
 
@@ -182,7 +204,8 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
                    min_deflated_sharpe: Optional[float] = None,
                    oos_dd: float | None = None,
                    oos_pf: float | None = None,
-                   oos_expectancy: float | None = None) -> tuple:
+                   oos_expectancy: float | None = None,
+                   dd_max_abs: float | None = None) -> tuple:
     """Garde-fou UNIQUE d'application d'un paramétrage optimisé (BT-04/BT-06).
 
     Retourne ``(ok, raison)``. Partagé par l'auto-apply (AutoOptimizer) et
@@ -238,6 +261,19 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
             f"win-rate seul insuffisant (WR {oos_wr:.1f}% vs {b_wr:.1f}%) "
             f"— exiger Sharpe, expectancy ou profit factor"
         )
+    # ── Drawdown : un plafond RELATIF et un plafond ABSOLU ──────────────────
+    # Le relatif seul se laisse contourner par cliquet : le baseline est le
+    # paramétrage actuellement appliqué, donc chaque application décale la
+    # référence. Une suite d'auto-applies passant chacune le +25 % mène à
+    # 10 % → 12,5 % → 15,6 % → 19,5 % → 24,4 % sans qu'aucune ne soit refusée,
+    # et la dernière dépasse la limite que le moteur live, lui, fait respecter
+    # (`trading.max_drawdown_global`). Le plafond absolu ancre la suite.
+    if dd_max_abs is not None and oos_dd is not None:
+        if abs(float(oos_dd)) > abs(float(dd_max_abs)) + 1e-9:
+            return False, (
+                f"drawdown OOS ({oos_dd:.1f}%) au-delà du plafond absolu "
+                f"({abs(float(dd_max_abs)):.1f}%, trading.max_drawdown_global)"
+            )
     b_dd = baseline.get("dd", baseline.get("max_drawdown"))
     if oos_dd is not None and b_dd is not None:
         if abs(float(oos_dd)) > abs(float(b_dd)) * 1.25 + 1e-9:

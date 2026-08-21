@@ -9,8 +9,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.core.risk_envelope import Envelope
-from app.core.risk_gate import RiskManager
+from app.core.risk.envelope import Envelope
+from app.core.risk.gate import RiskManager
 
 
 def _envelope(slot_envelope=200.0, risk_pct=0.01, leverage=1.0) -> Envelope:

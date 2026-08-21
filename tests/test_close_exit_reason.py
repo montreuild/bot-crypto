@@ -22,13 +22,18 @@ def _harness(tmp_path):
                 "reentry_cooldown_bars": 0,
             }}
             self.exchange = MagicMock()
-            self.exchange.create_order.return_value = {"price": 101.0, "id": "x"}
+            # LIVE-02 : un ordre réel porte toujours un statut — `create_order`
+            # pose `status="closed"` jusqu'en mode papier. Sans lui, l'ordre
+            # est désormais refusé faute de preuve d'exécution, et la clôture
+            # n'écrit aucune ligne.
+            self.exchange.create_order.return_value = {
+                "price": 101.0, "id": "x", "status": "closed", "filled": 1.0}
             self.risk = MagicMock()
             self.notif = MagicMock()
             # S12 : la clôture rend l'enveloppe et le budget de risque au
             # ledger — un vrai, pas un mock, pour que release() reste sincère.
             from app.core.rejections import RejectionCounter
-            from app.core.risk_ledger import RiskLedger
+            from app.core.risk.ledger import RiskLedger
             self.ledger = RiskLedger()
             self.rejections = RejectionCounter()
             self.SessionLocal = SessionLocal

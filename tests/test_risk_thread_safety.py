@@ -10,7 +10,7 @@ torn d'un dict en cours de mutation). Miroir du test de concurrence de RiskLedge
 import threading
 import time
 
-from app.core.risk_gate import RiskManager
+from app.core.risk.gate import RiskManager
 
 SLOT = "trend_rider::1h::BTC/USDC"
 

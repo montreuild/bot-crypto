@@ -115,7 +115,7 @@ def _slot_envelope(strategy: str, tf: str, symbol: str):
     symbole — l'hypothèse la plus lisible pour une étude au Laboratoire.
     """
     from app.core.bot_identity import build_slot_key
-    from app.core.risk_envelope import envelopes_for_active_slots
+    from app.core.risk.envelope import envelopes_for_active_slots
 
     key = build_slot_key(strategy, tf, symbol)
     live = (getattr(state.trader, "envelopes", None) or {}) if state.trader else {}

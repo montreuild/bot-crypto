@@ -15,7 +15,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from app.core.smc_quality import (
+from app.core.smc.quality import (
     CLASSES,
     POIDS_CLASSE,
     classe_liquidite,

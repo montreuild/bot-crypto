@@ -14,9 +14,9 @@ import itertools
 
 import pytest
 
-from app.core.risk_envelope import Envelope
-from app.core.risk_ledger import RiskLedger
-from app.core.risk_sizer import RiskSizer, _floor_to
+from app.core.risk.envelope import Envelope
+from app.core.risk.ledger import RiskLedger
+from app.core.risk.sizer import RiskSizer, _floor_to
 
 
 class _Sizer(RiskSizer):

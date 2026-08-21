@@ -39,7 +39,7 @@ from app.core.execution import (
     venue_trade_cost,
 )
 from app.core.indicators import atr_val as _compute_atr
-from app.core.risk_envelope import resolve_envelope
+from app.core.risk.envelope import resolve_envelope
 from app.core.timeframes import HTF_MAP as _HTF_MAP
 from app.core.trailing import TrailingStopManager
 from app.live.protocols import LiveHost
@@ -48,8 +48,11 @@ from app.live.protocols import LiveHost
 try:
     from app.core.events import publish_trade_closed, publish_trade_opened
 except Exception:  # pragma: no cover — fallback si events.py indisponible
-    def publish_trade_opened(*_a, **_kw): pass
-    def publish_trade_closed(*_a, **_kw): pass
+    def publish_trade_opened(*_a, **_kw):  # type: ignore[misc]  # repli sans events.py
+        pass
+
+    def publish_trade_closed(*_a, **_kw):  # type: ignore[misc]
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -87,14 +90,52 @@ def _order_failed(order: dict | None) -> bool:
         return False
     if status in ("open", "new", "pending", "unfilled"):
         return True
-    return False
+    # LIVE-02 : rien de rempli et un statut qu'on ne reconnaît pas. Le repli
+    # valait False — « pas d'échec » — et l'appelant enregistrait alors une
+    # position au prix théorique, possiblement inexistante côté exchange. Le
+    # bot suivait un fantôme : stop posé sur du vide, capital engagé à tort.
+    # On refuse par défaut : ne pas ouvrir une position dont on n'a pas la
+    # preuve qu'elle existe. Le statut est journalisé pour compléter les listes
+    # ci-dessus au fil des connecteurs rencontrés.
+    logger.warning(
+        "[Ordre] statut inconnu %r avec filled=0 — traité comme un ÉCHEC "
+        "(LIVE-02). Compléter les listes de _order_failed si ce statut est "
+        "légitime pour votre connecteur.",
+        status or "<vide>",
+    )
+    return True
+
+
+def _order_rejected(order: dict | None) -> bool:
+    """L'ordre a-t-il été REFUSÉ par l'exchange ? — pour les ordres au repos.
+
+    ``_order_failed`` répond à « mon ordre au marché a-t-il été exécuté ? » :
+    un statut ``open``/``pending`` y est un échec, puisqu'un ordre au marché
+    doit se remplir immédiatement.
+
+    Un stop ou une jambe OCO, eux, sont posés pour **attendre** : ``open`` est
+    leur état nominal et ``filled=0`` la situation normale. Leur appliquer
+    ``_order_failed`` revenait à déclarer en échec toute pose de stop réussie
+    sur un exchange qui renvoie ``status="open"`` — le bot annulait alors un
+    stop bel et bien actif, ou renonçait à le poser.
+
+    Seul un refus explicite compte donc ici.
+    """
+    if order is None:
+        return True
+    status = str(order.get("status") or "").lower()
+    if status in _REJECTED_ORDER_STATUSES:
+        return True
+    # Un identifiant est la preuve que l'exchange a bien enregistré l'ordre.
+    return not (order.get("id") or order.get("orderId") or order.get("ordId"))
 
 
 def _order_fail_reason(order: dict | None) -> str:
     if order is None:
         return "create_order a retourné None"
     status = order.get("status") or "inconnu"
-    info   = order.get("info") if isinstance(order.get("info"), dict) else {}
+    _info = order.get("info")
+    info: dict = _info if isinstance(_info, dict) else {}
     detail = order.get("failReason") or info.get("msg") or info.get("sMsg")
     return f"status={status}" + (f" — {detail}" if detail else "")
 

@@ -47,3 +47,29 @@ def test_generated_ts_couvre_tous_les_schemas_pydantic():
     assert names, "aucun modèle public dans app.api.schemas"
     for name in names:
         assert text.count(f"export interface {name} {{") == 1, name
+
+
+def test_generated_ts_est_exactement_la_sortie_du_generateur():
+    """API-02 — le contrat doit tenir CHAMP par champ, pas nom par nom.
+
+    Le test ci-dessus ne vérifie que la présence des interfaces : un champ
+    ajouté à un modèle Pydantic sans régénération passait inaperçu, et `tsc`
+    aussi tant que le front ne s'en servait pas. C'est arrivé en sens inverse —
+    `alpha_vs_bh` avait été ajouté à la main dans `generated.ts` (`b42d200`)
+    parce que `StrategyStats` ne le déclarait pas, alors que le moteur le
+    produit et que trois composants le consomment. Le fichier a donc vécu
+    plusieurs jours en désaccord avec sa source.
+
+    Comparer le fichier entier rend la dérive impossible dans les deux sens.
+    """
+    from pathlib import Path
+
+    from scripts.gen_frontend_types import render
+
+    actuel = Path("frontend/src/types/generated.ts").read_text(encoding="utf-8")
+    assert actuel == render(), (
+        "frontend/src/types/generated.ts a dérivé de app/api/schemas.py — "
+        "régénérer avec `python scripts/gen_frontend_types.py`. Si le champ "
+        "manquant est légitime, l'ajouter au schéma Pydantic plutôt qu'au "
+        "fichier généré."
+    )

@@ -13,7 +13,14 @@ def test_order_failed_refuse_un_fill_nul_encore_ouvert():
     assert _order_failed({"status": "open", "filled": 0}) is True
     assert _order_failed({"status": "closed"}) is False
     assert _order_failed({"status": "closed", "filled": 1.0}) is False
-    assert _order_failed({"price": 100.0}) is False
+    # LIVE-02 : un ordre sans statut ET sans fill était compté comme exécuté.
+    # L'assertion inverse figurait ici ; elle décrivait le repli permissif, pas
+    # un besoin réel. Aucun chemin de production ne produit un tel dict :
+    # `Exchange.create_order` pose `status="closed"` en mode papier
+    # (app/core/exchange.py) et ccxt renseigne toujours le statut en réel.
+    # Ouvrir une position sans preuve d'exécution laissait le bot suivre un
+    # fantôme, stop posé sur du vide.
+    assert _order_failed({"price": 100.0}) is True
 
 
 def test_beats_baseline_refuse_un_drawdown_beaucoup_pire():

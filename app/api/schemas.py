@@ -446,6 +446,12 @@ class StrategyStats(BaseModel):
     initial_capital: float = 0.0
     buy_and_hold_pnl: float = 0.0
     alpha: float = 0.0
+    #: Alpha en POINTS DE POURCENTAGE vs buy & hold (`alpha` est en devise).
+    #: Produit par `performance_metrics` et porté par `BacktestResult`, consommé
+    #: par `strategy-comparison-table` et `backtest-results` — mais absent de ce
+    #: schéma, si bien que `generated.ts` avait dû être complété à la main
+    #: (`b42d200`). C'est exactement la dérive que le contrat doit empêcher.
+    alpha_vs_bh: Optional[float] = None
     equity_curve: List[EquityPoint] = Field(default_factory=list)
     recommendations: List[BacktestRecommendation] = Field(default_factory=list)
     recommendations_summary: BacktestRecommendationsSummary | None = None

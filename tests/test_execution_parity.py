@@ -122,12 +122,18 @@ def _live_close_pnl(margin: bool = True) -> float:
                 **({"margin_mode": "isolated", "max_leverage": 3} if margin else {}),
             }, "exchange": {"name": "okx", "margin": margin}}
             self.exchange = MagicMock()
-            self.exchange.create_order.return_value = {"price": EXIT, "id": "x"}
+            # LIVE-02 : le faux ordre doit porter un statut, comme tout ordre
+            # réel — `Exchange.create_order` pose `status="closed"` même en
+            # mode papier. Sans lui, `_order_failed` refuse désormais d'ouvrir
+            # une position dont rien ne prouve l'exécution, et le test mesurait
+            # alors un PnL nul des deux côtés.
+            self.exchange.create_order.return_value = {
+                "price": EXIT, "id": "x", "status": "closed", "filled": 1.0}
             self.risk = MagicMock()
             self.notif = MagicMock()
             # S12 : la clôture rend l'enveloppe et le budget au ledger.
             from app.core.rejections import RejectionCounter
-            from app.core.risk_ledger import RiskLedger
+            from app.core.risk.ledger import RiskLedger
             self.ledger = RiskLedger()
             self.rejections = RejectionCounter()
             self.SessionLocal = MagicMock()
@@ -283,9 +289,9 @@ def test_same_stop_distance_gives_the_same_size():
     """A distance au stop egale, les deux chemins dimensionnent pareil :
     ``risk_amount / stop_dist``. S12 : le risk_amount vient de l'enveloppe du
     slot des DEUX cotes -- c'est ce partage de base qui fait la parite."""
-    from app.core.risk_curve import risk_multiplier
-    from app.core.risk_envelope import Envelope
-    from app.core.risk_gate import RiskGate
+    from app.core.risk.curve import risk_multiplier
+    from app.core.risk.envelope import Envelope
+    from app.core.risk.gate import RiskGate
 
     slot_envelope, risk_pct = 1000.0, 0.01
     stop_dist = _live_stop_distance({"side": "long"})

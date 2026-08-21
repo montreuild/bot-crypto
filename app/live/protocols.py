@@ -7,6 +7,7 @@ module vérifiable.
 """
 from __future__ import annotations
 
+from collections import deque
 from typing import Any
 
 
@@ -22,7 +23,7 @@ class LiveHost:
     _capital_lock: Any
     _paper_base: float
     open_positions: dict
-    signal_log: list
+    signal_log: deque
     _positions_lock: Any
     _trailing_cfg: dict
     _strat_thresholds: dict
@@ -36,7 +37,7 @@ class LiveHost:
     SessionLocal: Any
     _loaded_strategies: dict
     strat_params: dict
-    _margin_interest: dict
+    _margin_interest: float
     _loss_notified: set
     _cooldown: dict
     _pre_execution_check: Any
@@ -48,6 +49,47 @@ class LiveHost:
     _adopt_or_place_exchange_stop: Any
     _sync_spot_balance: Any
     _cancel_exchange_stop: Any
+    _place_exchange_stop: Any
+    _execute_order: Any
+    _serialize_position: Any
+    _envelope_for: Any
+    _venue_for: Any
+    # Boucle de scan
+    engine: Any
+    pipeline: Any
+    timeframes: list
+    running: bool
+    cycle_count: int
+    last_scan_time: Any
+    last_symbols_scanned: Any
+    _active_per_tf: dict
+    # Portefeuille de stratégies et cycle de vie des bots (AutoOptMixin)
+    _ml_trainer: Any
+    _lifecycle: Any
+    _lifecycle_enabled: bool
+    _lifecycle_interval: float
+    _lifecycle_auto_reopt: bool
+    _lifecycle_snapshot: Any
+    _auto_opt_next_run: float
+    _fwd_test_next_run: float
+    _lifecycle_next_run: float
+    _shadow_alloc: Any
+    _fwd_test_enabled: bool
+    _fwd_test_symbol: str
+    _fwd_test_interval: float
+    _fwd_test_lookback_days: int
+    _fwd_test_edge_lookback: int
+    # Marge
+    _margin_enabled: bool
+    _margin_level: Any
+    _margin_next_sync: float
+    _balance_detail: Any
+    # Caches de statut — déclarés ici, sinon mypy infère `None` depuis la seule
+    # affectation visible dans le mixin et refuse toute indexation ensuite.
+    _bots_cache: list | None
+    _status_db_cache: dict | None
+    _status_db_cache_ts: float
+    _status_db_cache_ttl: float
 
 
 class OptimizerHost:

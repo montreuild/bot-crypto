@@ -82,22 +82,53 @@ def test_detect_ohlcv_gaps_xpar_daily_weekend_is_not_a_hole():
     assert gaps == []
 
 
-def test_detect_ohlcv_gaps_xpar_afterhours_weekend_is_not_a_hole():
-    """1h : ven. 16:00 UTC → lun. 09:00 UTC (65 h, séance fermée) n'est pas un trou."""
+def _df_1h(*horodatages):
     import polars as pl
 
+    n = len(horodatages)
+    return pl.DataFrame({
+        "time": list(horodatages),
+        "open": [1.0] * n, "high": [1.0] * n,
+        "low": [1.0] * n, "close": [1.0] * n, "volume": [1.0] * n,
+    })
+
+
+def test_detect_ohlcv_gaps_xpar_afterhours_weekend_is_not_a_hole():
+    """1h : dernière barre du vendredi → première du lundi n'est pas un trou.
+
+    Horodatages calés sur les vraies heures d'XPAR en heure d'été (séance
+    07:00–15:30 UTC), et sur la convention des données du dépôt : les barres
+    `AC.PA/1h` vont de 07h à 16h UTC selon la saison. La version précédente de
+    ce test plaçait la dernière barre du vendredi à 16:00 UTC — soit 30 min
+    APRÈS la clôture d'avril — et la première du lundi à 09:00, deux heures
+    après l'ouverture : elle décrivait donc une série à laquelle il manquait
+    réellement les barres de 07:00 et 08:00. Le test passait parce que la
+    détection tolérait alors un écart forfaitaire, pas parce que la série
+    était complète.
+    """
     from app.core.market_calendar import get_calendar
     from app.core.ohlcv_gaps import detect_ohlcv_gaps
     cal = get_calendar("XPAR")
-    fri = datetime(2026, 4, 17, 16, 0, tzinfo=timezone.utc)
-    mon = datetime(2026, 4, 20, 9, 0, tzinfo=timezone.utc)
-    df = pl.DataFrame({
-        "time": [fri, mon],
-        "open": [1.0, 1.0], "high": [1.0, 1.0],
-        "low": [1.0, 1.0], "close": [1.0, 1.0], "volume": [1.0, 1.0],
-    })
-    gaps = detect_ohlcv_gaps(df, "1h", calendar=cal, symbol="CS.PA")
-    assert gaps == []
+    ven = datetime(2026, 4, 17, 15, 0, tzinfo=timezone.utc)   # dernière séance
+    lun = datetime(2026, 4, 20, 7, 0, tzinfo=timezone.utc)    # ouverture
+    gaps = detect_ohlcv_gaps(_df_1h(ven, lun), "1h", calendar=cal, symbol="CS.PA")
+    assert gaps == [], f"un week-end complet n'est pas un trou : {gaps}"
+
+
+def test_detect_ohlcv_gaps_xpar_barres_manquantes_a_l_ouverture():
+    """Le pendant du test précédent : ce que la tolérance forfaitaire masquait.
+
+    Même vendredi, mais la première barre du lundi arrive à 09:00 : les barres
+    de 07:00 et 08:00 manquent, et le calendrier sait le dire exactement.
+    """
+    from app.core.market_calendar import get_calendar
+    from app.core.ohlcv_gaps import detect_ohlcv_gaps
+    cal = get_calendar("XPAR")
+    ven = datetime(2026, 4, 17, 15, 0, tzinfo=timezone.utc)
+    lun = datetime(2026, 4, 20, 9, 0, tzinfo=timezone.utc)
+    gaps = detect_ohlcv_gaps(_df_1h(ven, lun), "1h", calendar=cal, symbol="CS.PA")
+    assert len(gaps) == 1, gaps
+    assert gaps[0]["gap_bars"] == 2, gaps
 
 
 def test_detect_ohlcv_gaps_xpar_weekday_hole_is_flagged():

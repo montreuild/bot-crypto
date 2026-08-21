@@ -14,7 +14,7 @@ import pytest
 
 from app.core.indicators_core import atr_percentile
 from app.core.indicators_market import htf_trend
-from app.core.smc_sessions import mtf_alignment
+from app.core.smc.sessions import mtf_alignment
 
 
 def _serie(n: int = 600, pente: float = 0.002, seed: int = 7,
@@ -104,7 +104,7 @@ def test_l_alignement_est_exactement_la_moyenne_ponderee_des_niveaux():
     C'est cette pondération qui empêche un timeframe bas contraire d'annuler le
     biais HTF : il pèse moins, il ne vote pas à égalité.
     """
-    from app.core.smc_sessions import htf_trend_series
+    from app.core.smc.sessions import htf_trend_series
 
     df = _serie(1200, pente=0.003, bruit=0.02)
     poids = [0.36, 1.0]

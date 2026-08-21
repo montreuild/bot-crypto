@@ -18,7 +18,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from app.core.risk_envelope import Envelope
+from app.core.risk.envelope import Envelope
 from app.engine.backtest import Backtester, run_dual_pass
 from app.engine.engine import BaseStrategy, Engine
 
