@@ -141,6 +141,55 @@ trouver, donc toute découverte est un défaut de la méthode.
 
 ---
 
+## 4 bis. Le plancher des p-values — la deuxième erreur, plus sournoise
+
+Le test de permutation a corrigé le calcul de l'incertitude, mais il a
+introduit une contrainte que la correction pour test multiple ignorait : avec
+la convention `(1 + k) / (1 + N)`, **aucune p-value ne peut descendre sous
+`1 / (1 + N)`**. Ce nombre est le *plancher de résolution* du test.
+
+À 200 tirages, ce plancher valait **0.00498**. Or Bonferroni exigeait :
+
+| | Hypothèses | α Bonferroni | Plancher |
+|---|---:|---:|---:|
+| Motifs | 360 | 1.4 × 10⁻⁴ | 0.00498 |
+| Composés | 73 010 | 6.9 × 10⁻⁷ | 0.00498 |
+
+Le seuil était **sous le plancher**, d'un facteur 36 et d'un facteur 7 300.
+Aucune ligne ne pouvait passer, quelles que soient les données. Le
+« 0 survivant » que produisait l'outil n'était pas un résultat : c'était une
+impossibilité arithmétique. Et il se lisait exactement comme un résultat —
+c'est ce qui rend cette erreur plus dangereuse que la première.
+
+**Le même piège rendait vide la validation sur marche aléatoire** citée
+ci-dessus : « 0 survivant sur du bruit » ne prouvait rien, puisque 0 survivant
+était le seul résultat possible.
+
+Deux corrections, qui vont ensemble :
+
+1. **`N_TIRAGES_TEMOIN` passe de 200 à 2000**, ce qui descend le plancher à
+   5.0 × 10⁻⁴. Le coût est absorbé par la vectorisation de `_temoin_decale`
+   (matrice tirages × occurrences au lieu d'une boucle Python qui
+   re-matérialisait la colonne des clôtures à chaque tirage). Le drapeau
+   `--tirages` permet de descendre le plancher plus bas au besoin.
+
+2. **Bonferroni cède la place à Benjamini-Hochberg.** Bonferroni contrôle la
+   probabilité de la *moindre* fausse découverte ; sur 73 000 hypothèses, cette
+   garantie coûte un seuil que le test ne peut pas atteindre. BH contrôle la
+   **proportion** de fausses découvertes parmi les rejets — la garantie
+   pertinente quand le produit de l'étude est une liste de candidats à
+   retester, pas une décision unique.
+
+Le rapport publie désormais le plancher **à côté** du seuil retenu, et
+distingue explicitement les deux causes d'un zéro : « le test pouvait rejeter
+et n'a rien trouvé » et « le seuil était sous le plancher ». Les deux témoins
+sont combinés par le **maximum** de leurs p-values (test d'intersection-union)
+avant d'entrer dans BH — les corriger séparément ne contrôlerait plus rien.
+
+Mesure de référence sur BTC/USDC : `research/RESULTATS_smc_patterns_btc.md`.
+
+---
+
 ## 5. Motifs composés — trois garde-fous
 
 1. **Espace borné et déclaré.** Longueur ≤ 3 maillons, fenêtre temporelle
