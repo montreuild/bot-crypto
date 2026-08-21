@@ -12,6 +12,7 @@ import pytest
 
 from app.core import ohlcv_absents as ABS
 from app.core.ohlcv_gaps import (
+    calendar_for_symbol,
     completeness_from_gaps,
     creneaux_manquants,
     detect_ohlcv_gaps,
@@ -39,9 +40,13 @@ def _serie(n=40, retirer=()):
     })
 
 
-def _absents_de(df, gaps):
+def _absents_de(df, gaps, symbole="BTC/USDC"):
+    """Le calendrier est désormais obligatoire : sans lui on énumérait
+    l'horloge, week-ends compris."""
+    cal = calendar_for_symbol(symbole)
     return [t for g in gaps
-            for t in creneaux_manquants(g["time_before"], g["time_after"], 900.0)]
+            for t in creneaux_manquants(g["time_before"], g["time_after"],
+                                        900.0, cal)]
 
 
 # ── Ce que la détection fait des créneaux confirmés ─────────────────────────

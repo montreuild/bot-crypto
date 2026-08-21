@@ -579,6 +579,7 @@ class CandleStore:
         tf_ms = TF_MS.get(tf)
         if not tf_ms:
             return df
+        _cal = calendar_for_symbol(symbol)
         absents = _abs.charger(path, symbol, tf)
         try:
             gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol),
@@ -630,7 +631,7 @@ class CandleStore:
                 continue
             if 1 <= j < len(df):
                 vises += creneaux_manquants(df["time"][j - 1], df["time"][j],
-                                            tf_ms / 1000.0)
+                                            tf_ms / 1000.0, _cal)
         raw, pages, reached, couvert = self._fetch_span(
             exchange, symbol, tf, start_ms, end_ms, known)
 

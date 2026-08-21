@@ -40,6 +40,11 @@ _cache: Dict[Tuple[str, str], Set[int]] = {}
 #: timeframe, pas d'un rattrapage (cf. RCO.PA en 15 m, une bougie sur trois).
 _MAX_ABSENTS = 50_000
 
+#: Les registres écrits avant l'unification calendaire contiennent des créneaux
+#: de week-end et de nuit — l'énumération était faite sur l'horloge. Un format
+#: différent les fait ignorer et reconstruire.
+_FORMAT = 2
+
 
 def chemin(path_parquet: Path) -> Path:
     """`<dir>/<tf>.absent.json`, à côté du parquet dont il décrit les trous."""
@@ -57,7 +62,11 @@ def charger(path_parquet: Path, symbol: str, tf: str) -> Set[int]:
     try:
         if f.exists():
             brut = json.loads(f.read_text(encoding="utf-8"))
-            absents = {int(t) for t in (brut.get("absents") or [])}
+            if int(brut.get("format") or 1) == _FORMAT:
+                absents = {int(t) for t in (brut.get("absents") or [])}
+            else:
+                logger.info("[Absents] %s/%s : registre d'un format antérieur "
+                            "— reconstruit", symbol, tf)
     except Exception as e:
         logger.debug("[Absents] lecture %s KO : %s", f, e)
     with _verrou:
@@ -86,8 +95,9 @@ def ajouter(path_parquet: Path, symbol: str, tf: str,
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
         tmp = f.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"symbol": symbol, "tf": tf,
-                                   "absents": gele}), encoding="utf-8")
+        tmp.write_text(json.dumps({"format": _FORMAT, "symbol": symbol,
+                                   "tf": tf, "absents": gele}),
+                       encoding="utf-8")
         tmp.replace(f)
     except Exception as e:
         logger.warning("[Absents] écriture %s KO : %s", f, e)

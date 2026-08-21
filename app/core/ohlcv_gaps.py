@@ -24,12 +24,28 @@ _TF_MINS = {
 }
 
 
+#: Suffixe Yahoo → code de place. Un suffixe absent d'ici retombait sur le
+#: calendrier 24/7 : chaque nuit et chaque week-end devenait un « trou ».
+#: Mesuré sur SOLB.BR — 2 755 créneaux, soit tous les week-ends depuis 2001.
+_VENUE_PAR_SUFFIXE = {
+    ".PA": "XPAR", ".XC": "XPAR",       # Euronext Paris
+    ".AS": "XAMS",                       # Amsterdam
+    ".BR": "XBRU",                       # Bruxelles
+    ".F": "XFRA", ".DE": "XETR",         # Francfort / Xetra
+    ".L": "XLON",                        # Londres
+    ".MI": "XMIL", ".MC": "XMAD", ".LS": "XLIS",
+    ".SW": "XSWX", ".ST": "XSTO", ".CO": "XCSE", ".OL": "XOSL",
+    ".HE": "XHEL", ".VI": "XWBO", ".IR": "XDUB",
+}
+
+
 def calendar_for_symbol(symbol: str, cfg: Optional[dict] = None):
-    """Heuristique venue : suffixe action → XPAR, sinon 24/7."""
+    """Calendrier de la place, déduit du suffixe. Sans suffixe connu → 24/7."""
     from app.core.market_calendar import ALWAYS_OPEN, get_calendar
     sym = (symbol or "").upper()
-    if any(sym.endswith(sfx) for sfx in (".PA", ".AS", ".F", ".DE", ".L")):
-        return get_calendar("XPAR", cfg)
+    for sfx, code in _VENUE_PAR_SUFFIXE.items():
+        if sym.endswith(sfx):
+            return get_calendar(code, cfg)
     return ALWAYS_OPEN
 
 
@@ -101,7 +117,7 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "",
             manquantes = max(0, int(round(delta_secs / expected_secs)) - 1)
         if manquantes > 0 and absents:
             manquantes -= _absents_dans(
-                times[i - 1], times[i], expected_secs, absents)
+                times[i - 1], times[i], expected_secs, absents, cal)
         if manquantes > 0:
             gaps.append({
                 "index":        int(i),
@@ -116,39 +132,30 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "",
 
 
 
-def _absents_dans(avant, apres, expected_secs: float, absents: set) -> int:
-    """Combien de créneaux de ``]avant, apres[`` sont confirmés absents."""
-    pas = int(expected_secs * 1000)
-    if pas <= 0 or not absents:
+def _absents_dans(avant, apres, expected_secs: float, absents: set,
+                  cal=None) -> int:
+    """Combien de créneaux ATTENDUS de ``]avant, apres[`` sont confirmés absents."""
+    if not absents:
         return 0
-    try:
-        t = int(_as_dt(avant).timestamp() * 1000) + pas
-        fin = int(_as_dt(apres).timestamp() * 1000)
-    except Exception:
-        return 0
-    n = 0
-    while t < fin:
-        if t in absents:
-            n += 1
-        t += pas
-    return n
+    return sum(1 for t in creneaux_manquants(avant, apres, expected_secs, cal)
+               if t in absents)
 
 
-def creneaux_manquants(avant, apres, expected_secs: float) -> list:
-    """Horodatages (ms) de ``]avant, apres[`` — les barres qui manquent."""
-    pas = int(expected_secs * 1000)
-    if pas <= 0:
+def creneaux_manquants(avant, apres, expected_secs: float, cal=None) -> list:
+    """Horodatages (ms) des barres qui devraient exister dans ``]avant, apres[``.
+
+    Délègue au calendrier : sans lui on énumérait l'horloge, week-ends compris.
+    Un span vendredi→lundi rendait alors 63 créneaux pour 0 barre attendue, et
+    les « confirmer absents » faisait passer un vrai trou en négatif — donc
+    disparaître du rapport.
+    """
+    if cal is None:
         return []
     try:
-        t = int(_as_dt(avant).timestamp() * 1000) + pas
-        fin = int(_as_dt(apres).timestamp() * 1000)
+        return list(cal.expected_slots_between(_as_dt(avant), _as_dt(apres),
+                                               int(expected_secs)))
     except Exception:
         return []
-    out = []
-    while t < fin:
-        out.append(t)
-        t += pas
-    return out
 
 
 def _one_delta_secs(a, b) -> float:

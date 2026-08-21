@@ -70,6 +70,9 @@ class MarketCalendar(Protocol):
     def expected_bars_between(self, a: datetime, b: datetime,
                               tf_seconds: int) -> int: ...
 
+    def expected_slots_between(self, a: datetime, b: datetime,
+                               tf_seconds: int) -> list: ...
+
 
 def _as_utc(ts: Optional[datetime]) -> datetime:
     """Normalise en datetime **aware UTC** (naïf = supposé UTC)."""
@@ -102,10 +105,16 @@ def _sessions_ouvertes_entre(cal, a: datetime, b: datetime) -> int:
         nxt = cal.next_open(t)
         if nxt is None or nxt >= b:
             return n
+        fin = cal.session_end(nxt)
+        if fin is None or fin <= nxt:
+            # Pas de fin de séance : le calendrier ne décrit pas cette période
+            # (exchange_calendars ne remonte qu'à 2006, et le repli est alors
+            # 24/7). Avancer d'une seconde fabriquerait une séance par
+            # itération — 398 pour un simple week-end. On s'arrête.
+            return n
         if nxt > a:                      # une ouverture strictement après `a`
             n += 1
-        fin = cal.session_end(nxt)
-        t = fin if (fin is not None and fin > nxt) else nxt + timedelta(seconds=1)
+        t = fin
     return n
 
 
@@ -128,6 +137,42 @@ def _secondes_ouvertes_entre(cal, a: datetime, b: datetime) -> float:
     return total
 
 
+def _creneaux_attendus(cal, a: datetime, b: datetime, tf_seconds: int) -> list:
+    """Horodatages (ms) des barres qui devraient exister strictement entre
+    ``a`` et ``b``.
+
+    En INTRADAY seulement. Une barre journalière porte le début du jour LOCAL
+    (22 h ou 23 h UTC selon l'heure d'été) : sans la convention de la place on
+    ne sait pas quel horodatage lui attribuer, et deux candidats séparés par un
+    changement d'heure désignent la même séance. Rien à énumérer, donc — une
+    séance journalière absente est une suspension ou de l'historique manquant,
+    jamais un créneau « non tradé », et il faut continuer à la redemander.
+
+    ``expected_bars_between`` n'est que le compte de cette liste en intraday.
+    Les deux ont longtemps été calculés séparément — l'un par le calendrier,
+    l'autre par une énumération d'horloge — et divergeaient sur tout week-end :
+    un span vendredi→lundi valait 0 barre attendue mais 63 créneaux énumérés.
+    """
+    a, b = _as_utc(a), _as_utc(b)
+    if b <= a or tf_seconds <= 0 or tf_seconds >= 86400:
+        return []
+    pas = timedelta(seconds=tf_seconds)
+    out, t = [], a + pas
+    for _ in range(_WALK_LIMITE * 96):
+        if t >= b:
+            break
+        try:
+            ouvert = bool(cal.is_open(t))
+        except Exception:
+            # Calendrier muet : mieux vaut signaler un trou de trop qu'en
+            # taire un — un trou non signalé ne se rattrape jamais.
+            ouvert = True
+        if ouvert:
+            out.append(int(t.timestamp() * 1000))
+        t += pas
+    return out
+
+
 def _barres_attendues(cal, a: datetime, b: datetime, tf_seconds: int) -> int:
     """Barres qui devraient exister STRICTEMENT entre ``a`` et ``b``.
 
@@ -135,24 +180,17 @@ def _barres_attendues(cal, a: datetime, b: datetime, tf_seconds: int) -> int:
     séance mais **une séance** :
 
     - ``tf >= 1 j`` → compter les séances ouvertes entre les deux barres ;
-    - intraday      → temps de séance écoulé, divisé par le timeframe.
+    - intraday      → énumérer les créneaux ouverts (``_creneaux_attendus``),
+      pour que compte et énumération ne puissent pas diverger.
     """
     a, b = _as_utc(a), _as_utc(b)
     if b <= a or tf_seconds <= 0:
         return 0
     if tf_seconds >= 86400:
         return max(0, _sessions_ouvertes_entre(cal, a, b) - 1)
-    # On compte à partir du créneau qui SUIT ``a``, pas depuis ``a`` : sinon le
-    # reliquat de sa séance (``a`` à la clôture) ajoute une fraction de barre
-    # qui fausse l'arrondi, et il faut ensuite corriger selon que ``a`` tombe
-    # ou non dans une séance. En partant de ``a + tf``, la question posée est
-    # directement la bonne — « combien de créneaux ouverts strictement après
-    # ``a`` et avant ``b`` » — sans cas particulier.
-    depart = a + timedelta(seconds=tf_seconds)
-    if depart >= b:
-        return 0
-    return max(0, int(round(
-        _secondes_ouvertes_entre(cal, depart, b) / tf_seconds)))
+    return len(_creneaux_attendus(cal, a, b, tf_seconds))
+
+
 
 
 # ── 24/7 (crypto — défaut) ──────────────────────────────────────────────────
@@ -173,6 +211,10 @@ class AlwaysOpenCalendar:
 
     def max_gap_seconds(self, ts: Optional[datetime] = None, tf_seconds: int = 3600) -> float:
         return float(max(tf_seconds, 1) * _STALE_TF_MULTIPLIER)
+
+    def expected_slots_between(self, a: datetime, b: datetime,
+                               tf_seconds: int) -> list:
+        return _creneaux_attendus(self, a, b, tf_seconds)
 
     def expected_bars_between(self, a: datetime, b: datetime,
                               tf_seconds: int) -> int:
@@ -359,6 +401,10 @@ class SessionCalendar:
             return margin
         return (nxt - now_utc).total_seconds() + margin
 
+    def expected_slots_between(self, a: datetime, b: datetime,
+                               tf_seconds: int) -> list:
+        return _creneaux_attendus(self, a, b, tf_seconds)
+
     def expected_bars_between(self, a: datetime, b: datetime,
                               tf_seconds: int) -> int:
         return _barres_attendues(self, a, b, tf_seconds)
@@ -450,6 +496,10 @@ class ExchangeCalendarsAdapter:
             return margin
         return (nxt - now).total_seconds() + margin
 
+    def expected_slots_between(self, a: datetime, b: datetime,
+                               tf_seconds: int) -> list:
+        return _creneaux_attendus(self, a, b, tf_seconds)
+
     def expected_bars_between(self, a: datetime, b: datetime,
                               tf_seconds: int) -> int:
         return _barres_attendues(self, a, b, tf_seconds)
@@ -487,6 +537,13 @@ XPAR_CALENDAR = SessionCalendar(
 
 BUILTIN_CALENDARS: Dict[str, "SessionCalendar | AlwaysOpenCalendar"] = {
     "XPAR": XPAR_CALENDAR,
+    # exchange_calendars ne remonte qu'à 2006 ; l'historique du dépôt va
+    # jusqu'à 2000. Sans repli, ces places basculaient sur 24/7 avant 2006 et
+    # chaque week-end devenait un trou. Euronext applique le même calendrier
+    # harmonisé et les mêmes horaires sur ses quatre places.
+    "XBRU": XPAR_CALENDAR,
+    "XAMS": XPAR_CALENDAR,
+    "XLIS": XPAR_CALENDAR,
     "24X7": AlwaysOpenCalendar(),
 }
 
