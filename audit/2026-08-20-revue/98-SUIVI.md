@@ -49,6 +49,21 @@ que trouvés** le 20 août ; ce document dit ce qui a été livré depuis.
 
 ---
 
+## Ouvert depuis — traitement des trous en aval
+
+Quatre constats consignés le 2026-08-21 dans
+[`18-TROUS-EN-AVAL.md`](18-TROUS-EN-AVAL.md). Ils préexistaient ; le travail sur
+la détection de trous les a rendus visibles.
+
+| ID | Sév. | Constat | Effort |
+|---|---|---|---|
+| `DOWN-01` | **P1** | `bars_per_year` applique une convention 24/7 aux actions : Sharpe annualisé ×2, CAGR ×3,9 (BNP.PA 15 m) | 3 h |
+| `DOWN-02` | P2 | La complétude n'est consommée par aucun module en aval | 2 h |
+| `DOWN-03` | P2 | La durée d'une position vient du compte de barres — sans effet sur les actions (spot), −7 % à −45 % en margin/perp | 1 h |
+| `DOWN-04` | P2 | Aucun contrôle de continuité temporelle ; indicateurs positionnels | 2 h à plusieurs jours |
+
+---
+
 ## Reste ouvert
 
 | ID | Sév. | Constat | Effort |
