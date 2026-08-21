@@ -230,12 +230,12 @@ def build_smc_features(df: pl.DataFrame,
     ptr, dernier_bos, dernier_choch, dernier_dir = 0, None, None, 0.0
     for i in range(n):
         while ptr < len(evts) and int(evts[ptr]["index"]) <= i:
-            e = evts[ptr]
-            if str(e.get("kind", "")).upper() == "BOS":
-                dernier_bos = int(e["index"])
+            evt = evts[ptr]
+            if str(evt.get("kind", "")).upper() == "BOS":
+                dernier_bos = int(evt["index"])
             else:
-                dernier_choch = int(e["index"])
-            dernier_dir = 1.0 if str(e.get("direction", "")) == "up" else -1.0
+                dernier_choch = int(evt["index"])
+            dernier_dir = 1.0 if str(evt.get("direction", "")) == "up" else -1.0
             ptr += 1
         if dernier_bos is not None:
             age_bos[i] = min(i - dernier_bos, _MAX_AGE)

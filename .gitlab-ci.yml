@@ -13,7 +13,7 @@ mypy:
   allow_failure: false
   script:
     - pip install -r requirements.txt -r requirements-dev.txt
-    - python -m mypy app/core app/engine app/live app/api/ws_tickets.py app/ml/overfitting_gate.py
+    - python -m mypy app/core app/engine app/live app/ml app/api/ws_tickets.py
 
 default:
   interruptible: true

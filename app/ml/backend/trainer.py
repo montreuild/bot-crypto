@@ -336,7 +336,7 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
             _off + len(df) <= bt_features_len):
         feats = bt_features.slice(_off, len(df))
     else:
-        feats = build_features(window_polars(df, n=n_keep))
+        feats = build_features(window_polars(df, n=n_keep))  # type: ignore[assignment]
     if feats is None or len(feats) < 250:
         logger.warning(f"[MLBackend] {tf_key} : données insuffisantes")
         return False
@@ -465,7 +465,7 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
 
             # Prédictions brutes de validation — réutilisées par la calibration
             # ET par la ventilation d'AUC direction par régime (ci-dessous).
-            raw_va = booster.predict(X_valid)
+            raw_va = np.asarray(booster.predict(X_valid))
             raw_va_by_target[target] = raw_va
 
             y_va = y[split:n]
