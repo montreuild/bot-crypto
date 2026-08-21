@@ -17,6 +17,7 @@ from starlette.testclient import TestClient
 from app.api import state
 from app.api.helpers import verify_api_key
 from app.api.main import app
+from app.core.candle_store import CandleStore
 
 
 @pytest.fixture
@@ -28,8 +29,16 @@ def client():
         app.dependency_overrides.pop(verify_api_key, None)
 
 
-class _StoreEspion:
-    def __init__(self):
+class _StoreEspion(CandleStore):
+    """Vrai store — seul `fetch` est neutralisé.
+
+    Un double qui ne réimplémente que `fetch` laisserait passer un appel à
+    une autre méthode du store : la route en fait deux (`oublier_memos` puis
+    `fetch`), et l'`except` par symbole aurait avalé l'`AttributeError`.
+    """
+
+    def __init__(self, base_dir):
+        super().__init__(base_dir=str(base_dir))
         self.appels = []
 
     def fetch(self, exchange, symbol, tf, total, prefer_cache=False):
@@ -49,8 +58,8 @@ def _attendre(client, job_id, timeout=10.0):
     pytest.fail(f"job {job_id} toujours {job.get('status')} après {timeout}s")
 
 
-def test_backfill_equities_passe_par_le_store(client, monkeypatch):
-    espion = _StoreEspion()
+def test_backfill_equities_passe_par_le_store(client, monkeypatch, tmp_path):
+    espion = _StoreEspion(tmp_path)
     monkeypatch.setattr(state, "cfg", {"scanner": {"universe": ["sbf120"]}})
     monkeypatch.setattr("app.core.universe.load_universe",
                         lambda _u: ["BNP.PA", "AC.PA"])

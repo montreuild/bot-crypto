@@ -564,6 +564,23 @@ class CandleStore:
         with self._no_history_lock:
             self._unfillable_gaps.pop((symbol, tf), None)
 
+    def oublier_memos(self, symbol: str, tf: str) -> None:
+        """Efface les trois mémos qui font sauter une redemande.
+
+        Trois mécanismes distincts évitent de reposer une question dont on
+        connaît la réponse : les créneaux confirmés absents (persistant), le
+        mémo « historique épuisé » et le cooldown de recousage (6 h, mémoire
+        vive). Chacun est justifié en régime nominal — mais un geste explicite
+        de l'opérateur (`refetch`, `backfill-equities`) veut dire « refais la
+        mesure », pas « redonne-moi ta conclusion ». Le `refetch` n'effaçait
+        que le premier : un symbole déclaré épuisé par le live dans les 6 h
+        précédentes était sauté, en log DEBUG donc invisible.
+        """
+        from app.core import ohlcv_absents as _abs
+        _abs.oublier(self._path(symbol, tf), symbol, tf)
+        self._forget_exhausted(symbol, tf)
+        self._forget_gaps_unfillable(symbol, tf)
+
     def _fill_detected_gaps(self, exchange, symbol: str, tf: str,
                             df: pl.DataFrame, path: Path) -> pl.DataFrame:
         """Recoud les trous : un rattrapage de plage, puis mémo 6 h.
