@@ -21,6 +21,26 @@ from app.live.protocols import LifecycleHost
 logger = logging.getLogger(__name__)
 
 
+def _heures_detenues(ctx, bar_entree: int, bar_sortie: int) -> float:
+    """Heures réellement écoulées entre deux barres.
+
+    DOWN-03 : la durée venait du COMPTE de barres (``bars × bar_to_days``),
+    ce qui suppose un pas régulier. Sur une série trouée, ou sur un marché qui
+    ferme, le temps écoulé est supérieur — donc le coût de portage et le
+    funding étaient sous-estimés d'autant (mesuré : −7 % sur BTC 1 h, −45 % sur
+    XRP 15 m). Repli sur l'ancien calcul si les horodatages manquent.
+    """
+    try:
+        t = ctx.df["time"]
+        if 0 <= bar_entree < len(t) and 0 <= bar_sortie < len(t):
+            ecart = (t[bar_sortie] - t[bar_entree]).total_seconds() / 3600.0
+            if ecart >= 0:
+                return float(ecart)
+    except Exception:
+        pass
+    return max(0, bar_sortie - bar_entree) * _bar_to_days(ctx.timeframe) * 24.0
+
+
 @dataclass(frozen=True)
 class RaisonDeSortie:
     """Résultat de ``_evaluer_sorties`` — clôture totale, pas une jambe."""
@@ -41,7 +61,7 @@ class PositionLifecycleMixin(LifecycleHost):
         # size déjà post-partial_fill : ne pas réappliquer à la sortie.
         fill_size  = position["size"]
         bars_held  = i - position["bar"]
-        hours_held = bars_held * _bar_to_days(ctx.timeframe) * 24.0
+        hours_held = _heures_detenues(ctx, position["bar"], i)
         pnl, fees, borrow = _close_pnl(
             side=side, entry=entry, exit_price=exec_price, size=fill_size,
             notional=position["notional"],
@@ -152,8 +172,7 @@ class PositionLifecycleMixin(LifecycleHost):
             return 0.0
         # Prorata du notionnel : le reliquat doit rester cohérent avec la taille.
         notional_part = position["notional"] * (part / position["size"])
-        bars_held  = i - position["bar"]
-        hours_held = bars_held * _bar_to_days(ctx.timeframe) * 24.0
+        hours_held = _heures_detenues(ctx, position["bar"], i)
         side = position["side"]
         pnl, fees, borrow = _close_pnl(
             side=side, entry=position["entry"], exit_price=exec_price, size=part,
