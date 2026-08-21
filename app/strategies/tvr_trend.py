@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import polars as pl
 
+from app.core.indicators import num as _num
 from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
@@ -227,8 +228,8 @@ class Strategy(BaseStrategy):
             "atr":     float(atr[-1]),
             "atr_med": float(atr_med[-1]) if atr_med[-1] is not None else float("nan"),
             "er":      float(er[-1]),
-            "don_hi":  float(df["high"][-n_don - 1:-1].max()),
-            "don_lo":  float(df["low"][-n_don - 1:-1].min()),
+            "don_hi":  _num(df["high"][-n_don - 1:-1].max()),
+            "don_lo":  _num(df["low"][-n_don - 1:-1].min()),
             "regime":  float(self._regime_now(df, p, df_htf)),
         }
 

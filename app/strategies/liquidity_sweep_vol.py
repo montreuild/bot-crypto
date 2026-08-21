@@ -21,11 +21,12 @@ ni RSI.
   * Exécution au open[i+1] ; SL/TP intrabar avec priorité au stop.
 """
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import polars as pl
 
+from app.core.indicators import num as _num
 from app.core.indicators import pre_val
 from app.core.indicators_core import _true_range
 from app.engine.engine import BaseStrategy
@@ -67,9 +68,9 @@ class Strategy(BaseStrategy):
     }
 
     def __init__(self):
-        self._w_atr: np.ndarray = None
-        self._w_close_ref: np.ndarray = None
-        self._w_len_key: int = None
+        self._w_atr: Optional[np.ndarray] = None
+        self._w_close_ref: Optional[np.ndarray] = None
+        self._w_len_key: Optional[int] = None
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Pré-calcule l'ATR Wilder sur toute la fenêtre (une passe O(n))."""
@@ -83,11 +84,11 @@ class Strategy(BaseStrategy):
             self._w_atr = self._w_close_ref = None
 
     def _atr_last(self, df: pl.DataFrame, atr_len: int) -> float:
-        if self._w_atr is not None and self._w_len_key == atr_len:
+        atr_c, ref = self._w_atr, self._w_close_ref
+        if atr_c is not None and ref is not None and self._w_len_key == atr_len:
             idx = df.height - 1
-            ref = self._w_close_ref
             if 0 <= idx < len(ref) and abs(float(df["close"][-1]) - ref[idx]) < 1e-6:
-                return float(self._w_atr[idx])
+                return float(atr_c[idx])
         return float(_wilder_atr(df, atr_len)[-1])
 
     def min_bars_required(self, params: dict | None = None) -> int:
@@ -112,8 +113,8 @@ class Strategy(BaseStrategy):
         if len(close) < bb_len:
             return None, None
         window = close[-bb_len:]
-        mid   = float(window.mean())
-        sigma = float(window.std(ddof=0))
+        mid   = _num(window.mean())
+        sigma = _num(window.std(ddof=0))
         return mid - bb_mult * sigma, mid + bb_mult * sigma
 
     def score(self, df: pl.DataFrame, params: dict | None = None,
@@ -151,7 +152,7 @@ class Strategy(BaseStrategy):
             return self._none("BB indisponible")
 
         vol_now = float(vol[-1])
-        vol_sma = float(vol[-vol_len:].mean())
+        vol_sma = _num(vol[-vol_len:].mean())
         vol_ok  = vol_now > vol_sma * vol_mult
 
         indicators = {

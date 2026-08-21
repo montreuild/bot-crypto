@@ -567,7 +567,8 @@ class Strategy(BaseStrategyML):
             keys = [k for k in self._amp_models if k in self._dir_models]
         return keys[0] if len(keys) == 1 else None
 
-    def save_model(self, path: str) -> None:
+    def save_model(self, path: str,
+                   extra_meta: Optional[dict] = None) -> None:
         """Écrit l'artefact par le chemin RECETTE quand c'est possible (ML-19).
 
         ``_train`` déléguait déjà à ``recipe_trainer``, mais l'écriture restait
@@ -603,7 +604,7 @@ class Strategy(BaseStrategyML):
             # Le TF écrit est celui DEMANDÉ, pas la clé interne dont l'objet a
             # été tiré (``score()`` indexe par symbole) : c'est sous ce TF que
             # l'artefact sera republié et rechargé.
-            if dataclasses.replace(trained, tf=tf_key).save(path):
+            if dataclasses.replace(trained, tf=tf_key).save(path, extra_meta):
                 logger.info(f"[V5] Modèles sauvegardés (chemin recette) → {path} "
                             f"(AUC={auc:.3f})")
                 return
@@ -616,7 +617,8 @@ class Strategy(BaseStrategyML):
         from app.ml.backend.persistence import save_lgb_with_scaler
         # Le meta porte le TF DEMANDÉ : c'est celui sous lequel l'artefact est
         # publié et rechargé, pas la clé interne dont il a été tiré.
-        if save_lgb_with_scaler(amp, dir_, None, path, tf_key, auc, meta):
+        if save_lgb_with_scaler(amp, dir_, None, path, tf_key, auc, meta,
+                                extra_meta=extra_meta):
             logger.info(f"[V5] Modèles sauvegardés → {path} (AUC={auc:.3f})")
 
     def load_model(self, path: str) -> bool:

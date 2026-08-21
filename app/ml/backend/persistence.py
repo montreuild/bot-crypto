@@ -241,13 +241,16 @@ def _load_native(state: TrainState, lock,
 # (StandardScaler supprimé — LightGBM est invariant aux transformations
 # monotones des features). On ne sérialise plus que amp + dir + meta.
 def save_lgb_with_scaler(amp_model, dir_model, scaler, path: str,
-                         tf: str, best_auc: float, train_meta: dict) -> bool:
+                         tf: str, best_auc: float, train_meta: dict,
+                         extra_meta: Optional[dict] = None) -> bool:
     """Sauvegarde un payload {amp, dir} au format natif (scaler ignoré).
 
     Pour les stratégies `scoring_statistique_opus_v4/v5` qui utilisaient
     LightGBM + StandardScaler. Depuis phase6, le scaler est supprimé
     (LightGBM n'en a pas besoin) — le paramètre `scaler` est gardé pour
     compat API mais ignoré.
+
+    ``extra_meta`` : bloc de provenance ML-02 optionnel (cf. ``_merge_provenance``).
     """
     if amp_model is None or dir_model is None:
         return False
@@ -268,6 +271,7 @@ def save_lgb_with_scaler(amp_model, dir_model, scaler, path: str,
         "train_meta": dict(train_meta or {}),
         "format_version": 1,
     }
+    _merge_provenance(payload, extra_meta)
     try:
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)

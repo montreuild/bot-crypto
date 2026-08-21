@@ -40,6 +40,7 @@ import polars as pl
 
 from app.core.indicators import adx as _adx
 from app.core.indicators import atr_series, pre_val, rsi
+from app.core.indicators import num as _num
 from app.engine.engine import BaseStrategyML
 
 logger = logging.getLogger(__name__)
@@ -394,7 +395,7 @@ def _detect_tf(df: pl.DataFrame) -> str:
     if "time" not in df.columns or len(df) < 2:
         return "unknown"
     try:
-        med_s = float(
+        med_s = _num(
             df["time"].tail(64).diff().drop_nulls()
             .dt.total_microseconds().median()
         ) / 1e6
@@ -944,11 +945,13 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         """Génère un signal sans réentraîner (modèle déjà chargé en mémoire)."""
         return self._predict(df)
 
-    def save_model(self, path: str) -> None:
+    def save_model(self, path: str, extra_meta: Optional[dict] = None) -> None:
         """Persiste le booster LightGBM natif + métadonnées JSON (RCE-safe).
 
         Format : {path}.lgb (booster natif) + {path}.meta.json (features, auc, params).
         Plus de pickle/joblib — élimine le risque RCE.
+
+        ``extra_meta`` : bloc de provenance ML-02, fusionné dans le meta.json.
         """
         tf = os.path.basename(path).rsplit("_", 1)[-1].split(".")[0]
         with self._model_lock:
@@ -984,6 +987,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 "format_version": 1,
                 "source":      "ml_dynamic_threshold (LightGBM natif)",
             }
+            from app.ml.backend.persistence import _merge_provenance
+            _merge_provenance(payload, extra_meta)
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False)
             logger.info(f"[{self.name}/{tf}] Modèle LightGBM sauvegardé → {lgb_path}")

@@ -279,8 +279,9 @@ class Strategy(BaseStrategy):
         p = self._p(params)
         if len(df) < self.min_bars_required(params):
             return self._none("historique insuffisant")
-        if self._cache_valid(df):
-            sig = self._sig.get(df.height - 1)
+        cache = self._sig
+        if cache is not None and self._cache_valid(df):
+            sig = cache.get(df.height - 1)
             return dict(sig) if sig else self._none("pas de setup vizion")
         win = df[-int(p["max_window"]):] if len(df) > int(p["max_window"]) else df
         sig = self._signals(win, p).get(len(win) - 1)
