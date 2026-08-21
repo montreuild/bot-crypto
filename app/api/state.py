@@ -1,13 +1,16 @@
 """État partagé de l'API — variables initialisées par init_app(), accédées via `state.cfg`."""
 import os
 import threading
+from typing import Any, Dict, Optional
 
 from slowapi import Limiter
 
 # ── Runtime state ──────────────────────────────────────────────────────────
-cfg          = None   # dict config chargé depuis config.yaml
-trader       = None   # instance LiveTrader (ou None si bot arrêté)
-SessionLocal = None   # factory SQLAlchemy session
+# Annotés : sans cela mypy infère `None` et tout `state.cfg.get(...)` en aval
+# devient une erreur — la vingtaine de faux positifs de app/api venait de là.
+cfg:          Optional[Dict[str, Any]] = None   # config chargée depuis config.yaml
+trader:       Any = None                        # LiveTrader, ou None si arrêté
+SessionLocal: Any = None                        # factory SQLAlchemy session
 
 # ── Rate limiter (SEC-04) ────────────────────────────────────────────────────
 # Défini ici (et non dans main.py) : main.py importe les modules de routes

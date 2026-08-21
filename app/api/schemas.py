@@ -452,6 +452,11 @@ class StrategyStats(BaseModel):
     #: schéma, si bien que `generated.ts` avait dû être complété à la main
     #: (`b42d200`). C'est exactement la dérive que le contrat doit empêcher.
     alpha_vs_bh: Optional[float] = None
+    #: DOWN-02 — complétude de la série (0-100) et son avertissement. Informatif :
+    #: aucun seuil ne bloque, mais l'utilisateur doit savoir sur quoi porte le
+    #: résultat qu'il lit.
+    data_completeness: Optional[float] = None
+    data_warning: Optional[str] = None
     equity_curve: List[EquityPoint] = Field(default_factory=list)
     recommendations: List[BacktestRecommendation] = Field(default_factory=list)
     recommendations_summary: BacktestRecommendationsSummary | None = None

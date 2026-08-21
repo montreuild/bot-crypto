@@ -94,7 +94,8 @@ class TrainedRecipe:
                 if k.startswith("auc_") and isinstance(v, (int, float))]
         return float(max(aucs)) if aucs else 0.0
 
-    def save(self, path_prefix: str) -> bool:
+    def save(self, path_prefix: str,
+             extra_meta: Optional[Dict[str, Any]] = None) -> bool:
         """Écrit l'artefact au format déclaré par la recette.
 
         Le ``meta.json`` porte TOUJOURS la liste des features et les médianes.
@@ -102,20 +103,25 @@ class TrainedRecipe:
         ``stat48_*`` et qui rendait leurs artefacts illisibles par le scorer
         générique (``unsupported_format``) : sans noms de colonnes, la matrice
         d'entrée du holdout n'est pas reconstructible.
+
+        ``extra_meta`` : bloc de provenance ML-02, écrit tel quel dans le
+        meta.json. Aucun chemin stratégie ne le transmettait : la provenance
+        n'existait que pour les artefacts écrits par ``MLBackend``.
         """
         from app.ml.model_registry import model_suffixes
         suffixes = model_suffixes(self.recipe)
         os.makedirs(os.path.dirname(os.path.abspath(path_prefix)) or ".", exist_ok=True)
 
         if suffixes == (".lgb",):
-            return self._save_single(path_prefix)
-        return self._save_bundle(path_prefix)
+            return self._save_single(path_prefix, extra_meta)
+        return self._save_bundle(path_prefix, extra_meta)
 
     #: Têtes que le format bundle sait écrire. Toute autre tête entraînée est
     #: PERDUE à la sauvegarde — d'où l'avertissement dans ``_save_bundle``.
     _TETES_BUNDLE = ("amp", "dir")
 
-    def _save_bundle(self, path_prefix: str) -> bool:
+    def _save_bundle(self, path_prefix: str,
+                     extra_meta: Optional[Dict[str, Any]] = None) -> bool:
         from app.ml.backend.persistence import save_amp_dir_bundle
         amp, dir_ = self.boosters.get("amp"), self.boosters.get("dir")
 
@@ -145,10 +151,14 @@ class TrainedRecipe:
             path_prefix, self.tf, amp, dir_, features=self.feature_names,
             medians=self.medians, best_auc=self.best_auc, train_meta=self.train_meta,
             amp_cal=self.calibrators.get("amp"), dir_cal=self.calibrators.get("dir"),
+            extra_meta=extra_meta,
         )
 
-    def _save_single(self, path_prefix: str) -> bool:
+    def _save_single(self, path_prefix: str,
+                     extra_meta: Optional[Dict[str, Any]] = None) -> bool:
         import json
+
+        from app.ml.backend.persistence import _merge_provenance
         booster = self.boosters.get("dir") or next(iter(self.boosters.values()), None)
         if booster is None:
             return False
@@ -163,6 +173,7 @@ class TrainedRecipe:
             "format_version": 2,
             "source": "recipe_trainer",
         }
+        _merge_provenance(payload, extra_meta)
         with open(f"{path_prefix}.meta.json", "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
         return True
@@ -358,7 +369,7 @@ def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
         boosters[head] = booster
         early = float(booster.best_score.get("valid_0", {}).get("auc", 0.0))
         raw_va = booster.predict(X_valid)
-        report = rank_auc(y_va[cut:], raw_va[cut:]) if cut else None
+        report = rank_auc(y_va[cut:], np.asarray(raw_va)[cut:]) if cut else None
         published = float(report) if report is not None else early
         meta[f"auc_{head}"] = round(published, 4)
         meta[f"auc_{head}_earlystop"] = round(early, 4)

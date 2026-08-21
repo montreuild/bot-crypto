@@ -372,8 +372,8 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         return max(230, warmup + 30)
 
     # ── Persistance (délègue au backend) ───────────────────────────────────
-    def save_model(self, path: str) -> None:
-        self.ml.save_model(path)
+    def save_model(self, path: str, extra_meta: Optional[dict] = None) -> None:
+        self.ml.save_model(path, extra_meta=extra_meta)
         # Log additionnel (compat logging V11).
         try:
             tf = self.ml._tf_from_path(path)
@@ -508,6 +508,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
 
         bt_feats = self.ml._bt_features
         bt_len   = self.ml._bt_features_len
+        features: Optional[pl.DataFrame]
         if bt_feats is not None and len(df) <= bt_len:
             features = bt_feats.head(len(df))
         else:
@@ -692,6 +693,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         try:
             bt_feats = self.ml._bt_features
             bt_len   = self.ml._bt_features_len
+            features: Optional[pl.DataFrame]
             if bt_feats is not None and len(df) <= bt_len:
                 features = bt_feats.head(len(df))
             else:

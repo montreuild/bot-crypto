@@ -38,7 +38,10 @@ que trouvés** le 20 août ; ce document dit ce qui a été livré depuis.
 | `SEC-01` | `59aa260` | contrainte mono-processus écrite et testée |
 | `DAT-04` | `59aa260` | horodatage nul : paire ignorée avec log |
 | `DETTE-01` | `89ec019` | 14 `utcnow()` ; avertissements 128 → 46 |
-| `TEST-02` | `187fd43` | `app/live` : 176 erreurs → 0, ajouté au job CI |
+| `TEST-02` | `187fd43`, `5416f92`, `66b4cbe`, cette PR | `app/live` 176→0, `app/ml` 40→0, `app/api` 26→0, `app/strategies` 117→0 ; **tout `app/`** au job CI |
+| `PERF-02` | `07bc133` | détection de trous incrémentale à la sauvegarde — ×138 |
+| `SEC-02` | `8e86393` | limite de débit sur `POST /api/ws/ticket` |
+| `ML-03b` | `8e86393` | `fit_trace` partagé entre threads |
 
 ## P3 — livrés
 
@@ -49,15 +52,26 @@ que trouvés** le 20 août ; ce document dit ce qui a été livré depuis.
 
 ---
 
+## Ouvert depuis — traitement des trous en aval
+
+Quatre constats consignés le 2026-08-21 dans
+[`18-TROUS-EN-AVAL.md`](18-TROUS-EN-AVAL.md). Ils préexistaient ; le travail sur
+la détection de trous les a rendus visibles. Trois sont livrés.
+
+| ID | Sév. | Constat | État |
+|---|---|---|---|
+| `DOWN-01` | **P1** | `bars_per_year` applique une convention 24/7 aux actions : Sharpe annualisé ×2, CAGR ×3,9 (BNP.PA 15 m) | `848c634` — annualisation calendaire ; BNP.PA 15 m 35 040 → 8 670 barres/an, BTC/USDC inchangé |
+| `DOWN-02` | P2 | La complétude n'est consommée par aucun module en aval | `848c634` — portée dans le résultat et l'UI, avec avertissement ; **pas de seuil** (choix explicite) |
+| `DOWN-03` | P2 | La durée d'une position vient du compte de barres — sans effet sur les actions (spot), −7 % à −45 % en margin/perp | `848c634` — durée lue sur les horodatages réels |
+| `DOWN-04` | P2 | Aucun contrôle de continuité temporelle ; indicateurs positionnels | ouvert — 2 h à plusieurs jours |
+
+---
+
 ## Reste ouvert
 
 | ID | Sév. | Constat | Effort |
 |---|---|---|---|
-| `TEST-02` (suite) | P2 | `app/ml`, `app/api`, `app/strategies` hors périmètre mypy | 2-3 j |
-| `PERF-02` | P2 | Rescan à chaque sauvegarde — largement atténué par `PERF-01`, à re-mesurer | à mesurer |
 | `ARCH-02` | P3 | `smart-replay-view.tsx` (744 l.), `backtest-results.tsx` (681 l.) | 8 h |
-| `SEC-02` | P3 | Pas de limite de débit sur `POST /api/ws/ticket` | 1 h |
-| `ML-03b` | P3 | `fit_trace` par thread : faux négatif en parallélisé | 1 h |
 | `FE-02` | P3 | Jeton WS redemandé à chaque reconnexion — correct, signalé pour mémoire | — |
 | `BT-03` | P3 | Mode ML des folds forcé à `frozen` | — |
 | `DETTE-04` | P3 | 11 fichiers Python > 700 lignes | — |
@@ -66,7 +80,7 @@ que trouvés** le 20 août ; ce document dit ce qui a été livré depuis.
 
 ## Trouvailles hors périmètre, corrigées en route
 
-Cinq défauts qu'aucun constat d'audit ne visait, rencontrés en corrigeant les
+Douze défauts qu'aucun constat d'audit ne visait, rencontrés en corrigeant les
 autres :
 
 | Où | Défaut |
@@ -76,6 +90,14 @@ autres :
 | `LiveHost` | `_margin_interest` déclaré `dict` alors que c'est un `float` ; `signal_log` déclaré `list` alors que c'est un `deque` (`187fd43`) |
 | `generated.ts` | `alpha_vs_bh` ajouté à la main faute de déclaration côté Pydantic — le contrat vivait en désaccord avec sa source (`59aa260`) |
 | `health_mixin` | Deux variables `eq` dans la même portée : une courbe d'équité et un cumul de PnL, la seconde masquant la première (`187fd43`) |
+| `/api/ml/registry/decisions/recent` | `list_versions(None, recipe)` levait un `TypeError` avalé par l'`except` englobant : la route ne renvoyait **jamais** une décision. 175 décisions accessibles après correction (vérifié sur le conteneur) (cette PR) |
+| `mypy.ini` | Les sections `[mypy-app.ml]`, `[mypy-app.live]` ne visaient que le `__init__.py` du paquet, pas ses modules : `check_untyped_defs` y était **inerte** alors que `CONTRIBUTING.md` l'annonçait actif. Corrigé en `[mypy-app.*.*]`, étendu à `app/core` et `app/engine` (cette PR) |
+| `save_model` × 4 | `opus_omnibus_v11`, `scoring_statistique_opus_v4/v5`, `ml_dynamic_threshold` redéclaraient `save_model(path)` SANS `extra_meta` : un appelant qui passait la provenance ML-02 recevait un `TypeError`, et aucun artefact de ces stratégies n'a jamais porté sa provenance. `extra_meta` traverse désormais `TrainedRecipe.save` et `save_lgb_with_scaler` (cette PR) |
+| `managed_externally` | `BaseStrategyML` le déclarait en attribut simple, `MLBackendMixin` en propriété déléguant au backend : sur `class Strategy(MLBackendMixin, BaseStrategyML)` l'attribut de base était mort. Converti en propriété des deux côtés (cette PR) |
+| `_signal_at(cal_targets)` | Annoté `List[float]`, alimenté par `cal_tp: List[Tuple[float, str]]` et dépaqueté en couple — l'annotation décrivait l'inverse du contrat réel (cette PR) |
+| `_classify_regime(bb_rank)` | Annoté `float` alors que son propre corps teste `bb_rank is not None` et que l'appelant lui passe un `row.get(...)` non gardé, seul de ses six arguments (cette PR) |
+| `_candle_add`, caches ATR/ADX | Invariants « posés et effacés ensemble » testés sur un seul membre : `pin_a` gardé mais `eng_a` indexé, `_w_atr` gardé mais `_w_adx`/`_w_close_ref` indexés (cette PR) |
+| `/api/data/backfill-equities` | La boucle appelait `provider.fetch_bars`, méthode inexistante : `AttributeError` avalée par symbole, job « done » avec 0 bougie partout, aucun Parquet écrit. Même correcte, la lecture directe du provider n'aurait rien persisté — c'est le store qui écrit (cette PR) |
 
 ---
 

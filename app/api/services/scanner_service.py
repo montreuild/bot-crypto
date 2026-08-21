@@ -8,6 +8,7 @@ params, charger les données et sérialiser ; toute la logique métier
 import importlib
 import logging
 import math
+from typing import Any
 
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.engine import BaseStrategyML
@@ -177,9 +178,11 @@ def _setup_series_v11(df, tf: str, limit: int, strategy: str,
         _window_polars,
     )
     if strategy == "v12":
-        from app.strategies.opus_omnibus_v12 import Strategy as _S
+        from app.strategies.opus_omnibus_v12 import Strategy as _S12
+        _S: Any = _S12
     else:
-        from app.strategies.opus_omnibus_v11 import Strategy as _S
+        from app.strategies.opus_omnibus_v11 import Strategy as _S11
+        _S = _S11
 
     tf_detected = _detect_timeframe(df)
     if tf_detected not in _SUPPORTED_TFS:
@@ -214,7 +217,7 @@ def _setup_series_v11(df, tf: str, limit: int, strategy: str,
     if p_amp is None or p_up is None:
         return {"supported": False, "reason": f"Modèle {tf_detected} indisponible", "markers": []}
 
-    p   = {}
+    p: dict = {}
     d   = strat._DEFAULTS
     adx_threshold       = float(d["adx_threshold"])
     di_rescue           = float(d["di_rescue"])
@@ -595,7 +598,7 @@ def build_smc_replay_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
             # repli : ISO / string horodatée
             et = t.get("entry_time")
             try:
-                if hasattr(et, "timestamp"):
+                if et is not None and hasattr(et, "timestamp"):
                     signal_time = int(et.timestamp())
                 else:
                     from datetime import datetime

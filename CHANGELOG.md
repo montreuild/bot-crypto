@@ -78,6 +78,95 @@ n'existe en cp1252 — l'encodage d'un stdout redirigé sous Windows. Le script
 mourait sur `UnicodeEncodeError` **après** avoir fait tout le calcul, sans rien
 écrire. `main()` force désormais UTF-8 sur stdout/stderr.
 
+### 📉 Trous de données — de la détection au traitement en aval
+
+Quatre constats consignés dans
+[`18-TROUS-EN-AVAL.md`](audit/2026-08-20-revue/18-TROUS-EN-AVAL.md) ; trois
+livrés. Ils préexistaient — le travail sur la détection les a rendus visibles.
+
+**`DOWN-01` — l'annualisation supposait un marché continu.** `bars_per_year`
+appliquait la convention 24/7 aux actions : BNP.PA 15 m comptait 35 040
+barres/an au lieu de 8 670, soit un Sharpe annualisé ×2 et un CAGR ×3,9. Le
+seuil de Deflated Sharpe étant **absolu**, l'écart ne s'annulait pas entre
+candidats — il déplaçait la barre. `bars_per_year(tf, symbol)` interroge
+désormais le calendrier de la venue ; sans symbole, la convention 24/7 est
+conservée et BTC/USDC est inchangé.
+
+**`DOWN-02` — la complétude n'était consommée par personne.** Elle est portée
+jusqu'au résultat de backtest et à l'UI, avec un avertissement qui précise
+l'impact quand elle est basse. Volontairement **sans seuil** : informatif, pas
+bloquant.
+
+**`DOWN-03` — la durée d'une position venait du compte de barres.** Sur un
+marché à séances, dix barres 15 m à cheval sur une nuit ne durent pas 2 h 30.
+Sans effet sur les actions au comptant (coût de portage nul), −7 % à −45 % sur
+le coût d'emprunt en margin et perp. La durée est lue sur les horodatages.
+
+**Trous confirmés absents.** Sur un titre peu liquide, pas d'échange sur la
+barre = pas de bougie chez la source : redemander indéfiniment produisait un
+log de trous qui ne se comblent jamais. `app/core/ohlcv_absents.py` mémorise
+ces créneaux (`{TF}.absent.json`), cesse de les redemander et les sort du
+calcul de complétude. Le fichier est versionné : un registre d'un format
+antérieur est ignoré et reconstruit.
+
+**Calendrier de place.** Une primitive unique (`_creneaux_attendus`) sert au
+comptage et à l'énumération — deux implémentations parallèles se
+contredisaient, et un comptage qui ne correspond pas aux créneaux énumérés
+fait disparaître des trous réels du rapport. Venues Euronext ajoutées
+(`XAMS`, `XBRU`, `XLIS`). Le quotidien n'est délibérément pas énumérable.
+
+**`PERF-02`** — `_save` ne rescanne plus tout le fichier à chaque écriture :
+détection incrémentale sur la queue ajoutée, **×138**.
+
+**Gestes explicites de l'opérateur.** Trois mémos évitent de reposer une
+question dont la réponse est connue : créneaux absents, « historique épuisé »,
+cooldown de recousage. `refetch` n'en effaçait qu'un et `backfill-equities`
+aucun — un symbole déclaré épuisé dans les 6 h précédentes était sauté, en log
+`DEBUG` donc invisible. `CandleStore.oublier_memos` efface les trois, et les
+deux routes l'appellent : un bouton « refais » qui ne refait pas est
+exactement le motif que cet audit poursuit.
+
+### 🔍 `TEST-02` — tout `app/` sous mypy en CI
+
+Le périmètre s'est élargi par lots jusqu'à couvrir `app/core`, `app/engine`,
+`app/live`, `app/ml`, `app/api` et `app/strategies`, `check_untyped_defs`
+compris : `app/ml` 40 → 0, `app/api` 26 → 0, `app/strategies` 117 → 0.
+
+**La garde elle-même était en partie inerte.** Les sections `[mypy-app.ml]` et
+`[mypy-app.live]` ne visaient que le `__init__.py` du paquet, jamais ses
+modules : `check_untyped_defs` y était sans effet alors que `CONTRIBUTING.md`
+l'annonçait actif. Corrigé en `[mypy-app.*.*]`.
+
+Six défauts sortis à cette occasion, tous avalés par un `except` large ou par
+une déclaration qui disait le contraire du code :
+
+- **`/api/ml/registry/decisions/recent` ne renvoyait jamais une décision** :
+  `list_versions(None, recipe)` levait un `TypeError` attrapé par l'`except`
+  englobant. Vérifié sur le conteneur : 175 décisions accessibles là où il y
+  en avait 0.
+- **`/api/data/backfill-equities` ne backfillait rien** : la boucle appelait
+  `provider.fetch_bars`, méthode inexistante — job terminé « done » avec 0
+  bougie partout, aucun Parquet écrit. Même correcte, la lecture directe du
+  provider n'aurait rien persisté : c'est le store qui écrit.
+- **La provenance ML-02 n'atteignait aucun artefact « stratégie »** : quatre
+  stratégies redéclaraient `save_model(path)` sans `extra_meta`. `extra_meta`
+  traverse maintenant `TrainedRecipe.save` et `save_lgb_with_scaler`.
+- **`managed_externally`** : attribut simple côté `BaseStrategyML`, propriété
+  côté `MLBackendMixin` — sur `class Strategy(MLBackendMixin, BaseStrategyML)`
+  l'attribut de base était mort. Propriété des deux côtés.
+- **Deux annotations à contre-emploi** : `cal_targets` déclaré `List[float]`
+  mais dépaqueté en couple ; `bb_rank` déclaré `float` alors que le corps de
+  la fonction teste `is not None`.
+- **Invariants à moitié gardés** : `pin_a` testé mais `eng_a` indexé, `_w_atr`
+  testé mais `_w_adx`/`_w_close_ref` indexés, trois caches testés par
+  `_cache_valid()` puis lus sur un membre `Optional`.
+
+### 🔒 `SEC-02` / `ML-03b`
+
+- Limite de débit sur `POST /api/ws/ticket`, registre de jetons borné.
+- `fit_trace` était par thread : un entraînement parallélisé rendait la trace
+  vide et le garde-fou correspondant muet.
+
 ### 🔒 Audit du 20 août — les 11 P1 clos
 
 Registre : [`audit/2026-08-20-revue/`](audit/2026-08-20-revue/) ; état des

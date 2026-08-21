@@ -40,7 +40,7 @@ _ENVELOPE_RISK_BY_PROFILE = {
     "agressif": {"symbol_risk_pct": 0.05, "venue_risk_pct": 0.05},
 }
 
-_RISK_PRESETS = {
+_RISK_PRESETS: dict[str, dict] = {
     "prudent": {
         "label": "Prudent",
         "description": "Risque minimal — profil 1 % de l'enveloppe de slot",

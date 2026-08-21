@@ -210,8 +210,8 @@ def migration_check(models_dir: str = "models") -> dict:
 
     for meta_path in metas:
         try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
+            with open(meta_path, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
             if payload.get("features_hash"):
                 with_hash += 1
             else:

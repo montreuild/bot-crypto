@@ -9,6 +9,7 @@ oos_tracker — 9 clés pour les deux premiers, 12 pour les deux autres).
 Ce module est dans app/core : importable par TOUTES les couches (strategies,
 engine, live, api) sans créer d'inversion de dépendance.
 """
+from functools import lru_cache
 from typing import Dict
 
 
@@ -39,14 +40,58 @@ def bar_to_days(tf: str) -> float:
     return TF_MINUTES.get(tf, 15) / 1440.0
 
 
-def bars_per_year(tf: str) -> float:
+def bars_per_year(tf: str, symbol: str = "") -> float:
     """Nombre de bougies par an pour ``tf`` — facteur d'annualisation du
-    Sharpe (S4-01/S4-02). Marchés crypto : 365j × 24h (pas de fermeture).
-    Source unique partagée par ``engine/backtest.py`` (Sharpe backtest) et
-    ``live/health_mixin.py`` (Sharpe live) — sans elle, les deux Sharpe
-    n'étaient pas comparables (live : ``sqrt(252)`` fixe sur des PnL bruts)."""
+    Sharpe et base du calcul de durée (CAGR).
+
+    Source unique partagée par ``engine/backtest_result.py`` (Sharpe backtest)
+    et ``live/health_mixin.py`` (Sharpe live) : sans elle, les deux Sharpe
+    n'étaient pas comparables.
+
+    DOWN-01 — ``symbol`` décide. La formule 365j × 24h ne vaut que pour un
+    marché continu ; l'appliquer à une action, qui ne cote que ~8,5 h sur 24 et
+    5 jours sur 7, surestimait le Sharpe annualisé d'un facteur 2 et le CAGR
+    d'un facteur 3,9 (mesuré sur BNP.PA 15 m). Le seuil ABSOLU du gate Deflated
+    Sharpe s'en trouvait franchi par des modèles qui ne le méritaient pas.
+    """
     minutes = TF_MINUTES.get(tf, 60)
-    return 365 * 24 * 60 / minutes
+    continu = 365 * 24 * 60 / minutes
+    if not symbol:
+        return continu
+    seances, secondes = _seances_par_an(symbol)
+    if not seances:
+        return continu
+    if minutes >= 1440:
+        return float(seances)
+    return seances * secondes / (minutes * 60.0)
+
+
+@lru_cache(maxsize=64)
+def _seances_par_an(symbol: str) -> tuple:
+    """``(séances/an, secondes par séance)`` de la place — ``(0, 0)`` si 24/7.
+
+    Mémoïsé : un calendrier est immuable, et la marche coûte ~250 itérations.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.market_calendar import _sessions_ouvertes_entre
+    from app.core.ohlcv_gaps import calendar_for_symbol
+    cal = calendar_for_symbol(symbol)
+    if type(cal).__name__ == "AlwaysOpenCalendar":
+        return (0, 0.0)
+    try:
+        # Année de référence complète et récente : le nombre de séances est
+        # stable d'une année sur l'autre, la date exacte n'importe pas.
+        debut = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        n = _sessions_ouvertes_entre(cal, debut, debut + timedelta(days=365))
+        ouverture = cal.next_open(datetime(2024, 3, 6, tzinfo=timezone.utc))
+        fin = cal.session_end(ouverture) if ouverture else None
+        duree = (fin - ouverture).total_seconds() if (fin and ouverture) else 0.0
+        if n <= 0 or duree <= 0:
+            return (0, 0.0)
+        return (n, duree)
+    except Exception:
+        return (0, 0.0)
 
 # Timeframe → timeframe SUPÉRIEUR pour le biais/l'analyse HTF.
 # (Historiquement « source unique de vérité » déclarée dans app/live/utils,

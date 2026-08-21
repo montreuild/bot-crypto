@@ -75,7 +75,11 @@ Sources uniques (ne jamais recopier ces littéraux) :
 
 - **Timeframes** : `app/core/timeframes.py` (`TF_SECONDS`, `TF_MINUTES`,
   `TF_MS`, `HTF_MAP`, `bars_per_year` — facteur d'annualisation du Sharpe
-  partagé backtest/live, S4-01/S4-02).
+  partagé backtest/live, S4-01/S4-02). DOWN-01 : `bars_per_year(tf, symbol)`
+  interroge le calendrier de la venue. Sans symbole il rend la convention 24/7 ;
+  avec, il compte les séances réelles — BNP.PA 15 m passe de 35 040 à 8 670
+  barres/an (Sharpe ÷ 2, CAGR ÷ 3,9), BTC/USDC est inchangé. L'écart importait
+  parce que le seuil de Deflated Sharpe est **absolu**.
 - **Venue / classe d'actif** : `app/core/bot_identity.py` (`Venue` étendue
   S2-02 : `asset_class`, `quote_currency`, `tick_size`, `lot_size`,
   `fractional`, `allow_short` ; G2 : `calendar`, `data_provider`,
@@ -121,11 +125,19 @@ Sources uniques (ne jamais recopier ces littéraux) :
 
 - **Horaires de marché (G2)** : `app/core/market_calendar.py`
   (`get_calendar` → `AlwaysOpenCalendar` 24/7 par défaut, `SessionCalendar`
-  déclaratif, `XPAR` livré, adaptateur `exchange_calendars` optionnel).
-  Résolution symbole → calendrier : `provider_router.market_calendar_for`
-  (source unique) ; consommée par `app/live/market_hours_mixin.py`, qui
-  mémoïse par venue et gate **les entrées seulement** (les positions ouvertes
-  restent gérées marché fermé).
+  déclaratif, `XPAR`/`XAMS`/`XBRU`/`XLIS` livrés, adaptateur
+  `exchange_calendars` optionnel). Résolution symbole → calendrier :
+  `provider_router.market_calendar_for` (source unique) ; consommée par
+  `app/live/market_hours_mixin.py`, qui mémoïse par venue et gate **les
+  entrées seulement** (les positions ouvertes restent gérées marché fermé).
+
+  Une primitive unique, `_creneaux_attendus`, sert à la fois au comptage
+  (`expected_bars_between`) et à l'énumération (`expected_slots_between`) :
+  deux implémentations parallèles se contredisaient, et un comptage qui ne
+  correspond pas aux créneaux énumérés fait disparaître des trous réels du
+  rapport. Le quotidien n'est délibérément **pas** énumérable — une barre
+  journalière porte minuit local, et une séance manquante est une suspension,
+  pas un créneau non traité.
 - **Contraintes et coûts d'instrument (G2)** : `app/core/execution.py`
   (`quantize_size`, `quantize_price`, `venue_trade_cost`) — partagés
   backtest ↔ live comme le reste du module, appliqués à l'ouverture, au
@@ -488,6 +500,27 @@ data/ohlcv/{SYMBOL}/{TF}.parquet
 
 **Thread-safety** : verrou par fichier via `_get_file_lock(path)` — indispensable
 pour le live trader qui appelle `fetch_ohlcv` depuis plusieurs threads.
+
+**Trous** : `_save` ne rescanne plus tout le fichier à chaque écriture
+(PERF-02, ×138). `_gaps_incrementaux` ne regarde que la queue ajoutée, la
+détection complète étant réservée à la première écriture d'un fichier.
+
+**Créneaux confirmés absents** : `app/core/ohlcv_absents.py` mémorise, dans
+`data/ohlcv/{SYMBOL}/{TF}.absent.json`, les créneaux qu'une redemande explicite
+a confirmé introuvables chez la source. Un titre peu liquide n'échange pas à
+chaque barre : sans bougie il n'y a pas de bougie à récupérer, et redemander
+indéfiniment produit un log de trous qui ne se comblent jamais. Ces créneaux
+cessent d'être comptés dans la complétude. Le fichier porte un numéro de
+`format` : un registre d'un format antérieur est ignoré et reconstruit, ce qui
+a permis de neutraliser sans migration les registres pré-calendaires (énumérés
+sur l'horloge, week-ends et nuits compris).
+
+**Mémos et geste explicite** : trois mécanismes évitent de reposer une question
+dont la réponse est connue — les créneaux absents (persistant), « historique
+épuisé » et le cooldown de recousage (6 h, mémoire vive). `oublier_memos`
+efface les trois ; c'est ce qu'appellent `POST /api/data/refetch` et
+`POST /api/data/backfill-equities`, les deux gestes par lesquels l'opérateur
+dit « refais la mesure » et non « redonne-moi ta conclusion ».
 
 ---
 

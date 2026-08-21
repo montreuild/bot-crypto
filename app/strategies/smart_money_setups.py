@@ -83,10 +83,11 @@ def _inv_fvg_add(ctx: _SignalCtx, zone_lo: float, zone_hi: float,
 
 
 def _candle_add(ctx: _SignalCtx, side: str) -> float:
-    if ctx.pin_a is None:
+    pin_a, eng_a = ctx.pin_a, ctx.eng_a
+    if pin_a is None or eng_a is None:
         return 0.0
     sgn = 1 if side == "long" else -1
-    return 0.05 if (int(ctx.pin_a[ctx.i]) == sgn or int(ctx.eng_a[ctx.i]) == sgn) else 0.0
+    return 0.05 if (int(pin_a[ctx.i]) == sgn or int(eng_a[ctx.i]) == sgn) else 0.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import polars as pl
 
 from app.core.indicators import ema_window, htf_trend, market_structure, pre_val
+from app.core.indicators import num as _num
 from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
@@ -169,7 +170,7 @@ class Strategy(BaseStrategy):
                 return self._none("Stop invalide")
             # Cible = max(plus haut 20 barres, prix courant + risque × rr_min)
             # Évite R:R=0 quand le prix est proche de ses récents sommets
-            recent_high  = float(high[-20:].max())
+            recent_high  = _num(high[-20:].max())
             atr_target_l = c_now + risk_l * rr_min
             target_l     = max(recent_high, atr_target_l)
             reward_l = target_l - c_now
@@ -231,7 +232,7 @@ class Strategy(BaseStrategy):
             if risk_s <= 0:
                 return self._none("Stop invalide (short)")
             # Cible = min(plus bas 20 barres, prix courant - risque × rr_min)
-            recent_low   = float(low[-20:].min())
+            recent_low   = _num(low[-20:].min())
             atr_target_s = c_now - risk_s * rr_min
             target_s     = min(recent_low, atr_target_s)
             reward_s     = max(c_now - target_s, 0.0)

@@ -367,8 +367,8 @@ def resolve(tf: str, recipe: str, *,
 
     versions = list_versions(tf, recipe, base_dir=base_dir)
     eligible = [v for v in versions if v.gate_decision in _ELIGIBLE_DECISIONS]
-    if as_of is not None:
-        as_of_s = to_iso(as_of)
+    as_of_s = to_iso(as_of) if as_of is not None else None
+    if as_of_s is not None:
         eligible = [v for v in eligible if not v.train_end or v.train_end <= as_of_s]
     return eligible[-1] if eligible else None
 
@@ -542,7 +542,12 @@ def publish(tf: str, recipe: str, tmp_path_prefix: str, *,
     }
     meta["gate"] = {"decision": decision, **(decision_metrics or {})}
 
-    mover = shutil.copy2 if keep_source else shutil.move
+    def mover(src: str, dst: str) -> None:
+        if keep_source:
+            shutil.copy2(src, dst)
+        else:
+            shutil.move(src, dst)
+
     try:
         for src, dest_name in srcs:
             mover(src, os.path.join(version_dir, dest_name))

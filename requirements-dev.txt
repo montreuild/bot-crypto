@@ -24,3 +24,4 @@ httpx==0.27.0              # Client de test de l'API FastAPI
 black==26.3.1              # Code formatting
 ruff==0.15.8               # Linting (remplace flake8/pyflakes, cf. ruff.toml)
 mypy==1.8.0                # Type checking
+types-PyYAML==6.0.12.20240917   # stubs yaml pour mypy (app/ml/recipe.py)

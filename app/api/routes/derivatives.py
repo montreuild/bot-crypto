@@ -67,7 +67,7 @@ def derivatives_data(symbol: str = DEFAULT_CONFIG_SYMBOL, period: str = "1h",
                 logger.debug(f"[API] derivatives refresh sans exchange : {e}")
             store.refresh(exchange, symbol, period, min_interval=0.0)
 
-        out = {"symbol": symbol, "period": period, "metrics": {}}
+        out: dict = {"symbol": symbol, "period": period, "metrics": {}}
         for metric, label in _METRICS.items():
             df = store._load(store._path(symbol, metric))
             out["metrics"][label] = _series_payload(df, limit)

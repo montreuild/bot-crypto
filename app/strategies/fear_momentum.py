@@ -20,6 +20,7 @@ from app.core.indicators import (
     market_structure,
     pre_val,
 )
+from app.core.indicators import num as _num
 from app.core.indicators import (
     rsi as calc_rsi,
 )
@@ -167,7 +168,7 @@ class Strategy(BaseStrategy):
         else:
             # ── Identifier le dip récent (5 dernières barres) ─────────────────
             # Le prix doit avoir baissé d'au moins 1× ATR depuis un récent haut
-            recent_high = float(high[-6:-1].max())
+            recent_high = _num(high[-6:-1].max())
             dip_depth   = (recent_high - c0) / atr_val
 
             # Trop petit : pas un vrai dip (juste du bruit)
@@ -212,9 +213,9 @@ class Strategy(BaseStrategy):
                 # ── Signal 4 : Divergence RSI Haussière ──────────────────────
                 # Prix fait un bas plus bas, mais RSI fait un bas moins bas
                 # = les vendeurs perdent de la force
-                prev_low = float(low[-6:-2].min())
+                prev_low = _num(low[-6:-2].min())
                 if l0 < prev_low:
-                    prev_rsi_low = float(_rsi_s[-6:-2].min())
+                    prev_rsi_low = _num(_rsi_s[-6:-2].min())
                     rsi_div_bull = rsi0 > prev_rsi_low  # RSI ne fait pas un nouveau bas
                 else:
                     rsi_div_bull = False
@@ -230,8 +231,8 @@ class Strategy(BaseStrategy):
                 # ── Signal 6 : ATR Contraction avant le dip ──────────────────
                 # Le dip survient après une période de faible volatilité
                 # = le marché s'est compressé avant → le dip est sain, pas panique
-                atr_before_dip  = float(atr_s[-8:-3].mean())
-                atr_recent      = float(atr_s[-3:-1].mean())
+                atr_before_dip  = _num(atr_s[-8:-3].mean())
+                atr_recent      = _num(atr_s[-3:-1].mean())
                 # ATR récent n'est pas explosif (< 2× l'ATR pré-dip)
                 atr_not_exploding = atr_recent < atr_before_dip * 2.2
                 sig6 = atr_not_exploding
@@ -272,7 +273,7 @@ class Strategy(BaseStrategy):
 
                 # ── R:R check ────────────────────────────────────────────────
                 # Stop sous le plus bas du dip (invalide le setup)
-                dip_low   = float(low[-6:].min())
+                dip_low   = _num(low[-6:].min())
                 stop_long = dip_low - atr_val * 0.25
                 risk      = c0 - stop_long
                 if risk <= 0:
@@ -385,7 +386,7 @@ class Strategy(BaseStrategy):
 
         if trend_bear and htf_ok_s:
             # Rally récent dans une tendance baissière
-            recent_low   = float(low[-6:-1].min())
+            recent_low   = _num(low[-6:-1].min())
             rally_height = (c0 - recent_low) / atr_val
             rally_valid  = 0.8 <= rally_height <= 4.0
 
@@ -409,9 +410,9 @@ class Strategy(BaseStrategy):
                 sig3_s = shoot_star
 
                 # RSI divergence baissière
-                prev_high_price = float(high[-6:-2].max())
+                prev_high_price = _num(high[-6:-2].max())
                 if h0 > prev_high_price:
-                    prev_rsi_high = float(_rsi_s[-6:-2].max())
+                    prev_rsi_high = _num(_rsi_s[-6:-2].max())
                     sig4_s = rsi0 < prev_rsi_high
                 else:
                     sig4_s = False
@@ -438,7 +439,7 @@ class Strategy(BaseStrategy):
                         return self._none(
                             f"MACD divergence haussière ({mh0:+.5f} > {mh1:+.5f}) — short interdit"
                         )
-                    rally_high_s = float(high[-6:].max())
+                    rally_high_s = _num(high[-6:].max())
                     stop_short   = rally_high_s + atr_val * 0.25
                     risk_s       = stop_short - c0
                     if risk_s <= 0:

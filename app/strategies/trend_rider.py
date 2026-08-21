@@ -216,8 +216,9 @@ class Strategy(BaseStrategy):
         if len(df) < self.min_bars_required(params):
             return self._none("historique insuffisant")
         # Chemin backtest : lookup O(1) dans le cache pré-calculé.
-        if self._cache_valid(df):
-            sig = self._sig.get(df.height - 1)
+        cache = self._sig
+        if cache is not None and self._cache_valid(df):
+            sig = cache.get(df.height - 1)
             return dict(sig) if sig else self._none("pas de setup")
         # Chemin live/scanner : calcul sur la fenêtre bornée.
         win = df[-int(p["max_window"]):] if len(df) > int(p["max_window"]) else df

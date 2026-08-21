@@ -15,7 +15,7 @@ import { CostBreakdownCard } from '@/components/cards/cost-breakdown-card';
 import { toast } from 'sonner';
 import {
   AlertCircle, CheckCircle2, TrendingUp, Rocket,
-  Maximize2, FileDown, X, Shield, ChevronDown, ChevronUp,
+  Maximize2, FileDown, X, Shield, ChevronDown, ChevronUp, AlertTriangle,
 } from 'lucide-react';
 import { cn, formatMoney, quoteCurrency } from '@/lib/utils';
 import { LoadingState, ErrorState } from '@/components/ui/query-state';
@@ -278,6 +278,33 @@ export function BacktestResults({
       {comparisonStrategies.length >= 2 && (
         <StrategyComparisonTable strategies={comparisonStrategies} />
       )}
+
+      {/* DOWN-02 — la complétude accompagne les métriques au lieu de vivre à
+          côté. Informatif : aucun seuil ne bloque le backtest. */}
+      {(() => {
+        const troues = Object.entries(byStrategy)
+          .map(([nom, st]) => [nom, st?.data_warning, st?.data_completeness] as const)
+          .filter(([, avert]) => !!avert);
+        if (troues.length === 0) return null;
+        const pire = Math.min(...troues.map(([, , c]) => c ?? 100));
+        return (
+          <Card className="border-l-4 border-l-amber-500">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <AlertTriangle className="w-4 h-4 text-amber-400" />
+                Données incomplètes — {pire.toFixed(1)} % des barres attendues
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-xs">
+              {troues.map(([nom, avert]) => (
+                <p key={nom} className="text-muted-foreground">
+                  <span className="font-mono text-foreground">{nom}</span> — {avert}
+                </p>
+              ))}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {r?.realistic_risk && (
         <Card className="border-l-4 border-l-blue-500">

@@ -72,6 +72,9 @@ def data_refetch(request: Request, symbol: str | None = None, tf: str | None = N
     for s in symbols:
         for t in tfs:
             try:
+                # Un refetch explicite redemande TOUT : créneaux confirmés
+                # absents, historique déclaré épuisé, cooldown de recousage.
+                store.oublier_memos(s, t)
                 df = store.fetch(exchange, s, t, total=int(bars))
                 n = df.height if df is not None else 0
                 results.append({"symbol": s, "tf": t, "bars": n, "ok": n > 0})
@@ -135,9 +138,9 @@ def data_backfill_equities(request: Request, tf: str = "1d", years: int = 20):
     # Lance en thread daemon (évite de bloquer l'API)
     def _run_backfill(job_dict):
         try:
+            from app.core.exchange import create_exchange
             from app.core.timeframes import TF_MINUTES
             from app.core.universe import load_universe
-            from app.core.yfinance_provider import YFinanceProvider
 
             # Calcule le nombre de bougies à fetcher
             minutes_per_bar = TF_MINUTES.get(tf, 1440)
@@ -145,7 +148,7 @@ def data_backfill_equities(request: Request, tf: str = "1d", years: int = 20):
             job_dict["progress"]["total"] = total_bars
 
             # Charge les instruments de l'univers
-            all_symbols = []
+            all_symbols: list = []
             for u in univers:
                 try:
                     syms = load_universe(u)
@@ -154,13 +157,25 @@ def data_backfill_equities(request: Request, tf: str = "1d", years: int = 20):
                     logger.warning(f"[backfill] univers {u} KO : {e}")
             job_dict["progress"]["total"] = len(all_symbols)
 
-            provider = YFinanceProvider(cfg)
+            # API-04 : la boucle appelait `provider.fetch_bars`, méthode qui
+            # n'existe pas — chaque symbole levait un AttributeError avalé par
+            # l'`except` ci-dessous, et le job se terminait « done » avec 0
+            # bougie partout. Même correcte, la lecture directe du provider
+            # n'écrivait rien : c'est le store qui persiste le Parquet. On
+            # passe donc par lui, et par `create_exchange` qui route les
+            # symboles actions vers yfinance (cf. `_provider_for`).
+            exchange = create_exchange(cfg)
+            store = get_store()
             done = 0
             for sym in all_symbols:
                 job_dict["progress"]["current_symbol"] = sym
                 try:
-                    df = provider.fetch_bars(sym, tf, limit=total_bars)
-                    n = len(df) if df is not None else 0
+                    # Même geste explicite que `refetch` : un backfill sur 20 ans
+                    # ne doit pas être court-circuité par un « épuisé » posé par
+                    # le live dans les 6 h précédentes.
+                    store.oublier_memos(sym, tf)
+                    df = store.fetch(exchange, sym, tf, total=total_bars)
+                    n = df.height if df is not None else 0
                     job_dict["results"].append({
                         "symbol": sym, "tf": tf, "bars": n, "ok": n > 0
                     })

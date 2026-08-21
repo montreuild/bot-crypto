@@ -21,7 +21,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Optional
+from typing import Optional, cast
 
 from sqlalchemy import Column, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import sessionmaker
@@ -129,7 +129,7 @@ if Base is not None:
                             "ip": r.ip,
                             "method": r.method,
                             "path": r.path,
-                            "details": json.loads(r.details) if r.details else {},
+                            "details": json.loads(cast(str, r.details)) if r.details else {},
                             "status_code": r.status_code,
                         }
                         for r in rows

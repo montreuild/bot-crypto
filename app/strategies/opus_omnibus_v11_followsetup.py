@@ -219,7 +219,7 @@ _FLIP_LOG_PATH  = os.path.join("logs", "opus_omnibus_v11_followsetup_flips.jsonl
 #  Détection de régime enrichie (identique V11).
 # ─────────────────────────────────────────────────────────────────────────────
 def _classify_regime(adx: float, bull: int, bear: int,
-                     di_diff: float, slope20: float, bb_rank: float,
+                     di_diff: float, slope20: float, bb_rank: Optional[float],
                      adx_threshold: float = 20.0,
                      di_rescue: float = 10.0) -> Tuple[int, str]:
     if adx < adx_threshold:

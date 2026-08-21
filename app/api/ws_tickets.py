@@ -29,16 +29,25 @@ import time
 from typing import Dict
 
 _TTL_SEC = 30.0
+#: Plafond du registre. À 30 s de TTL, un usage normal en tient quelques
+#: dizaines ; ce plafond ne borne donc qu'un client emballé ou malveillant.
+_MAX_TICKETS = 10_000
 _lock = threading.Lock()
 _tickets: Dict[str, float] = {}
 
 
 def issue_ticket(ttl: float = _TTL_SEC) -> tuple[str, float]:
     token = secrets.token_urlsafe(24)
-    exp = time.time() + float(ttl)
+    now = time.time()
     with _lock:
-        _purge_locked(time.time())
-        _tickets[token] = exp
+        if len(_tickets) >= _MAX_TICKETS:
+            _purge_locked(now)
+        if len(_tickets) >= _MAX_TICKETS:
+            # Tous encore valides : on évince le plus proche de l'expiration
+            # plutôt que de refuser. Un jeton perdu coûte une reconnexion ;
+            # un refus coupe le temps réel.
+            _tickets.pop(min(_tickets, key=_tickets.__getitem__), None)
+        _tickets[token] = now + float(ttl)
     return token, float(ttl)
 
 
@@ -47,7 +56,9 @@ def consume_ticket(token: str | None) -> bool:
         return False
     now = time.time()
     with _lock:
-        _purge_locked(now)
+        # Pas de purge ici : elle parcourait tout le registre sous verrou à
+        # CHAQUE handshake. Un jeton expiré est de toute façon refusé par le
+        # test ci-dessous, et `issue_ticket` fait le ménage.
         exp = _tickets.pop(token, None)
     return exp is not None and exp >= now
 
@@ -56,3 +67,8 @@ def _purge_locked(now: float) -> None:
     dead = [k for k, exp in _tickets.items() if exp < now]
     for k in dead:
         _tickets.pop(k, None)
+
+
+def _reset_for_tests() -> None:
+    with _lock:
+        _tickets.clear()

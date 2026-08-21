@@ -2,6 +2,7 @@
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -24,7 +25,10 @@ def _cost_model_for(symbol: str, tf: str) -> dict:
     try:
         from app.core.bot_identity import resolve_venue
         from app.core.execution import cost_model
-        return cost_model(state.cfg, resolve_venue(state.cfg, tf=tf, symbol=symbol))
+        _cfg = state.cfg
+        if _cfg is None:
+            return {}
+        return cost_model(_cfg, resolve_venue(_cfg, tf=tf, symbol=symbol))
     except Exception as e:      # pragma: no cover — défensif
         logger.debug(f"[API] modèle de coûts indisponible ({symbol}/{tf}) : {e}")
         return {}
@@ -121,8 +125,13 @@ def _slot_envelope(strategy: str, tf: str, symbol: str):
     live = (getattr(state.trader, "envelopes", None) or {}) if state.trader else {}
     if key in live:
         return live[key]
+    if state.cfg is None:
+        # État non initialisé : résoudre sur un {} rendrait une enveloppe par
+        # défaut sans rapport avec la config réelle. Mieux vaut pas de carte.
+        return None
     resolved = envelopes_for_active_slots(
-        state.cfg, {tf: [{"name": strategy, "symbol": symbol}]}, default_symbol=symbol)
+        state.cfg, {tf: [{"name": strategy, "symbol": symbol}]},
+        default_symbol=symbol)
     return resolved.get(key)
 
 
@@ -360,7 +369,7 @@ def run_backtest(
                 limit = min(limit, 5000)
 
         # QW-4 : appliquer l'override de cost_model si fourni
-        cost_override_dict = {}
+        cost_override_dict: dict[str, Any] = {}
         if cost_override.strip():
             try:
                 for kv in cost_override.split(","):

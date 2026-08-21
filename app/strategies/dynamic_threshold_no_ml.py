@@ -47,6 +47,7 @@ from typing import Any, Dict, List
 import numpy as np
 import polars as pl
 
+from app.core.indicators import num as _num
 from app.core.indicators import pre_val, precompute_df
 from app.engine.engine import BaseStrategy
 
@@ -75,7 +76,7 @@ def _detect_tf(df: pl.DataFrame) -> str:
     if "time" not in df.columns or len(df) < 3:
         return "unknown"
     try:
-        med_s = float(df["time"].tail(64).diff().drop_nulls().dt.total_microseconds().median()) / 1e6
+        med_s = _num(df["time"].tail(64).diff().drop_nulls().dt.total_microseconds().median()) / 1e6
     except Exception:
         return "unknown"
     if med_s <= 0:

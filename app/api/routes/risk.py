@@ -82,8 +82,9 @@ def get_risk():
     engaged   = _engaged()
     edges     = _edges()
 
-    venues, symbols = {}, {}
-    slots = []
+    venues: dict = {}
+    symbols: dict = {}
+    slots: list = []
 
     # Le niveau VENUE vient de la config, pas des slots actifs : une venue a
     # une enveloppe et un budget de risque dès qu'elle est déclarée, même bot

@@ -4,7 +4,7 @@ Extrait de ``indicators.py`` (découpage V13). Importer de préférence via la
 façade ``app.core.indicators`` qui ré-exporte tous les noms.
 """
 import logging
-from typing import Tuple
+from typing import Any, Tuple
 
 import numpy as np
 import polars as pl
@@ -14,6 +14,20 @@ _log = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════════════
 #  Primitives
 # ══════════════════════════════════════════════════════════════════════════════
+
+def num(val: Any) -> float:
+    """``float()`` sur une agrégation polars — conversion stricte, inchangée.
+
+    `Series.mean()`, `.min()`, `.max()` déclarent une union large
+    (`int | float | Decimal | date | ... | None`) parce qu'elles s'appliquent
+    aussi à des colonnes non numériques et rendent `None` sur une série vide.
+    Ce passe-plat ne fait que dire au typage « ici c'est un nombre » : un
+    `None` lève toujours, comme avant. Ne pas confondre avec `safe_num`, qui
+    REMPLACE la valeur — à réserver aux entrées réellement facultatives, jamais
+    à une fenêtre vide, qui est un défaut de données, pas une valeur.
+    """
+    return float(val)
+
 
 def safe_num(val, default: float = 0.0) -> float:
     """Coercion float robuste : None / NaN / inf / NaT / non-numérique → ``default``.
