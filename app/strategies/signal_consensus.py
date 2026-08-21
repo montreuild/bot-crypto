@@ -3,7 +3,7 @@
 
 import importlib
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import polars as pl
 
@@ -67,7 +67,7 @@ class Strategy(BaseStrategy):
         # réutilisé par tous les trials, qui ne font varier que les paramètres de
         # consensus (sans impact sur les votes des sous-stratégies).
         self._bt_full_df = None
-        self._bt_params: dict = None
+        self._bt_params: Optional[dict] = None
         self._bt_votes: Dict[str, List[Tuple[str, float, str, float]]] = {}
 
     def min_bars_required(self, params: dict | None = None) -> int:
@@ -97,8 +97,8 @@ class Strategy(BaseStrategy):
             if not callable(prep):
                 continue
             try:
-                inst._bt_symbol = getattr(self, "_bt_symbol", None)
-                inst._bt_tf = getattr(self, "_bt_tf", None)
+                inst._bt_symbol = getattr(self, "_bt_symbol", "") or ""
+                inst._bt_tf = getattr(self, "_bt_tf", "") or ""
                 prep(df)
             except Exception as exc:
                 logger.debug(f"[signal_consensus] prepare_for_backtest({name}) KO: {exc}")
@@ -175,7 +175,7 @@ class Strategy(BaseStrategy):
         for i in range(start, n):
             window = df[: i + 1]
             votes_map[str(times[i])] = self._gather_votes(
-                window, self._bt_params, None, symbol)
+                window, self._bt_params or {}, None, symbol)
         self._bt_votes = votes_map
 
     def _build_consensus(self, votes: List[Tuple[str, float, str, float]],
@@ -266,7 +266,7 @@ class Strategy(BaseStrategy):
         if self._bt_votes and "time" in df.columns:
             votes = self._bt_votes.get(str(df["time"][-1]))
         if votes is None:
-            votes = self._gather_votes(df, params, df_htf, symbol)
+            votes = self._gather_votes(df, params or {}, df_htf, symbol)
 
         return self._build_consensus(
             votes, min_consensus, score_threshold, consensus_bonus)

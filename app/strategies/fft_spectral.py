@@ -2,7 +2,7 @@
 
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import polars as pl
@@ -178,7 +178,7 @@ class Strategy(BaseStrategy):
         # des workers d'optimisation et réutilisé entre tous les trials (seul le
         # post-traitement léger — filtre de périodes / top_n — varie par trial).
         self._bt_full_df = None
-        self._bt_params: dict = None
+        self._bt_params: Optional[dict] = None
         self._bt_spectra: Dict[str, Any] = {}
 
     def min_bars_required(self, params: dict | None = None) -> int:

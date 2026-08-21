@@ -454,7 +454,7 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
                  setup: str, score: float, detail: str,
                  trend: int = 0, zone: str = "",
                  extra_targets: Optional[List[float]] = None,
-                 cal_targets: Optional[List[float]] = None,
+                 cal_targets: Optional[List[Tuple[float, str]]] = None,
                  sd_targets: Optional[List[float]] = None) -> Optional[dict]:
     risk = (entry - sl) if side == "long" else (sl - entry)
     if risk <= 0 or entry <= 0:

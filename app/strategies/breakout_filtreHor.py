@@ -18,6 +18,7 @@ import polars as pl
 
 from app.core.indicators import bb_squeeze as calc_squeeze
 from app.core.indicators import ema_window, htf_trend, pre_val
+from app.core.indicators import num as _num
 from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
@@ -148,8 +149,8 @@ class Strategy(BaseStrategy):
         trend_bear_soft = (c_now < lt * 1.03 and c_now < lm * 0.99)
 
         # ── Canal Donchian ───────────────────────────────────────────────────
-        highest = float(high[-(period + 1):-1].max())
-        lowest  = float(low[-(period + 1):-1].min())
+        highest = _num(high[-(period + 1):-1].max())
+        lowest  = _num(low[-(period + 1):-1].min())
 
         # ── ATR — série pré-calculée ─────────────────────────────────────────
         atr_s   = df["_pre_atr14"]
@@ -160,7 +161,7 @@ class Strategy(BaseStrategy):
         body    = abs(c_now - o_now)
         body_ok = body >= atr_now * body_min_atr
 
-        atr_prev  = float(atr_s[-(squeeze_bars + 1):-1].mean())
+        atr_prev  = _num(atr_s[-(squeeze_bars + 1):-1].mean())
         atr_ratio = atr_now / max(atr_prev, 1e-9)
         expanding = atr_ratio >= atr_expan_min
 

@@ -19,11 +19,12 @@ Portage fidèle du PineScript `BTC Smart Trend V6 - ADX Filter` :
     d'ambiguïté high/low — cohérent avec l'hypothèse conservatrice de TradingView.
 """
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import polars as pl
 
+from app.core.indicators import num as _num
 from app.core.indicators import pre_val
 from app.core.indicators_core import _true_range
 from app.core.indicators_core import ema as _ema
@@ -96,10 +97,10 @@ class Strategy(BaseStrategy):
     def __init__(self):
         # Cache Wilder ATR/ADX pré-calculé sur le df complet (backtest) : évite
         # O(n²) sur la boucle. Rempli par prepare_for_backtest, lu en O(1).
-        self._w_atr: np.ndarray = None
-        self._w_adx: np.ndarray = None
-        self._w_close_ref: np.ndarray = None
-        self._w_len_key: int = None
+        self._w_atr: Optional[np.ndarray] = None
+        self._w_adx: Optional[np.ndarray] = None
+        self._w_close_ref: Optional[np.ndarray] = None
+        self._w_len_key: Optional[int] = None
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Pré-calcule ATR/ADX Wilder sur toute la fenêtre (une passe O(n))."""
@@ -117,11 +118,12 @@ class Strategy(BaseStrategy):
         """(ATR Wilder, ADX Wilder) de la dernière barre. Utilise le cache backtest
         si ``df`` en est un préfixe causal (même longueur/close), sinon calcule sur
         la fenêtre (live — RMA convergée sur ~500 barres)."""
-        if (self._w_atr is not None and self._w_len_key == atr_len == adx_len):
+        atr_c, adx_c, ref = self._w_atr, self._w_adx, self._w_close_ref
+        if (atr_c is not None and adx_c is not None and ref is not None
+                and self._w_len_key == atr_len == adx_len):
             idx = df.height - 1
-            ref = self._w_close_ref
             if 0 <= idx < len(ref) and abs(float(df["close"][-1]) - ref[idx]) < 1e-6:
-                return float(self._w_atr[idx]), float(self._w_adx[idx])
+                return float(atr_c[idx]), float(adx_c[idx])
         atr, adx = _wilder_atr_adx(df, atr_len)
         return float(atr[-1]), float(adx[-1])
 
@@ -166,8 +168,8 @@ class Strategy(BaseStrategy):
         if len(close) < bb_len + 1:
             return None, None
         window = close[-(bb_len + 1):-1]        # bb_len valeurs, finissant à t-1
-        mid   = float(window.mean())
-        sigma = float(window.std(ddof=0))
+        mid   = _num(window.mean())
+        sigma = _num(window.std(ddof=0))
         return mid - bb_mult * sigma, mid + bb_mult * sigma
 
     def score(self, df: pl.DataFrame, params: dict | None = None,

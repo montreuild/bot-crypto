@@ -90,7 +90,20 @@ class BaseStrategyML(BaseStrategy):
     retrain_interval_h: int = 6
     model_dir: str = "models"
     _cancel_event: Any
-    managed_externally: bool = False
+
+    #: Propriété plutôt qu'attribut simple : `MLBackendMixin` en expose une,
+    #: qui délègue au backend. Deux formes différentes sur les deux bases d'une
+    #: même stratégie (`class Strategy(MLBackendMixin, BaseStrategyML)`) rendait
+    #: l'attribut de base mort sans que rien ne le signale.
+    _managed_ext: bool = False
+
+    @property
+    def managed_externally(self) -> bool:
+        return self._managed_ext
+
+    @managed_externally.setter
+    def managed_externally(self, v: bool) -> None:
+        self._managed_ext = bool(v)
 
     # ── Contrat de gate (ML-02) ────────────────────────────────────────────
     # Déclaratif : conventions de labels/métrique de CETTE recette, quand elle

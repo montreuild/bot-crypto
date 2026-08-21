@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 import polars as pl
 
 from app.core.indicators import macd_hist_last3, pre_val
+from app.core.indicators import num as _num
 from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
@@ -94,8 +95,8 @@ class Strategy(BaseStrategy):
         # ── Canal Donchian(period) ──────────────────────────────────────────────
         # On exclut la bougie courante : la cassure doit dépasser le plus haut/bas
         # des `period` bougies précédentes.
-        highest = float(high[-(period + 1):-1].max())
-        lowest  = float(low[-(period + 1):-1].min())
+        highest = _num(high[-(period + 1):-1].max())
+        lowest  = _num(low[-(period + 1):-1].min())
 
         # ── ATR — colonne pré-calculée ATR(14) ──────────────────────────────────
         atr_now = pre_val(df, "_pre_atr14")

@@ -13,6 +13,7 @@ from app.core.indicators_core import engulfing as _engulfing
 from app.core.indicators_core import pin_bar as _pin_bar
 from app.core.smc.state import structure_states
 from app.core.timeframes import HTF_SECONDS_MAP as _HTF_SEC_MAP
+from app.strategies.smart_money_host import SmartMoneyHost
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ def _correle_par_defaut(symbole: str, win: pl.DataFrame) -> str:
     chemin = pathlib.Path("data/ohlcv") / cible / f"{tf}.parquet"
     return str(chemin) if chemin.exists() else ""
 
-class _AnalysisMixin:
+class _AnalysisMixin(SmartMoneyHost):
     def _build_aux(self, win: pl.DataFrame, p: Dict[str, Any],
                    res: dict) -> Dict[str, Any]:
         """Séries auxiliaires par barre (toutes causales) consommées par
@@ -100,8 +101,8 @@ class _AnalysisMixin:
                 m = int(p["amd_bars"])
                 hi = win["high"].rolling_max(m).shift(1)
                 lo = win["low"].rolling_min(m).shift(1)
-                rng = (hi - lo).fill_null(float("inf")).to_numpy().astype(float)
-                aux["comp"] = rng <= float(p["amd_range_atr"]) * res["_atr_arr"]
+                rng_arr = (hi - lo).fill_null(float("inf")).to_numpy().astype(float)
+                aux["comp"] = rng_arr <= float(p["amd_range_atr"]) * res["_atr_arr"]
         else:
             aux["comp"] = None
         if bool(p.get("ext_structure_filter", False)):
@@ -176,7 +177,7 @@ class _AnalysisMixin:
         return tuple(sorted((k, str(v)) for k, v in p.items()))
 
     def _analyze_cached(self, win: pl.DataFrame, p: Dict[str, Any]):
-        ts = None
+        ts: Any = None
         if "time" in win.columns and win.height:
             try:
                 ts = int(win["time"][-1].timestamp())

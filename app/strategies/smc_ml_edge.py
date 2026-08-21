@@ -609,7 +609,7 @@ class Strategy(BaseStrategyML):
                 f"(TF demandé={tf_key!r}, clés={sorted(self._trained)})")
             return
         prefix = path[:-4] if path.endswith(".lgb") else path
-        self._trained[cle].save(prefix)
+        self._trained[cle].save(prefix, extra_meta)
 
     def load_model(self, path: str) -> bool:
         from app.ml.backend.persistence import load_amp_dir_bundle

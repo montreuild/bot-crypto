@@ -36,6 +36,7 @@ from app.core.indicators_core import (  # noqa: F401
     green_ratio,
     keltner,
     macd,
+    num,
     obv,
     pin_bar,
     roc,

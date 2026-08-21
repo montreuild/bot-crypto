@@ -6,9 +6,10 @@ from typing import Any, Dict, List, Optional
 import polars as pl
 
 from app.core import smc
+from app.strategies.smart_money_host import SmartMoneyHost
 
 
-class _PlansMixin:
+class _PlansMixin(SmartMoneyHost):
     def score(self, df: pl.DataFrame, params: dict | None = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = self._p(params)
@@ -20,8 +21,9 @@ class _PlansMixin:
         if len(df) < self.min_bars_required(params):
             return self._none("historique insuffisant")
 
-        if self._cache_valid(df):
-            sig = self._bt_signals.get(df.height - 1)
+        cache = self._bt_signals
+        if cache is not None and self._cache_valid(df):
+            sig = cache.get(df.height - 1)
             return dict(sig) if sig else self._none("aucun setup SMC")
 
         win = df[-int(p["max_window"]):] if len(df) > int(p["max_window"]) else df

@@ -30,8 +30,8 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
-      - name: Mypy (app/core + app/engine + app/live + app/ml + app/api)
-        run: python -m mypy app/core app/engine app/live app/ml app/api
+      - name: Mypy (app/)
+        run: python -m mypy app/core app/engine app/live app/ml app/api app/strategies
 
   test:
     runs-on: ubuntu-latest

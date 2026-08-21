@@ -19,6 +19,7 @@ from app.core.indicators import (
     pre_val,
     support_resistance_levels,
 )
+from app.core.indicators import num as _num
 from app.core.indicators import (
     rsi as calc_rsi,
 )
@@ -377,8 +378,8 @@ class Strategy(BaseStrategy):
 
         # ── Retracements de Fibonacci ─────────────────────────────────────────
         lb         = min(sr_lookback, len(high))
-        fib_high   = float(high[-lb:].max())
-        fib_low    = float(low[-lb:].min())
+        fib_high   = _num(high[-lb:].max())
+        fib_low    = _num(low[-lb:].min())
         fib_range  = fib_high - fib_low
         fib_levels = {
             "0.236": fib_high - 0.236 * fib_range,
@@ -398,7 +399,7 @@ class Strategy(BaseStrategy):
         )
 
         # ── Analyse FFT spectrale ─────────────────────────────────────────────
-        fft_result = {
+        fft_result: Dict[str, Any] = {
             "direction": 0, "confidence": 0.0,
             "cycles": [], "avg_signal": 0.0, "next_reversal": 0.0,
         }
