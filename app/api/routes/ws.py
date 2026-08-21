@@ -34,7 +34,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional, Set
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect
 
 from app.api import state
 from app.api.helpers import verify_api_key
@@ -195,8 +195,15 @@ async def websocket_endpoint(
 
 # ── Endpoint REST pour debug ───────────────────────────────────────────────
 @router.post("/api/ws/ticket", dependencies=[Depends(verify_api_key)])
-def ws_ticket():
-    """Jeton WS à usage unique, 30 s — jamais la clé API permanente."""
+@state.limiter.limit("60/minute")
+def ws_ticket(request: Request):
+    """Jeton WS à usage unique, 30 s — jamais la clé API permanente.
+
+    SEC-02 : le débit est plafonné assez haut pour ne jamais gêner une
+    reconnexion légitime — le frontend redemande un jeton à chaque tentative,
+    avec recul exponentiel — mais assez bas pour qu'un client emballé ne
+    remplisse pas le registre.
+    """
     token, ttl = issue_ticket()
     return {"ticket": token, "expires_in": ttl}
 
