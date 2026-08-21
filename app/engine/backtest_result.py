@@ -70,6 +70,11 @@ class BacktestPayload:
     cost_model: Any
     realistic_risk: bool
     realistic_risk_diagnostics: Any
+    #: DOWN-02 — complétude de la série (0-100) et son avertissement. Informatif :
+    #: aucun seuil ne bloque, mais le chiffre accompagne les métriques au lieu
+    #: de vivre à côté d'elles.
+    data_completeness: Optional[float]
+    data_warning: Optional[str]
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -90,13 +95,18 @@ class BacktestResult:
     def __init__(self, trades: List[dict], equity_curve: List[float],
                  initial_capital: float, timestamps: Optional[List[str]] = None,
                  timeframe: str = "1d", rejections: Optional[dict] = None,
-                 n_bars: int = 0, equity_mtm: Optional[List[float]] = None):
+                 n_bars: int = 0, equity_mtm: Optional[List[float]] = None,
+                 symbol: str = "", data_completeness: Optional[float] = None):
         self.trades          = trades
         self.equity_curve    = equity_curve
         self.equity_mtm      = equity_mtm or []
         self.initial_capital = initial_capital
         self.timestamps      = timestamps or []
         self._timeframe      = timeframe
+        #: DOWN-01 : l'annualisation dépend de la place, pas du seul timeframe.
+        self._symbol         = symbol
+        #: DOWN-02 : complétude de la série (0-100), portée jusqu'à l'UI.
+        self.data_completeness = data_completeness
         # equity_curve n'a un point qu'à chaque trade — seule _n_bars mesure le temps.
         self._n_bars         = int(n_bars or 0)
         self.rejections      = rejections or {}
@@ -104,7 +114,7 @@ class BacktestResult:
 
     def _years(self) -> Optional[float]:
         """Durée en années, ou None (jamais une durée inventée pour annualiser)."""
-        bpy = _bars_per_year(self._timeframe)
+        bpy = _bars_per_year(self._timeframe, self._symbol)
         if not self._n_bars or not bpy:
             return None
         return self._n_bars / bpy
@@ -149,7 +159,7 @@ class BacktestResult:
                 self.sharpe = None
             else:
                 ann_factor        = np.sqrt(returns_per_year(
-                    len(returns), self._years(), _bars_per_year(self._timeframe)))
+                    len(returns), self._years(), _bars_per_year(self._timeframe, self._symbol)))
                 raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
                 self.sharpe       = _sf(raw_sharpe, 0.0)
         else:
@@ -344,7 +354,7 @@ class BacktestResult:
             from app.core.performance_metrics import compute_extended_metrics
             closed = [t for t in self.trades if t.get("status", "").startswith("closed")]
             prices = getattr(self, "_close_prices", None) or []
-            bars_per_year = int(_bars_per_year(self._timeframe) or 252)
+            bars_per_year = int(_bars_per_year(self._timeframe, self._symbol) or 252)
             # `_n_bars` est fourni au constructeur : la durée est connue dès le
             # premier appel, plus besoin d'attendre `_add_buy_and_hold`.
             years = self._years()
@@ -443,7 +453,7 @@ class BacktestResult:
             # stratégie — qui peut différer de celle du portefeuille entier.
             from app.core.performance_metrics import returns_per_year as _rpy
             ann_s  = np.sqrt(_rpy(len(rets_s), self._years(),
-                                  _bars_per_year(self._timeframe)))
+                                  _bars_per_year(self._timeframe, self._symbol)))
             std_s  = float(rets_s.std())
             from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES as _MIN_SH
             if len(rets_s) < _MIN_SH:
@@ -523,6 +533,27 @@ class BacktestResult:
             cost_model=getattr(self, "cost_model", None),
             realistic_risk=getattr(self, "realistic_risk", False),
             realistic_risk_diagnostics=getattr(self, "realistic_risk_diagnostics", None),
+            data_completeness=self.data_completeness,
+            data_warning=self.data_warning(),
+        )
+
+    def data_warning(self) -> Optional[str]:
+        """Message d'alerte si la série est trouée — None si elle est saine.
+
+        Il nomme les conséquences plutôt que de répéter le pourcentage : les
+        indicateurs sont positionnels (une moyenne 14 ne couvre pas la durée
+        attendue), et la durée d'une position vient du compte de barres.
+        """
+        c = self.data_completeness
+        if c is None or c >= 99.0:
+            return None
+        gravite = "sévèrement" if c < 90.0 else "partiellement"
+        return (
+            f"Série {gravite} incomplète ({c:.1f} % des barres attendues). "
+            f"Les indicateurs sont calculés en nombre de barres, pas en durée : "
+            f"une moyenne mobile 14 y couvre plus de temps que prévu, et la "
+            f"durée des positions est sous-estimée. Résultats à interpréter "
+            f"avec prudence."
         )
 
     def to_dict(self) -> dict:

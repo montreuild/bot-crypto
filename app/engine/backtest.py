@@ -30,6 +30,34 @@ from app.engine.position_lifecycle import PositionLifecycleMixin
 logger = logging.getLogger(__name__)
 
 
+def _mesurer_completude(df, tf: str, symbol: str):
+    """Complétude de la série en %, ou None si non mesurable.
+
+    DOWN-02 : l'indicateur existait mais n'était consommé par personne — un
+    backtest tournait sur une série à 26 % sans que rien ne le signale. Il
+    accompagne désormais les métriques, sans bloquer : c'est un avertissement,
+    pas un gate.
+    """
+    try:
+        from app.core import ohlcv_absents as _abs
+        from app.core.candle_store import get_store
+        from app.core.ohlcv_gaps import (
+            calendar_for_symbol,
+            completeness_from_gaps,
+            detect_ohlcv_gaps,
+        )
+        try:
+            absents = _abs.charger(get_store()._path(symbol, tf), symbol, tf)
+        except Exception:
+            absents = set()
+        gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol),
+                                 absents=absents)
+        return round(completeness_from_gaps(len(df), gaps) * 100, 2)
+    except Exception as e:
+        logger.debug("[Backtest] complétude non mesurable %s/%s : %s", symbol, tf, e)
+        return None
+
+
 def _iso_of(df: pl.DataFrame, idx: int) -> Optional[str]:
     """``time`` de la barre ``idx`` en ISO (borne ``as_of`` du registre ML)."""
     if df is None or len(df) == 0 or "time" not in df.columns:
@@ -648,8 +676,10 @@ class Backtester(PositionLifecycleMixin):
             )
 
         _tf = timeframe or self.cfg["trading"].get("timeframe", "1h")
+        _completude = _mesurer_completude(df, _tf, symbol)
         result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg),
-                                timestamps, timeframe=_tf,
+                                timestamps, timeframe=_tf, symbol=symbol,
+                                data_completeness=_completude,
                                 rejections=self.rejections.as_dict(),
                                 # Durée réelle du run : les bougies parcourues,
                                 # hors warmup. Indispensable à toute
