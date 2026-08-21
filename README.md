@@ -144,7 +144,7 @@ brique du bot — c'est ce qui permet de savoir où écrire sans relire 340 lign
 | Fichier | Contenu | Brique |
 |---|---|---|
 | `config/venues.yaml` | où et comment on exécute : spot/margin OKX, actions Euronext, coûts | `app/core/bot_identity.py` |
-| `config/risk.yaml` | combien engager, quand refuser, où mettre le stop | `app/core/risk_gate.py` |
+| `config/risk.yaml` | combien engager, quand refuser, où mettre le stop | `app/core/risk/gate.py` |
 | `config/data.yaml` | ce que le bot regarde : symboles, univers, fournisseurs | `app/engine/scanner.py` |
 | `config/lifecycle.yaml` | quels bots vivent, avec quel capital | `app/live/slot_lifecycle.py` |
 | `config/ops.yaml` | API web, logs, base, alertes | `app/api/` |
