@@ -38,11 +38,22 @@ def _as_dt(ts) -> datetime:
         if ts.tzinfo is None:
             return ts.replace(tzinfo=timezone.utc)
         return ts
+    if isinstance(ts, str):
+        # Les dicts de trous ne portent que `str(time)[:16]`.
+        d = datetime.fromisoformat(ts.replace(" ", "T"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
     return datetime.fromtimestamp(float(ts), tz=timezone.utc)
 
 
-def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> list:
-    """Trous successifs au-delà du seuil attendu (calendaire si fourni)."""
+def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "",
+                      absents: set | None = None) -> list:
+    """Trous successifs au-delà du seuil attendu (calendaire si fourni).
+
+    ``absents`` : créneaux (ms) que la source a confirmé ne pas publier — voir
+    ``app.core.ohlcv_absents``. Ils sont retirés du décompte : un quart d'heure
+    sans transaction n'est pas une donnée manquante, et le compter comme telle
+    faisait afficher 92 % de complétude à un fichier complet à 100 %.
+    """
     if df is None or len(df) < 2 or "time" not in df.columns:
         return []
     expected_mins = _TF_MINS.get(timeframe, 60)
@@ -88,6 +99,9 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
             # Calendrier incomplet ou horodatage inattendu : repli arithmétique
             # plutôt que silence — un trou non signalé ne se rattrape jamais.
             manquantes = max(0, int(round(delta_secs / expected_secs)) - 1)
+        if manquantes > 0 and absents:
+            manquantes -= _absents_dans(
+                times[i - 1], times[i], expected_secs, absents)
         if manquantes > 0:
             gaps.append({
                 "index":        int(i),
@@ -100,6 +114,41 @@ def detect_ohlcv_gaps(df, timeframe: str, calendar=None, symbol: str = "") -> li
 
 
 
+
+
+def _absents_dans(avant, apres, expected_secs: float, absents: set) -> int:
+    """Combien de créneaux de ``]avant, apres[`` sont confirmés absents."""
+    pas = int(expected_secs * 1000)
+    if pas <= 0 or not absents:
+        return 0
+    try:
+        t = int(_as_dt(avant).timestamp() * 1000) + pas
+        fin = int(_as_dt(apres).timestamp() * 1000)
+    except Exception:
+        return 0
+    n = 0
+    while t < fin:
+        if t in absents:
+            n += 1
+        t += pas
+    return n
+
+
+def creneaux_manquants(avant, apres, expected_secs: float) -> list:
+    """Horodatages (ms) de ``]avant, apres[`` — les barres qui manquent."""
+    pas = int(expected_secs * 1000)
+    if pas <= 0:
+        return []
+    try:
+        t = int(_as_dt(avant).timestamp() * 1000) + pas
+        fin = int(_as_dt(apres).timestamp() * 1000)
+    except Exception:
+        return []
+    out = []
+    while t < fin:
+        out.append(t)
+        t += pas
+    return out
 
 
 def _one_delta_secs(a, b) -> float:

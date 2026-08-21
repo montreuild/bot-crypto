@@ -72,6 +72,11 @@ def data_refetch(request: Request, symbol: str | None = None, tf: str | None = N
     for s in symbols:
         for t in tfs:
             try:
+                # Un refetch explicite redemande TOUT, y compris les créneaux
+                # que la source avait confirmé ne pas publier : c'est le seul
+                # geste par lequel l'opérateur dit « refais la mesure ».
+                from app.core import ohlcv_absents as _abs
+                _abs.oublier(store._path(s, t), s, t)
                 df = store.fetch(exchange, s, t, total=int(bars))
                 n = df.height if df is not None else 0
                 results.append({"symbol": s, "tf": t, "bars": n, "ok": n > 0})
