@@ -2,6 +2,10 @@
 
 Audit du 2026-08-20 sur `bb94993`. Delta audité : `a6659e1..HEAD`.
 
+> **État des corrections : [`98-SUIVI.md`](98-SUIVI.md).**
+> Ce registre décrit les constats *tels que trouvés*. 28 sur 35 sont
+> traités, dont les 11 P1.
+
 **35 constats** : 0 P0, 11 P1, 15 P2, 9 P3.
 **23 CONFIRMÉS par exécution**, 4 PLAUSIBLES (lecture seule), 8 améliorations
 vérifiées.

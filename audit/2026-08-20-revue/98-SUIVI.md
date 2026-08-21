@@ -1,0 +1,115 @@
+# 98 — Suivi des constats
+
+État au 2026-08-21. Le registre (`99-REGISTRE.md`) décrit les constats **tels
+que trouvés** le 20 août ; ce document dit ce qui a été livré depuis.
+
+**28 constats traités sur 35.** Les 11 P1 sont clos.
+
+---
+
+## P1 — tous livrés
+
+| ID | Livré par | Vérification |
+|---|---|---|
+| `CI-01` | `28b0ff9` | `ruff check .` vert |
+| `CI-02` | `28b0ff9` | `mypy` périmètre CI vert |
+| `FIN-01` | `0bee794` | écart de frais 0,192823 → **0,000000** |
+| `FIN-02` | `0bee794` | Σ`pnl` − équité +0,4634 → **−4e-5** (arrondi) |
+| `TEST-01` | `0bee794` | 2 invariants en égalité, 3 stratégies |
+| `DAT-01` | `93ed667` puis `83c03c9` | BTC 1h : 20 trous, aucun masqué ; `max_gap_seconds` retiré de la détection |
+| `PERF-01` | `93ed667` | ×1,75 plus lent → **×3,4 plus rapide** qu'avant le delta |
+| `OPT-01` | `862c0fb`, `6a982cc` | un candidat PF+expectancy est accepté |
+| `OPT-02` | `862c0fb` | DD 80 % vs 10 % → **409** sur la route manuelle |
+| `BT-01` | `35061bd` | résolveur unique, symétrie testée |
+| `ML-01` | `e5b0406` | le verdict `block` ramène la décision à `keep` |
+
+## P2 — livrés
+
+| ID | Livré par | Note |
+|---|---|---|
+| `ML-02` | `db3d50c` | effectifs réels par classe ; 6 scénarios de déséquilibre bloquent |
+| `OPT-03` | `6a982cc` | plafond absolu de drawdown, aligné sur `trading.max_drawdown_global` |
+| `API-01` | `59aa260` | image Docker de test complétée |
+| `API-02` | `59aa260` | comparaison champ par champ ; une dérive réelle (`alpha_vs_bh`) corrigée |
+| `ARCH-01` | `caaf06b` | 90 imports migrés, 15 shims + `_compat` supprimés |
+| `LIVE-01` | `59aa260` | alerte de stop : sens du risque rétabli |
+| `LIVE-02` | `59aa260` | statut inconnu = échec ; `_order_rejected` séparée pour les ordres au repos |
+| `UX-01/02/03` | `0948ad2` | `aria-pressed`, `role="group"`, nom accessible complet |
+| `SEC-01` | `59aa260` | contrainte mono-processus écrite et testée |
+| `DAT-04` | `59aa260` | horodatage nul : paire ignorée avec log |
+| `DETTE-01` | `89ec019` | 14 `utcnow()` ; avertissements 128 → 46 |
+| `TEST-02` | `187fd43` | `app/live` : 176 erreurs → 0, ajouté au job CI |
+
+## P3 — livrés
+
+| ID | Livré par |
+|---|---|
+| `OPT-04` | `862c0fb` — condition simplifiée |
+| `ARCH-03` | `89ec019` — contrat de schéma `build_features` (462 colonnes) |
+
+---
+
+## Reste ouvert
+
+| ID | Sév. | Constat | Effort |
+|---|---|---|---|
+| `TEST-02` (suite) | P2 | `app/ml`, `app/api`, `app/strategies` hors périmètre mypy | 2-3 j |
+| `PERF-02` | P2 | Rescan à chaque sauvegarde — largement atténué par `PERF-01`, à re-mesurer | à mesurer |
+| `ARCH-02` | P3 | `smart-replay-view.tsx` (744 l.), `backtest-results.tsx` (681 l.) | 8 h |
+| `SEC-02` | P3 | Pas de limite de débit sur `POST /api/ws/ticket` | 1 h |
+| `ML-03b` | P3 | `fit_trace` par thread : faux négatif en parallélisé | 1 h |
+| `FE-02` | P3 | Jeton WS redemandé à chaque reconnexion — correct, signalé pour mémoire | — |
+| `BT-03` | P3 | Mode ML des folds forcé à `frozen` | — |
+| `DETTE-04` | P3 | 11 fichiers Python > 700 lignes | — |
+
+---
+
+## Trouvailles hors périmètre, corrigées en route
+
+Cinq défauts qu'aucun constat d'audit ne visait, rencontrés en corrigeant les
+autres :
+
+| Où | Défaut |
+|---|---|
+| `_place_exchange_stop` | `_order_failed` appliquée à la **pose** d'un stop : toute pose réussie sur un exchange renvoyant `status="open"` était déclarée en échec — le bot renonçait à protéger la position, ou annulait un stop actif (`59aa260`) |
+| `AutoOptMixin` | Héritait d'`OptimizerHost`, le contrat du moteur d'optimisation, alors que c'est un mixin de `LiveTrader`. Seul `cfg` est commun aux deux, ce qui masquait l'erreur (`187fd43`) |
+| `LiveHost` | `_margin_interest` déclaré `dict` alors que c'est un `float` ; `signal_log` déclaré `list` alors que c'est un `deque` (`187fd43`) |
+| `generated.ts` | `alpha_vs_bh` ajouté à la main faute de déclaration côté Pydantic — le contrat vivait en désaccord avec sa source (`59aa260`) |
+| `health_mixin` | Deux variables `eq` dans la même portée : une courbe d'équité et un cumul de PnL, la seconde masquant la première (`187fd43`) |
+
+---
+
+## Décisions de trading tranchées
+
+Le registre les laissait à l'arbitrage. Résolues **sur preuve**, dans le sens
+de la cohérence backtest/live :
+
+**`FIN-04` — pyramidage soumis à la courbe de risque : conservé.**
+`RiskSizer.compute_size` applique déjà le frein de volatilité et la courbe de
+drawdown, et le pyramidage **live** passe par là. Le changement ne durcit pas
+le backtest : il supprime une divergence backtest/live.
+
+**`OPT-03` — score hyperbolique : conservé, mais ancré.**
+L'ancienne forme linéaire s'annulait à 30 %, rendant 35 % et 90 % de drawdown
+indiscernables. Score lisse pour classer, gate dur pour admettre — et le gate
+a reçu un **plafond absolu** (`6a982cc`) aligné sur `trading.max_drawdown_global`,
+qui supprime l'effet cliquet du seuil purement relatif.
+
+**`BT-01` — `realistic_risk` rétabli à `True`, des deux côtés.**
+Un résolveur unique (`app.core.is_oos.resolve_realistic_risk`) sert au baseline
+**et** au walk-forward. Le live applique ses circuit breakers ; un walk-forward
+qui les ignore promet un comportement que le live ne reproduira pas.
+
+---
+
+## Ce qui a changé dans la façon de travailler
+
+Les onze P1 partageaient une forme : **un garde-fou écrit, mais relié à aucune
+décision**. La règle retenue — et inscrite dans `CONTRIBUTING.md` — est qu'un
+correctif de garde-fou s'accompagne d'un test qui **échoue avant** lui. Elle a
+été appliquée à chacun des correctifs de ce suivi.
+
+Deux fois, cette règle a rattrapé une erreur de ma part : un `aria-label` qui
+remplaçait le texte visible (cassant la commande vocale, WCAG 2.5.3), et un
+retrait trop large dans la détection de trous qui faisait remonter 1 376 faux
+positifs sur les actions.

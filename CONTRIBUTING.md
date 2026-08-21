@@ -206,6 +206,50 @@ def test_pullback_trend_signal():
 - pytest-cov — Coverage
 - httpx — Tests API
 
+### Un correctif = un test qui échoue d'abord
+
+Pour tout garde-fou ou correction de comportement, **écrire d'abord le test qui
+échoue sur le code actuel**, puis corriger. La revue du 20 août a trouvé six
+garde-fous écrits mais reliés à aucune décision — refus de drawdown non
+transmis à la route d'application, verdict de qualité ML qui n'alimentait qu'un
+log, critères de comparaison dont ni les valeurs ni le baseline n'étaient
+fournis. Tous exprimaient la bonne intention ; aucun n'avait de test qui
+échoue avant le correctif, et aucun n'a jamais rien bloqué.
+
+---
+
+## ✅ Ce que la CI vérifie
+
+Les huit jobs bloquent la PR. Les reproduire en local :
+
+```bash
+ruff check .
+python -m mypy app/core app/engine app/live app/api/ws_tickets.py app/ml/overfitting_gate.py
+pytest tests/ -q -m "not slow" --cov=app --cov-fail-under=64
+```
+
+```bash
+cd frontend && npm run lint && npm run type-check && npm run test:coverage && npm run build
+```
+
+| Job | Portée |
+|---|---|
+| `lint` | `ruff check .` — tout le dépôt, version épinglée |
+| `mypy` | `app/core`, `app/engine`, `app/live` + 2 modules ; `check_untyped_defs` actif sur ces paquets (`mypy.ini`) |
+| `test` | pytest hors `slow`, **plancher de couverture 64 %** |
+| `frontend` | eslint, `tsc --noEmit`, vitest, build |
+| `e2e` | Playwright — chargement des pages |
+| `a11y` | axe sur 20 pages |
+| `visual` | instantanés de rendu |
+| `security` | `pip-audit` |
+
+Les tests marqués `slow` tournent dans un workflow séparé
+(`.github/workflows/slow.yml`), pas sur les PR.
+
+**Périmètre mypy** — il s'élargit par lots. `app/ml`, `app/api` et
+`app/strategies` ne sont pas encore couverts : y ajouter du code non typé ne
+bloque pas aujourd'hui, mais le lot suivant le rattrapera.
+
 ---
 
 ## 📚 Documentation
