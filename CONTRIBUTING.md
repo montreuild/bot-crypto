@@ -224,7 +224,7 @@ Les huit jobs bloquent la PR. Les reproduire en local :
 
 ```bash
 ruff check .
-python -m mypy app/core app/engine app/live app/ml app/api/ws_tickets.py
+python -m mypy app/core app/engine app/live app/ml app/api
 pytest tests/ -q -m "not slow" --cov=app --cov-fail-under=64
 ```
 
@@ -235,7 +235,7 @@ cd frontend && npm run lint && npm run type-check && npm run test:coverage && np
 | Job | Portée |
 |---|---|
 | `lint` | `ruff check .` — tout le dépôt, version épinglée |
-| `mypy` | `app/core`, `app/engine`, `app/live`, `app/ml` + `ws_tickets` ; `check_untyped_defs` actif sur ces paquets (`mypy.ini`) |
+| `mypy` | `app/core`, `app/engine`, `app/live`, `app/ml`, `app/api` ; `check_untyped_defs` actif sur ces paquets (`mypy.ini`) |
 | `test` | pytest hors `slow`, **plancher de couverture 64 %** |
 | `frontend` | eslint, `tsc --noEmit`, vitest, build |
 | `e2e` | Playwright — chargement des pages |
@@ -246,9 +246,9 @@ cd frontend && npm run lint && npm run type-check && npm run test:coverage && np
 Les tests marqués `slow` tournent dans un workflow séparé
 (`.github/workflows/slow.yml`), pas sur les PR.
 
-**Périmètre mypy** — il s'élargit par lots. `app/api` et `app/strategies`
-ne sont pas encore couverts : y ajouter du code non typé ne
-bloque pas aujourd'hui, mais le lot suivant le rattrapera.
+**Périmètre mypy** — il s'élargit par lots. `app/strategies` n'est pas
+encore couvert : y ajouter du code non typé ne bloque pas aujourd'hui,
+mais le lot suivant le rattrapera.
 
 ---
 

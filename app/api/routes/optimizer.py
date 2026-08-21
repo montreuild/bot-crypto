@@ -85,6 +85,8 @@ def optimizer_start(
     n_trials = max(1, min(n_trials, 200))
     if limit > 0:
         limit = max(100, min(limit, 50000))
+    if state.cfg is None:
+        raise HTTPException(503, "Config non chargée")
     _cpu_count = os.cpu_count() or 1
     if n_jobs <= 0:
         n_jobs = max(1, _cpu_count - 1)
@@ -146,13 +148,16 @@ def optimizer_start(
             return df_map, fetch_details, received_counts
 
         def _on_apply(strat_name: str, params: dict):
+            _cfg = state.cfg
+            if _cfg is None:      # pragma: no cover — garde en tête de route
+                return
             try:
                 from app.core.config import load_config as _rl
-                state.cfg.update(_rl("config.yaml"))
+                _cfg.update(_rl("config.yaml"))
             except Exception as e:
                 logger.warning(f"[optimizer/on_apply] rechargement config KO : {e}")
             if state.trader:
-                state.trader.strat_params = state.cfg.get("strategy_params", {})
+                state.trader.strat_params = _cfg.get("strategy_params", {})
                 state.trader.reload_active_strategies()
 
         opt = AutoOptimizer(
@@ -318,6 +323,8 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
     from app.engine.opt_scoring import beats_baseline, resolve_dd_max_abs
     from app.engine.optimizer_search import apply_best_params
 
+    if state.cfg is None:
+        raise HTTPException(503, "Config non chargée")
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, f"Job '{job_id}' introuvable")
@@ -388,13 +395,14 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
         raise HTTPException(500, "Erreur écriture config")
 
     trader_updated = False
+    _cfg = state.cfg
     try:
-        state.cfg.update(_reload_cfg(config_path))
+        _cfg.update(_reload_cfg(config_path))
     except Exception as e:
         logger.warning(f"[apply] reload config KO: {e}")
     if state.trader:
         try:
-            state.trader.strat_params = state.cfg.get("strategy_params", {})
+            state.trader.strat_params = _cfg.get("strategy_params", {})
             state.trader.reload_active_strategies()
             trader_updated = True
         except Exception as e:
@@ -533,6 +541,8 @@ def optimizer_validate(
     from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
     from app.engine.auto_optimizer import get_job
 
+    if state.cfg is None:
+        raise HTTPException(503, "Config non chargée")
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, f"Job '{job_id}' introuvable")

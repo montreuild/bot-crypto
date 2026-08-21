@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from app.core.bot_identity import Venue, resolve_venue
 
@@ -122,7 +122,7 @@ class ProviderRouter:
         if not symbols:
             return self._default.fetch_tickers()
         grouped: Dict[int, list] = {}
-        providers: Dict[int, object] = {}
+        providers: Dict[int, Any] = {}
         for sym in symbols:
             provider = self.provider_for(sym)
             grouped.setdefault(id(provider), []).append(sym)
