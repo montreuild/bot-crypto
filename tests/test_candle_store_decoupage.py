@@ -83,3 +83,40 @@ def test_les_constantes_ont_une_seule_definition():
                    for ligne in f.read_text(encoding="utf-8").splitlines())
         ]
         assert len(definitions) == 1, f"{cst} défini dans {definitions}"
+
+
+# ── Le même piège, côté optimiseur (DETTE-04) ────────────────────────────────
+
+def test_auto_optimizer_ne_reexporte_pas_d_etat_scalaire():
+    """Réexporter un scalaire mutable rend tout `setattr` inerte.
+
+    `from X import _mem_committed` fige la VALEUR au moment de l'import : un
+    test qui réaffecte le nom côté ré-export ne touche jamais celui que le code
+    lit. Trois tests s'y sont laissés prendre pendant ce découpage — dont un
+    qui attendait alors 6 h. Un conteneur (dict) se ré-exporte sans risque tant
+    qu'on le MUTE ; le rebinder casse pareil, d'où le commentaire dans
+    `test_optimizer_apply_route`.
+    """
+    import app.engine.auto_optimizer as ao
+
+    for nom in ("_mem_committed", "_mem_budget", "_mem_cond"):
+        assert not hasattr(ao, nom), (
+            f"auto_optimizer ré-exporte {nom} : un test qui le réaffecte là "
+            f"n'aura aucun effet sur opt_memory, qui le lit."
+        )
+
+
+def test_le_registre_de_jobs_a_une_seule_maison():
+    import app.engine.auto_optimizer as ao
+    import app.engine.opt_jobs as jobs
+
+    assert ao._jobs is jobs._jobs, "deux registres distincts"
+    assert ao.get_job.__module__ == "app.engine.opt_jobs"
+
+
+def test_les_fichiers_du_lot_optimiseur_restent_sous_800_lignes():
+    """`auto_optimizer` était à 1 000. `_run_one_job` (355 l.) reste à
+    découper — consigné, pas fait ici : c'est la fonction qui porte le gate."""
+    for nom in ("auto_optimizer", "opt_jobs", "opt_memory", "opt_baseline"):
+        n = len(pathlib.Path(f"app/engine/{nom}.py").read_text(encoding="utf-8").splitlines())
+        assert n <= 800, f"app/engine/{nom}.py : {n} lignes"

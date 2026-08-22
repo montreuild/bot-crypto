@@ -14,7 +14,8 @@ le code source, qui ne dit rien du comportement.
 import yaml
 from starlette.testclient import TestClient
 
-import app.engine.auto_optimizer as auto_opt
+import app.engine.opt_baseline as opt_baseline
+import app.engine.opt_jobs as opt_jobs
 from app.api.helpers import verify_api_key
 from app.api.main import app
 
@@ -56,7 +57,7 @@ def _fixture_config(tmp_path):
 
 def _client(monkeypatch, tmp_path, job):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(auto_opt, "_jobs", {JOB_ID: job}, raising=False)
+    monkeypatch.setattr(opt_jobs, "_jobs", {JOB_ID: job}, raising=False)
     app.dependency_overrides[verify_api_key] = lambda: None
     return TestClient(app)
 
@@ -247,7 +248,7 @@ def test_run_baseline_publie_profit_factor_et_expectancy():
     systématiquement à None et ne peuvent jamais s'activer."""
     import inspect
 
-    src = inspect.getsource(auto_opt._run_baseline)
+    src = inspect.getsource(opt_baseline._run_baseline)
     assert '"profit_factor"' in src, "clé profit_factor absente du baseline"
     assert '"expectancy"' in src, "clé expectancy absente du baseline"
 

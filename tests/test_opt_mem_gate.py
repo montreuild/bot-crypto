@@ -10,7 +10,9 @@ la mémoire CUMULÉE des jobs actifs.
 import threading
 import time
 
-import app.engine.auto_optimizer as ao
+# DETTE-04 : le portillon vit dans opt_memory. `auto_optimizer` ne re-exporte
+# que ses fonctions -- reaffecter un scalaire via le re-export serait inerte.
+import app.engine.opt_memory as ao
 
 
 def _reset(budget):
