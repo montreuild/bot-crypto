@@ -10,6 +10,25 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 Optimiseur — un job perdu, une barre qui gèle
+
+Deux défauts remontés d'une optimisation réelle.
+
+**Un `Sharpe` non mesurable emportait le job entier.** `_run_baseline` rend
+`sharpe: None` sur 0 trade — délibérément, pour que le gate ne le confonde pas
+avec 0 (F-02). Deux f-strings d'`auto_optimizer` l'oubliaient :
+`TypeError: unsupported format string passed to NoneType.__format__`, job en
+erreur. Le vrai dégât n'était pas le log : la trace d'audit du résultat refusé
+s'écrivait **après** lui, et disparaissait avec. `fmt_metric` rend `—`, et
+`record_optimizer_audit` passe avant le log.
+
+**« 200/400 essais » n'était pas un arrêt anticipé.** La boucle parallèle
+bornait sur les essais rendus à Optuna, la barre affichait `len(self.results)`
+— les seuls essais aboutis. Un lot en échec faisait geler la progression avant
+la fin alors que la recherche allait à son terme. Une seule quantité désormais,
+et un avertissement final qui dit combien d'évaluations soutiennent réellement
+le score retenu.
+
 ### 📉 Trous de données — de la détection au traitement en aval
 
 Quatre constats consignés dans

@@ -197,6 +197,17 @@ _composite_score   = composite_score
 _overfitting_ratio = overfitting_ratio
 
 
+def fmt_metric(v: Optional[float], spec: str = ".2f") -> str:
+    """Métrique optionnelle dans un log. ``None`` = non mesurable, pas zéro.
+
+    `_run_baseline` rend `sharpe: None` sur 0 trade — délibérément, pour que
+    le gate ne le confonde pas avec 0 (F-02). Deux f-strings d'`auto_optimizer`
+    l'oubliaient : le `TypeError` emportait tout le job, y compris l'écriture
+    de la trace d'audit posée juste après.
+    """
+    return "—" if v is None else format(v, spec)
+
+
 def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
                    oos_sharpe: float, baseline: dict,
                    min_trades: int = MIN_SIGNIFICANT_TRADES,
@@ -252,10 +263,9 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
     # aiguiller le message d'erreur ; on garde les deux messages, distincts,
     # sans faire croire que le win-rate est une porte d'entrée.
     if not (_sharpe_ok or _exp_ok or _pf_ok) and not oos_wr > b_wr:
-        _sh_txt = "—" if oos_sharpe is None else f"{oos_sharpe:.2f}"
-        _bsh_txt = "—" if b_sharpe is None else f"{b_sharpe:.2f}"
         return False, (f"aucune amélioration de qualité (WR {oos_wr:.1f}% vs "
-                       f"{b_wr:.1f}%, Sharpe {_sh_txt} vs {_bsh_txt})")
+                       f"{b_wr:.1f}%, Sharpe {fmt_metric(oos_sharpe)} vs "
+                       f"{fmt_metric(b_sharpe)})")
     if oos_wr > b_wr and not (_sharpe_ok or _exp_ok or _pf_ok):
         return False, (
             f"win-rate seul insuffisant (WR {oos_wr:.1f}% vs {b_wr:.1f}%) "

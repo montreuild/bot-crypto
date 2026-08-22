@@ -16,6 +16,7 @@ from app.core.is_oos import (
 )
 from app.engine.backtest import Backtester
 from app.engine.engine import BaseStrategyML, Engine
+from app.engine.opt_scoring import fmt_metric
 from app.engine.opt_workers import available_memory_bytes
 from app.engine.optimizer_search import (
     PARAM_SPACES,
@@ -633,12 +634,10 @@ class AutoOptimizer:
                     best_oos_expectancy = _h.get("expectancy")
                     best_oos_dd = _h.get("dd")
                     _update_job(job_id, holdout=_h, gate_source="holdout")
-                    _sh = ("—" if best_oos_sharpe is None
-                           else f"{best_oos_sharpe:.2f}")
                     logger.info(
                         f"[AutoOpt] {job_id} : holdout ({len(df_holdout)} barres) — "
                         f"PnL={best_oos_pnl:+.2f} WR={best_oos_wr:.1f}% "
-                        f"Sharpe={_sh} sur {oos_trades} trades "
+                        f"Sharpe={fmt_metric(best_oos_sharpe)} sur {oos_trades} trades "
                         f"(sélection : PnL={result.get('best_oos_pnl', 0):+.2f})")
                 else:
                     logger.warning(
@@ -770,23 +769,26 @@ class AutoOptimizer:
                         f"[AutoOpt] {job_id} : résultat non appliqué car pas meilleur que le baseline "
                         f"(OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
                         f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
-                        f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f})"
+                        f"Sharpe={fmt_metric(best_oos_sharpe)} vs "
+                        f"{fmt_metric(baseline_sharpe)})"
                     )
             elif auto_apply and result.get("best_params"):
-                logger.info(
-                    f"[AutoOpt] {job_id} : application refusée (gate qualité ou walk-forward) — "
-                    f"OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
-                    f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
-                    f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f}"
-                )
                 # Non appliqué = non utilisé : on trace pour l'audit sans écrire
                 # dans optimizer_results (sinon le paramétrage refusé deviendrait
-                # actif via la précédence de resolve_strategy_params).
+                # actif via la précédence de resolve_strategy_params). AVANT le
+                # log : le job entier était perdu quand le formatage levait.
                 record_optimizer_audit(
                     strategy_name, timeframe,
                     result["best_params"],
                     best_oos_score,
                     self.config_path
+                )
+                logger.info(
+                    f"[AutoOpt] {job_id} : application refusée (gate qualité ou walk-forward) — "
+                    f"OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
+                    f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
+                    f"Sharpe={fmt_metric(best_oos_sharpe)} vs "
+                    f"{fmt_metric(baseline_sharpe)}"
                 )
             elif result.get("best_params"):
                 # Sans auto_apply : on ne fait que tracer le résultat pour l'audit.
