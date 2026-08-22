@@ -6,7 +6,14 @@
       "name": "bot-web",
       "//2": "Interpréteur du venv en dur : `python` nu résout vers C:\\Python314\\python.exe, qui n'a pas uvicorn — le garde-fou de cli.py refuse alors de démarrer.",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["cli.py", "--web", "--host", "127.0.0.1", "--port", "8000"],
+      "runtimeArgs": [
+        "cli.py",
+        "--web",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
       "port": 8000,
       "url": "http://127.0.0.1:8000"
     },
@@ -14,7 +21,12 @@
       "//": "`url` explicite en 127.0.0.1 : le panneau navigateur autorise par origine, et `http://localhost:3000` n'est pas une origine approuvée — la navigation y est refusée alors que `http://127.0.0.1:3000` passe. Sans cette clé, preview_start ouvre un onglet sur localhost qui ne charge jamais.",
       "name": "bot-ui",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev"
+      ],
       "port": 3000,
       "url": "http://127.0.0.1:3000"
     },
@@ -22,7 +34,12 @@
       "//": "Serveur de PRODUCTION — c'est ce que fait l'image Docker (output standalone). À utiliser pour vérifier ce que `next dev` ne prouve pas : notamment que le rewrite `/ws` proxifie bien l'upgrade WebSocket hors dev. Exige un `npm run build` préalable.",
       "name": "bot-ui-prod",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "frontend", "run", "start"],
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "start"
+      ],
       "port": 3000,
       "url": "http://127.0.0.1:3000"
     },
@@ -30,9 +47,27 @@
       "//": "Serveur STANDALONE — la commande exacte de l'image Docker (`CMD node server.js`). Exige `npm run build` puis la copie de `public/` et `.next/static/` dans `.next/standalone/`, comme le fait le Dockerfile.",
       "name": "bot-ui-standalone",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["frontend/.next/standalone/server.js"],
+      "runtimeArgs": [
+        "frontend/.next/standalone/server.js"
+      ],
       "port": 3000,
       "url": "http://127.0.0.1:3000"
+    },
+    {
+      "//": "Dev server sur 3100 : verification du code du worktree quand le stack Docker de l'operateur occupe deja 3000. Le rewrite /api vise BOT_API_URL, donc le backend Docker sur :8000 sert les donnees.",
+      "name": "bot-ui-verif",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "3100"
+      ],
+      "port": 3100,
+      "url": "http://127.0.0.1:3100"
     }
   ]
 }

@@ -317,6 +317,22 @@ Après 30 jours de live trading
 
 ---
 
+### Vues front — logique extraite (ARCH-02)
+
+Une vue React ne porte que l'assemblage et le rendu ; ce qui décide vit à
+côté, en fonction pure ou en hook, donc testable sans monter de graphique.
+
+| Module | Rôle |
+|---|---|
+| `components/views/smart-replay-entities.ts` | cycle de vie causal des entités SMC (naissance, mort, trades ouverts/clôturés à la barre N) |
+| `hooks/use-smart-replay-chart.ts` | lightweight-charts : zones, pools, niveaux Entry/SL/TP, marqueurs de structure |
+| `hooks/use-replay-transport.ts` | position, lecture, vitesses, raccourcis clavier |
+| `components/views/smart-graph-helpers.ts` | idem pour Smart Graph (modèle d'origine) |
+| `lib/backtest-verdict.ts` | seuils de qualification d'un backtest (`SEUILS`) et verdict |
+| `lib/backtest-report.ts` | rapport imprimable, échappé |
+
+---
+
 ## 🔴 Live Trading Loop
 
 Détaille le flux résumé dans « Trading Live (LiveTrader thread) » ci-dessus :
