@@ -114,3 +114,28 @@ export function lastStructureAt(
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
     .pop() ?? null;
 }
+
+/**
+ * Bougies du rejeu, quelle que soit la forme rendue par l'API.
+ *
+ * `ohlcv` (colonnes) est la forme actuelle ; `candles` (liste d'objets) reste
+ * servie par d'anciennes réponses.
+ */
+export function replayCandles(
+  data: { ohlcv?: Record<string, number[]>; candles?: unknown[] } | undefined,
+  clean: (t: number[], o: number[], h: number[], l: number[], c: number[]) => any[],
+): any[] {
+  const ohlcv = data?.ohlcv;
+  if (ohlcv?.time?.length) {
+    return clean(ohlcv.time || [], ohlcv.open || [], ohlcv.high || [],
+                 ohlcv.low || [], ohlcv.close || []);
+  }
+  const candles = data?.candles;
+  if (!Array.isArray(candles) || candles.length === 0) return [];
+  const cols: Record<string, number[]> = { time: [], open: [], high: [], low: [], close: [] };
+  for (const c of candles) {
+    if (c == null || typeof c !== 'object') continue;
+    for (const k of Object.keys(cols)) cols[k].push(Number((c as any)[k]));
+  }
+  return clean(cols.time, cols.open, cols.high, cols.low, cols.close);
+}

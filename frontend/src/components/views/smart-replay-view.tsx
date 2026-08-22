@@ -3,473 +3,75 @@
 /**
  * Onglet Smart Replay de `/market` — rejeu bougie par bougie des calques SMC.
  *
- * Lot Marché : cette vue était la page `/smartreplay`, vers laquelle l'onglet
- * se contentait de renvoyer par une `RedirectCard`. `/smartreplay` est
- * désormais en 308 vers `/market?tab=smartreplay`.
+ * ARCH-02 : le graphique vit dans `use-smart-replay-chart`, la lecture dans
+ * `use-replay-transport`, le cycle de vie des entités dans
+ * `smart-replay-entities`. Il ne reste ici que l'assemblage et le rendu.
  */
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { cn, formatUSD, formatPct, formatDateTime } from '@/lib/utils';
-import { useSMC, useSMCReplay } from '@/hooks/use-api';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  TradePlansTable, RealizedTradesTable, type TradePlan, type RealizedTrade,
-} from '@/components/cards/trade-plans-table';
-import { TimeframeButtons } from '@/components/ui/timeframe-select';
-import { SymbolSearchInput } from '@/components/ui/symbol-search';
-import { resolveSignalTimestamp } from '@/components/views/smart-graph-helpers';
-import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
-import { toast } from 'sonner';
-import {
-  Loader2, AlertCircle, Activity,
-  SkipBack, SkipForward, ChevronLeft, ChevronRight,
-  Play, Pause, Layers, Droplets, Waves,
+  Activity, AlertCircle, ChevronLeft, ChevronRight, Droplets, Layers, Loader2,
+  Pause, Play, SkipBack, SkipForward, Waves,
 } from 'lucide-react';
+import { toast } from 'sonner';
+
 import {
-  createChart, ColorType, LineStyle,
-  type IChartApi, type ISeriesApi, type UTCTimestamp, type Time, type SeriesMarker,
-} from 'lightweight-charts';
+  RealizedTradesTable, TradePlansTable, type RealizedTrade, type TradePlan,
+} from '@/components/cards/trade-plans-table';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { SymbolSearchInput } from '@/components/ui/symbol-search';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import {
-  ZonesPrimitive,
-  ensureZonesPrimitive,
-  buildZonesFromSmc,
-} from '@/lib/smc-zones';
-// F2 — cleanOhlcv factorisé dans lib/ohlcv.ts (avant : copie locale)
+  lastStructureAt, openTradesAt, closedTradesAt, recentAlive, replayCandles,
+} from '@/components/views/smart-replay-entities';
+import { useSMC, useSMCReplay } from '@/hooks/use-api';
+import { SPEEDS, useReplayTransport } from '@/hooks/use-replay-transport';
+import { useSmartReplayChart } from '@/hooks/use-smart-replay-chart';
+import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { cleanOhlcv, type CandleRow } from '@/lib/ohlcv';
-
-const SPEEDS = [
-  { label: '1x', ms: 1000 },
-  { label: '2x', ms: 500 },
-  { label: '5x', ms: 200 },
-  { label: '10x', ms: 100 },
-] as const;
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-// cleanOhlcv et CandleRow sont importés depuis @/lib/ohlcv (F2).
-/** Resolve any "index-like" field on a replay entity to a bar index. */
-function entityBarIndex(entity: any, fallbackKeys: string[] = ['created_at', 'index', 'confirmed_at']): number | null {
-  if (!entity || typeof entity !== 'object') return null;
-  for (const k of fallbackKeys) {
-    if (typeof entity[k] === 'number' && Number.isFinite(entity[k])) return entity[k];
-  }
-  return null;
-}
-
-/** Lifecycle termination index (invalidation/sweep/fill). */
-function entityEndIndex(entity: any): number | null {
-  if (!entity || typeof entity !== 'object') return null;
-  for (const k of ['invalidated_at', 'swept_at', 'filled_at']) {
-    if (typeof entity[k] === 'number' && Number.isFinite(entity[k])) return entity[k];
-  }
-  return null;
-}
-
-function entityAliveAt(entity: any, currentIndex: number): boolean {
-  const start = entityBarIndex(entity);
-  if (start == null) return true; // no lifecycle info → always show
-  if (currentIndex < start) return false;
-  const end = entityEndIndex(entity);
-  if (end != null && currentIndex >= end) return false;
-  return true;
-}
-
-// ── Vue ─────────────────────────────────────────────────────────────────────
+import { cn, formatDateTime, formatPct, formatUSD } from '@/lib/utils';
 
 export function SmartReplayView() {
   const { defaultTf } = useTradingTimeframes('4h');
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [timeframe, setTimeframe] = useState<string>(defaultTf || '4h');
-  const [currentIndex, setCurrentIndex] = useState<number>(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [speedIdx, setSpeedIdx] = useState<number>(1); // 2x default
   const [selectedPlan, setSelectedPlan] = useState<TradePlan | null>(null);
 
   const { data, isLoading, isError, error } = useSMCReplay(symbol, timeframe, 1600);
-  // Plans SMC (analytiques) — même source que Smart Graph
+  // Plans SMC (analytiques) — même source que Smart Graph.
   const { data: smcData } = useSMC(symbol, timeframe, 1200);
 
-  useEffect(() => {
-    setSelectedPlan(null);
-  }, [symbol, timeframe]);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  const overlaysRef = useRef<ISeriesApi<any>[]>([]);
-  const priceLinesRef = useRef<ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>[]>([]);
-  const zonesPrimRef = useRef<ZonesPrimitive | null>(null);
+  useEffect(() => { setSelectedPlan(null); }, [symbol, timeframe]);
 
   const nBars = data?.n_bars ?? 0;
-  // API peut renvoyer `ohlcv` (colonnes) ou `candles` (liste d'objets).
-  const cleanedCandles = useMemo<CandleRow[]>(() => {
-    const ohlcv = data?.ohlcv;
-    if (ohlcv?.time?.length) {
-      return cleanOhlcv(
-        ohlcv.time || [],
-        ohlcv.open || [],
-        ohlcv.high || [],
-        ohlcv.low || [],
-        ohlcv.close || [],
-      );
-    }
-    const candles = data?.candles;
-    if (Array.isArray(candles) && candles.length > 0) {
-      const time: number[] = [];
-      const open: number[] = [];
-      const high: number[] = [];
-      const low: number[] = [];
-      const close: number[] = [];
-      for (const c of candles) {
-        if (c == null || typeof c !== 'object') continue;
-        time.push(Number((c as any).time));
-        open.push(Number((c as any).open));
-        high.push(Number((c as any).high));
-        low.push(Number((c as any).low));
-        close.push(Number((c as any).close));
-      }
-      return cleanOhlcv(time, open, high, low, close);
-    }
-    return [];
-  }, [data?.ohlcv, data?.candles]);
+  const cleanedCandles = useMemo<CandleRow[]>(
+    () => replayCandles(data, cleanOhlcv),
+    [data?.ohlcv, data?.candles],   // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
-  // Clamp currentIndex when nBars changes
-  useEffect(() => {
-    if (nBars > 0) {
-      setCurrentIndex((idx) => Math.max(0, Math.min(idx, nBars - 1)));
-    } else {
-      setCurrentIndex(0);
-    }
-  }, [nBars]);
+  const {
+    currentIndex, isPlaying, speedIdx, setSpeedIdx,
+    seekTo, goToStart, goToEnd, stepBack, stepForward, jump, togglePlay,
+  } = useReplayTransport(nBars);
 
-  // Create chart once — autoSize + hauteur explicite (même fix que Smart Graph)
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const el = containerRef.current;
-    const chart = createChart(el, {
-      autoSize: true,
-      layout: {
-        background: { type: ColorType.Solid, color: '#0f1419' },
-        textColor: '#9ca3af',
-        fontFamily: 'var(--font-jetbrains), monospace',
-      },
-      grid: {
-        vertLines: { color: '#1f2937' },
-        horzLines: { color: '#1f2937' },
-      },
-      timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#1f2937' },
-      crosshair: { mode: 1 },
-      rightPriceScale: { borderColor: '#1f2937' },
-    });
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: '#10b981',
-      downColor: '#ef4444',
-      borderUpColor: '#10b981',
-      borderDownColor: '#ef4444',
-      wickUpColor: '#10b981',
-      wickDownColor: '#ef4444',
-    });
-    chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
-    zonesPrimRef.current = ensureZonesPrimitive(candleSeries as any, null);
+  const { containerRef } = useSmartReplayChart({
+    data, candles: cleanedCandles, currentIndex, selectedPlan,
+  });
 
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) {
-          chart.applyOptions({ width, height });
-        }
-      }
-    });
-    ro.observe(el);
-
-    return () => {
-      ro.disconnect();
-      chart.remove();
-      chartRef.current = null;
-      candleSeriesRef.current = null;
-      zonesPrimRef.current = null;
-      overlaysRef.current = [];
-      priceLinesRef.current = [];
-    };
-  }, []);
-
-  // Play/pause timer
-  useEffect(() => {
-    if (!isPlaying) return;
-    const ms = SPEEDS[speedIdx].ms;
-    const id = setInterval(() => {
-      setCurrentIndex((idx) => {
-        const next = idx + 1;
-        if (next >= nBars - 1) {
-          setIsPlaying(false);
-          return nBars - 1;
-        }
-        return next;
-      });
-    }, ms);
-    return () => clearInterval(id);
-  }, [isPlaying, speedIdx, nBars]);
-
-  // Update candles + overlays whenever currentIndex or data changes
-  useEffect(() => {
-    const chart = chartRef.current;
-    const candleSeries = candleSeriesRef.current;
-    if (!chart || !candleSeries) return;
-
-    // Slice candles up to currentIndex
-    const sliceEnd = Math.max(1, Math.min(currentIndex + 1, cleanedCandles.length));
-    candleSeries.setData(cleanedCandles.slice(0, sliceEnd));
-
-    // Clear overlays
-    for (const s of overlaysRef.current) {
-      try { chart.removeSeries(s); } catch { /* noop */ }
-    }
-    overlaysRef.current = [];
-    for (const pl of priceLinesRef.current) {
-      try { candleSeries.removePriceLine(pl); } catch { /* noop */ }
-    }
-    priceLinesRef.current = [];
-
-    if (!data || cleanedCandles.length === 0) {
-      candleSeries.setMarkers([]);
-      zonesPrimRef.current?.setZones([]);
-      return;
-    }
-    const lastVisibleTime = cleanedCandles[sliceEnd - 1].time;
-    const timeAt = (idx: number | null | undefined): number | null => {
-      if (idx == null || !Number.isFinite(idx)) return null;
-      const i = Math.max(0, Math.min(Math.floor(idx), cleanedCandles.length - 1));
-      return cleanedCandles[i]?.time as number ?? null;
-    };
-
-    // Zones remplies (OB / FVG / voids / breakers / rejections) — lifecycle causal
-    if (zonesPrimRef.current) {
-      const alive = (list: any[] | undefined) =>
-        (list || []).filter((e: any) => entityAliveAt(e, currentIndex));
-      const toTimed = (list: any[]) =>
-        list.map((e: any) => {
-          const startIdx = entityBarIndex(e);
-          const endIdx = entityEndIndex(e);
-          const t1 = timeAt(startIdx) ?? (e.time_start as number);
-          let t2 = timeAt(endIdx) ?? (e.time_end as number) ?? (lastVisibleTime as number);
-          if (t2 > (lastVisibleTime as number)) t2 = lastVisibleTime as number;
-          return { ...e, time_start: t1, time_end: t2 };
-        }).filter((e: any) => e.time_start != null && e.time_end != null);
-      const zones = buildZonesFromSmc({
-        order_blocks: toTimed(alive(data.order_blocks)),
-        fvgs: toTimed(alive(data.fvgs)),
-        liquidity_voids: toTimed(alive(data.voids || data.liquidity_voids)),
-        breakers: toTimed(alive(data.breakers)),
-        rejection_blocks: toTimed(alive(data.rejections || data.rejection_blocks)),
-      }, {
-        orderBlocks: true,
-        fvg: true,
-        liquidityVoids: true,
-        breakers: true,
-        rejectionBlocks: true,
-        firstTime: cleanedCandles[0]?.time as number,
-        lastTime: lastVisibleTime as number,
-      });
-      zonesPrimRef.current.setZones(zones);
-    }
-
-    // Liquidity Pools — horizontal price line
-    if (Array.isArray(data.liquidity_pools || data.pools)) {
-      for (const lp of (data.liquidity_pools || data.pools)) {
-        if (!entityAliveAt(lp, currentIndex)) continue;
-        const buyside = lp.kind === 'buyside';
-        const color = buyside ? 'rgba(16, 185, 129, 0.85)' : 'rgba(239, 68, 68, 0.85)';
-        const pl = candleSeries.createPriceLine({
-          price: lp.level,
-          color,
-          lineStyle: LineStyle.Dashed,
-          lineWidth: 1,
-          axisLabelVisible: true,
-          title: `LP ${lp.kind}`,
-        });
-        priceLinesRef.current.push(pl);
-      }
-    }
-
-    // Trade actif (position ouverte à currentIndex) — Entry / SL / TP depuis le signal
-    const visibleTimes = cleanedCandles.slice(0, sliceEnd).map((c) => c.time as number);
-    const lastVisible = visibleTimes.length
-      ? (visibleTimes[visibleTimes.length - 1] as UTCTimestamp)
-      : null;
-    const addLevelFrom = (
-      from: UTCTimestamp | null,
-      price: number,
-      color: string,
-      width: 1 | 2 | 3 | 4,
-      title: string,
-    ) => {
-      if (
-        from == null || lastVisible == null
-        || !Number.isFinite(price) || price <= 0
-        || (lastVisible as number) < (from as number)
-      ) return;
-      const s = chart.addLineSeries({
-        color,
-        lineWidth: width,
-        lineStyle: LineStyle.Solid,
-        priceLineVisible: true,
-        lastValueVisible: true,
-        crosshairMarkerVisible: false,
-        title,
-      });
-      s.setData([
-        { time: from, value: price },
-        { time: lastVisible, value: price },
-      ]);
-      overlaysRef.current.push(s);
-    };
-    for (const t of (data.trades || [])) {
-      const entryBar = typeof t.entry_bar === 'number' ? t.entry_bar
-        : typeof t.entry_time === 'number' ? t.entry_time : null;
-      const exitBar = typeof t.exit_bar === 'number' ? t.exit_bar
-        : typeof t.exit_time === 'number' ? t.exit_time : null;
-      const isOpen = entryBar != null && currentIndex >= entryBar
-        && (exitBar == null || currentIndex < exitBar);
-      if (!isOpen) continue;
-      const from = (timeAt(entryBar) ?? resolveSignalTimestamp(visibleTimes, t.signal_time)) as UTCTimestamp | null;
-      addLevelFrom(from, Number(t.entry ?? t.entry_price), '#0ea5e9', 3, `Entry ${t.side === 'long' ? 'LONG' : 'SHORT'}`);
-      addLevelFrom(from, Number(t.stop), '#f87171', 2, 'SL');
-      addLevelFrom(from, Number(t.tp ?? t.take_profit), '#34d399', 2, 'TP');
-    }
-
-    // Plan / trade cliqué dans les tables — mêmes 3 lignes depuis le signal
-    if (selectedPlan && lastVisible != null) {
-      const from = resolveSignalTimestamp(visibleTimes, selectedPlan.signal_time) as UTCTimestamp | null;
-      addLevelFrom(from, Number(selectedPlan.entry), '#0ea5e9', 4, `Entry ${selectedPlan.setup || ''}`.trim());
-      addLevelFrom(from, Number(selectedPlan.stop), '#f87171', 3, 'SL');
-      addLevelFrom(from, Number(selectedPlan.tp), '#34d399', 3, 'TP');
-    }
-
-    // Structure markers — filter by index when available
-    const markers: SeriesMarker<Time>[] = [];
-    for (const b of (data.structure?.bos || [])) {
-      const bIdx = entityBarIndex(b, ['index', 'created_at']);
-      if (bIdx != null && currentIndex < bIdx) continue;
-      markers.push({
-        time: b.time as UTCTimestamp,
-        position: b.type === 'bullish' ? 'belowBar' : 'aboveBar',
-        color: b.type === 'bullish' ? '#10b981' : '#ef4444',
-        shape: b.type === 'bullish' ? 'arrowUp' : 'arrowDown',
-        text: 'BOS',
-      });
-    }
-    for (const c of (data.structure?.choch || [])) {
-      const cIdx = entityBarIndex(c, ['index', 'created_at']);
-      if (cIdx != null && currentIndex < cIdx) continue;
-      markers.push({
-        time: c.time as UTCTimestamp,
-        position: c.type === 'bullish' ? 'belowBar' : 'aboveBar',
-        color: '#22d3ee',
-        shape: 'circle',
-        text: 'CHoCH',
-      });
-    }
-    markers.sort((a, b) => (a.time as number) - (b.time as number));
-    candleSeries.setMarkers(markers);
-
-    // Keep chart pinned to the latest visible bar
-    chart.timeScale().scrollToRealTime();
-  }, [data, currentIndex, cleanedCandles, selectedPlan]);
-
-  // ── Derived panel data ────────────────────────────────────────────────────
-
-  const activeOrderBlocks = useMemo(() => {
-    return (data?.order_blocks || []).filter((e: any) => entityAliveAt(e, currentIndex)).slice(-12).reverse();
-  }, [data?.order_blocks, currentIndex]);
-
-  const activeLiquidityPools = useMemo(() => {
-    return (data?.liquidity_pools || []).filter((e: any) => entityAliveAt(e, currentIndex)).slice(-12).reverse();
-  }, [data?.liquidity_pools, currentIndex]);
-
-  const activeFvgs = useMemo(() => {
-    return (data?.fvgs || []).filter((e: any) => entityAliveAt(e, currentIndex)).slice(-12).reverse();
-  }, [data?.fvgs, currentIndex]);
-
-  const lastStructure = useMemo(() => {
-    const all: Array<{ kind: 'BOS' | 'CHoCH'; type: string; time: number; index: number | null }> = [];
-    for (const b of (data?.structure?.bos || [])) {
-      all.push({ kind: 'BOS', type: b.type, time: b.time, index: entityBarIndex(b, ['index', 'created_at']) });
-    }
-    for (const c of (data?.structure?.choch || [])) {
-      all.push({ kind: 'CHoCH', type: c.type, time: c.time, index: entityBarIndex(c, ['index', 'created_at']) });
-    }
-    return all
-      .filter((s) => s.index == null || s.index <= currentIndex)
-      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-      .pop() ?? null;
-  }, [data?.structure, currentIndex]);
-
-  // API replay : entry_bar / exit_bar (indices), entry / exit (prix)
-  const openTrades = useMemo(() => {
-    return (data?.trades || []).filter((t: any) => {
-      const entryBar = typeof t.entry_bar === 'number' ? t.entry_bar
-        : typeof t.entry_time === 'number' ? t.entry_time : null;
-      const exitBar = typeof t.exit_bar === 'number' ? t.exit_bar
-        : typeof t.exit_time === 'number' ? t.exit_time : null;
-      return entryBar != null && currentIndex >= entryBar
-        && (exitBar == null || currentIndex < exitBar);
-    });
-  }, [data?.trades, currentIndex]);
-
-  const closedTrades = useMemo(() => {
-    return (data?.trades || [])
-      .filter((t: any) => {
-        const exitBar = typeof t.exit_bar === 'number' ? t.exit_bar
-          : typeof t.exit_time === 'number' ? t.exit_time : null;
-        return exitBar != null && currentIndex >= exitBar;
-      })
-      .slice(-12)
-      .reverse();
-  }, [data?.trades, currentIndex]);
-
-  // ── Controls ──────────────────────────────────────────────────────────────
-
-  const goToStart = useCallback(() => { setIsPlaying(false); setCurrentIndex(0); }, []);
-  const goToEnd = useCallback(() => { setIsPlaying(false); setCurrentIndex(Math.max(0, nBars - 1)); }, [nBars]);
-  const stepBack = useCallback(() => { setIsPlaying(false); setCurrentIndex((i) => Math.max(0, i - 1)); }, []);
-  const stepForward = useCallback(() => { setIsPlaying(false); setCurrentIndex((i) => Math.min(nBars - 1, i + 1)); }, [nBars]);
-  const jump = useCallback((delta: number) => {
-    setIsPlaying(false);
-    setCurrentIndex((i) => Math.max(0, Math.min(nBars - 1, i + delta)));
-  }, [nBars]);
-  const togglePlay = useCallback(() => {
-    if (currentIndex >= nBars - 1) setCurrentIndex(0);
-    setIsPlaying((p) => !p);
-  }, [currentIndex, nBars]);
-
-  // Raccourcis clavier (Jinja2 smartreplay) : Espace, ← →, Shift+← → (±10)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (e.code === 'Space') {
-        e.preventDefault();
-        togglePlay();
-      } else if (e.code === 'ArrowLeft') {
-        e.preventDefault();
-        jump(e.shiftKey ? -10 : -1);
-      } else if (e.code === 'ArrowRight') {
-        e.preventDefault();
-        jump(e.shiftKey ? 10 : 1);
-      } else if (e.code === 'Home') {
-        e.preventDefault();
-        goToStart();
-      } else if (e.code === 'End') {
-        e.preventDefault();
-        goToEnd();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [togglePlay, jump, goToStart, goToEnd]);
+  const activeOrderBlocks = useMemo(
+    () => recentAlive(data?.order_blocks, currentIndex), [data?.order_blocks, currentIndex]);
+  const activeLiquidityPools = useMemo(
+    () => recentAlive(data?.liquidity_pools, currentIndex), [data?.liquidity_pools, currentIndex]);
+  const activeFvgs = useMemo(
+    () => recentAlive(data?.fvgs, currentIndex), [data?.fvgs, currentIndex]);
+  const lastStructure = useMemo(
+    () => lastStructureAt(data?.structure, currentIndex), [data?.structure, currentIndex]);
+  const openTrades = useMemo(
+    () => openTradesAt(data?.trades, currentIndex), [data?.trades, currentIndex]);
+  const closedTrades = useMemo(
+    () => closedTradesAt(data?.trades, currentIndex), [data?.trades, currentIndex]);
 
   const currentBarTime = cleanedCandles[currentIndex]?.time;
   const currentPrice = cleanedCandles[currentIndex]?.close;
@@ -588,7 +190,7 @@ export function SmartReplayView() {
               min={0}
               max={Math.max(0, nBars - 1)}
               value={currentIndex}
-              onChange={(e) => { setIsPlaying(false); setCurrentIndex(Number(e.target.value)); }}
+              onChange={(e) => seekTo(Number(e.target.value))}
               className="w-full accent-primary-400"
               aria-label="Position dans le replay"
             />
