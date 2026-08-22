@@ -511,3 +511,28 @@ export interface MLTrainRequest {
 export interface MLTrainStarted {
   job_id: string;
 }
+
+export interface MLStrategyInfo {
+  is_trained?: boolean;
+  best_auc?: number;
+  next_retrain_at?: number | null;
+  recipe?: string | null;
+}
+
+export interface MLStrategyInfoResponse {
+  strategies: Record<string, MLStrategyInfo>;
+}
+
+export interface MlRecipe {
+  recipe: string;
+  trainable?: boolean;
+  reason?: string | null;
+  features_catalog?: string | null;
+  label_scheme?: string | null;
+  heads?: Array<string>;
+  used_by?: Array<string>;
+}
+
+export interface MLRecipesResponse {
+  recipes: Array<MlRecipe>;
+}

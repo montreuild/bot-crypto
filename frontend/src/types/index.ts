@@ -335,14 +335,7 @@ export interface DailyStat {
   equity?: number | null;
 }
 
-export interface MlRecipe {
-  recipe: string;
-  trainable?: boolean;
-  reason?: string | null;
-  features_catalog?: string | null;
-  label_scheme?: string | null;
-  heads?: string[];
-}
+// `MlRecipe` vient de generated.ts (LAB-07 : elle porte `used_by`).
 
 export interface MlInfoEntry {
   strategy?: string;

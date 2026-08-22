@@ -12,6 +12,8 @@ from app.api import state
 from app.api.helpers import _discover_strategies, verify_api_key
 from app.api.schemas import (
     CandlesStatsResponse,
+    MLRecipesResponse,
+    MLStrategyInfoResponse,
     MLTrainRequest,
     MLTrainStarted,
 )
@@ -23,7 +25,31 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/api/ml/strategy-info", dependencies=[Depends(verify_api_key)])
+def _recette_de(strategy_name: str) -> Optional[str]:
+    """Recette consommée par une stratégie, ou ``None`` si elle n'en déclare pas.
+
+    LAB-07 : les deux vocabulaires sont disjoints — aucun des noms de recette
+    n'est un nom de stratégie. Sans cette clé, l'écran juxtapose deux listes
+    sans dire ce qui les relie.
+    """
+    from app.ml.scoring import resolve_recipe_name
+    try:
+        return resolve_recipe_name(strategy_name)
+    except Exception:
+        return None
+
+
+def _strategies_par_recette() -> Dict[str, List[str]]:
+    out: Dict[str, List[str]] = {}
+    for nom in _discover_strategies():
+        recette = _recette_de(nom)
+        if recette:
+            out.setdefault(recette, []).append(nom)
+    return {k: sorted(v) for k, v in out.items()}
+
+
+@router.get("/api/ml/strategy-info", dependencies=[Depends(verify_api_key)],
+            response_model=MLStrategyInfoResponse)
 def ml_strategy_info():
     """Retourne l'état d'entraînement des stratégies BaseStrategyML chargées."""
     if not state.cfg:
@@ -48,6 +74,7 @@ def ml_strategy_info():
                 "is_trained":      strat.is_trained,
                 "best_auc":        round(float(getattr(strat, "_best_auc", 0.0)), 4),
                 "next_retrain_at": next_retrain,
+                "recipe":          _recette_de(name),
             }
 
     return {"strategies": strategies_info}
@@ -146,7 +173,8 @@ def _require_known_tf(tf: str) -> None:
                                  f"{sorted(TF_SECONDS, key=lambda t: TF_SECONDS[t])}")
 
 
-@router.get("/api/ml/recipes", dependencies=[Depends(verify_api_key)])
+@router.get("/api/ml/recipes", dependencies=[Depends(verify_api_key)],
+            response_model=MLRecipesResponse)
 def ml_recipes():
     """Recettes du dépôt et leur entraînabilité — alimente la liste déroulante
     de la page « Modèles », qui parle désormais le même vocabulaire que sa
@@ -154,6 +182,7 @@ def ml_recipes():
     from app.ml.recipe import available_recipes, load_recipe
     from app.ml.recipe_trainer import supports
 
+    par_recette = _strategies_par_recette()
     out: List[Dict[str, Any]] = []
     for name in available_recipes():
         why = supports(name)
@@ -167,7 +196,7 @@ def ml_recipes():
             heads = []
         out.append({"recipe": name, "trainable": why is None, "reason": why,
                     "features_catalog": catalog, "label_scheme": scheme,
-                    "heads": heads})
+                    "heads": heads, "used_by": par_recette.get(name, [])})
     return {"recipes": out}
 
 

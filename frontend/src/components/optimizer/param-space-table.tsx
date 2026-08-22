@@ -6,9 +6,14 @@ import { Badge } from '@/components/ui/badge';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { OptimizeSpaces } from '@/types';
 
-export function ParamSpaceTable({ spaces }: { spaces: OptimizeSpaces }) {
+/** `filterMl` suit celui du formulaire : le panneau « Optimiseur ML » listait
+ *  les espaces des 41 stratégies, dont les 25 non-ML (LAB-10). */
+export function ParamSpaceTable(
+  { spaces, filterMl = false }: { spaces: OptimizeSpaces; filterMl?: boolean },
+) {
   const [collapsed, setCollapsed] = useState(true);
-  const entries = Object.entries(spaces || {});
+  const entries = Object.entries(spaces || {})
+    .filter(([, s]) => !filterMl || !!s?.is_ml);
   if (entries.length === 0) return null;
   return (
     <Card>

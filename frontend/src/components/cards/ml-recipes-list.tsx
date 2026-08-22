@@ -98,6 +98,20 @@ export function MLRecipesList() {
                             Label: <span className="font-mono">{recipe.label_scheme}</span>
                           </div>
                         )}
+                        {/* LAB-07 : sans ce lien, l'écran empile deux listes
+                            aux noms disjoints sans dire ce qui les relie. */}
+                        <div className="text-[10px] mt-0.5">
+                          {recipe.used_by?.length ? (
+                            <>
+                              <span className="text-dim">Utilisée par </span>
+                              <span className="font-mono text-cyan-400">
+                                {recipe.used_by.join(', ')}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-dim">Consommée par aucune stratégie</span>
+                          )}
+                        </div>
                       </div>
                       {/* ML-003 — ouvre un dialog d'entraînement direct au
                           lieu de rediriger vers `/models?recipe=…`. Le

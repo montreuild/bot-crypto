@@ -776,3 +776,37 @@ class MLTrainRequest(BaseModel):
 class MLTrainStarted(BaseModel):
     job_id: str
 
+
+class MLStrategyInfo(BaseModel):
+    """État d'entraînement d'une stratégie ML chargée par le trader."""
+
+    is_trained: bool = False
+    best_auc: float = 0.0
+    #: Epoch en secondes, dans le FUTUR — à formater comme tel.
+    next_retrain_at: Optional[int] = None
+    #: LAB-07 — recette consommée. Les deux vocabulaires sont disjoints : sans
+    #: cette clé, l'écran juxtapose des stratégies et des recettes sans lien.
+    recipe: Optional[str] = None
+
+
+class MLStrategyInfoResponse(BaseModel):
+    strategies: Dict[str, MLStrategyInfo]
+
+
+class MlRecipe(BaseModel):
+    """Une recette du dépôt, et qui la consomme."""
+
+    recipe: str
+    trainable: bool = True
+    #: Motif de non-entraînabilité, rendu tel quel à l'utilisateur.
+    reason: Optional[str] = None
+    #: Identifiant de catalogue (« dyn_threshold@1 »), pas la liste des features.
+    features_catalog: Optional[str] = None
+    label_scheme: Optional[str] = None
+    heads: List[str] = []
+    used_by: List[str] = []
+
+
+class MLRecipesResponse(BaseModel):
+    recipes: List[MlRecipe]
+
