@@ -264,8 +264,11 @@ def _run_en_mesurant_les_frais(strat):
     Les deux seules portes de sortie d'un frais : `_close_pnl` (sorties) et
     `Backtester._fees` (entrée et pyramidages). On les instrumente plutôt que
     de reconstruire le total — une reconstruction referait l'erreur qu'on teste.
+
+    DETTE-04c : la clôture vit dans `position_close`. C'est le module qui
+    APPELLE `_close_pnl` qu'il faut instrumenter, pas celui qui le ré-exporte.
     """
-    import app.engine.position_lifecycle as _pl
+    import app.engine.position_close as _pl
 
     preleves = {"total": 0.0}
     _close_pnl_orig = _pl._close_pnl
