@@ -810,3 +810,26 @@ class MlRecipe(BaseModel):
 class MLRecipesResponse(BaseModel):
     recipes: List[MlRecipe]
 
+
+class OptimizeBudgetLine(BaseModel):
+    strategy: str
+    n_trials_eff: int
+    #: « proportionné au nombre de paramètres », « plafonné (max_trials) »…
+    raison: str = ""
+    n_params: int = 0
+
+
+class OptimizeBudgetResponse(BaseModel):
+    """LAB-04 — essais réellement tournés pour un budget demandé.
+
+    Le moteur reproportionne à `trials_per_param × n_params`, plafonné : 60
+    demandés donnent jusqu'à 400 essais. La fourchette est calculée ici pour
+    que l'UI n'ait pas à recopier la formule.
+    """
+
+    demande: int
+    min: int
+    max: int
+    total: int
+    par_strategie: List[OptimizeBudgetLine]
+

@@ -194,6 +194,7 @@ class OptimizerBayesianMixin(OptimizerHost):
         best_score = -999.0
         no_improve = 0
         reduction = None
+        self.stop_reason = "budget épuisé"
         own_results: List[dict] = []
         for i in range(n_trials):
             trial  = study.ask()
@@ -218,6 +219,7 @@ class OptimizerBayesianMixin(OptimizerHost):
 
             if self._should_early_stop(no_improve, early_stop_patience, i + 1, n_trials):
                 logger.info(f"[Bayesian/TPE] Early stop à trial {i+1}/{n_trials}")
+                self.stop_reason = "arrêt anticipé (aucune amélioration)"
                 break
         return reduction
 
@@ -249,6 +251,7 @@ class OptimizerBayesianMixin(OptimizerHost):
         # geler la barre avant la fin (« 200/400 ») alors que la recherche
         # allait bien à son terme. Deux quantités, un seul libellé.
         echecs = 0
+        self.stop_reason = "budget épuisé"
 
         try:
             with concurrent.futures.ProcessPoolExecutor(
@@ -297,7 +300,9 @@ class OptimizerBayesianMixin(OptimizerHost):
                         reduction = self._optuna_apply_freeze(study, own_results, param_keys)
                     if self._should_early_stop(no_improve, early_stop_patience, done, n_trials):
                         logger.info(f"[Bayesian/TPE] Early stop à {done}/{n_trials}")
+                        self.stop_reason = "arrêt anticipé (aucune amélioration)"
                         break
+                self.trials_failed = echecs
                 if echecs:
                     logger.warning(
                         "[Bayesian/TPE] %d/%d essai(s) en échec — le score retenu "

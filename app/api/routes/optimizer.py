@@ -9,13 +9,20 @@ from fastapi.responses import StreamingResponse
 
 from app.api import state
 from app.api.helpers import _clean, _discover_strategies, verify_api_key
-from app.api.schemas import OptimizeResultsResponse
+from app.api.schemas import OptimizeBudgetResponse, OptimizeResultsResponse
 from app.core.candle_store import get_store
 from app.core.exchange import create_exchange
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# La validation vit à part : ce module repassait au-dessus de 700 lignes. Elle
+# est montée ici pour que `main.py` n'ait qu'un routeur d'optimiseur à inclure.
+from app.api.routes.optimizer_validate import router as _validate_router  # noqa: E402
+
+router.include_router(_validate_router)
+
 
 
 @router.post("/api/optimize/start", dependencies=[Depends(verify_api_key)])
@@ -288,6 +295,10 @@ async def optimizer_stream(job_id: str):
                     "timeframe":   job.get("timeframe"),
                     "trials_done": job.get("trials_done", 0),
                     "n_trials":    job.get("n_trials", 0),
+                    # LAB-04/05 : le budget effectif diffère de celui demandé,
+                    # et trois mécanismes tronquent le compteur. Sans ces deux
+                    # champs, « 200 / 400 » reste indéchiffrable.
+                    "n_trials_budget": job.get("n_trials_budget"),
                 }
                 if job.get("status") in ("done", "error"):
                     payload["result"]   = job.get("result")
@@ -474,6 +485,38 @@ def optimizer_results():
     }
 
 
+@router.get("/api/optimize/budget", dependencies=[Depends(verify_api_key)],
+            response_model=OptimizeBudgetResponse)
+def optimizer_budget(n_trials: int, strategies: str = ""):
+    """Essais réellement tournés pour ce budget et cette sélection.
+
+    LAB-04 : le moteur reproportionne (`effective_n_trials`) — 60 demandés,
+    jusqu'à 400 tournés. La formule reste ici : la recopier côté UI la ferait
+    dériver. Sélection vide = toutes les stratégies.
+    """
+    from app.engine.opt_budget import effective_n_trials
+    from app.engine.optimizer_search import PARAM_SPACES
+
+    voulues = [s.strip() for s in strategies.split(",") if s.strip()] or list(PARAM_SPACES)
+    lignes = []
+    for nom in voulues:
+        space = PARAM_SPACES.get(nom)
+        if space is None:
+            continue
+        n, detail = effective_n_trials(space, n_trials, state.cfg or {})
+        lignes.append({"strategy": nom, "n_trials_eff": n,
+                       "raison": detail.get("raison", ""),
+                       "n_params": detail.get("n_params", 0)})
+    effectifs = [x["n_trials_eff"] for x in lignes]
+    return {
+        "demande": max(1, n_trials),
+        "min": min(effectifs) if effectifs else 0,
+        "max": max(effectifs) if effectifs else 0,
+        "total": sum(effectifs),
+        "par_strategie": lignes,
+    }
+
+
 @router.get("/api/optimize/spaces", dependencies=[Depends(verify_api_key)])
 def optimizer_spaces():
     from app.engine.auto_optimizer import _is_ml_strategy
@@ -503,143 +546,13 @@ def optimizer_spaces():
             # P0-1 : cardinalité réelle de l'espace (avant : hardcodé 1)
             "n_combos":   _count_combos(space),
             "is_ml":      _is_ml_strategy(strat),
+            "n_params":   len(space),
         }
         for strat, space in PARAM_SPACES.items()
     }
 
 
-def _with_pnl_pct(by_strategy: dict, capital) -> dict:
-    """Ajoute le gain % de la stratégie (PnL / capital) à chaque régime."""
-    cap = float(capital or 0)
-    out = {}
-    for regime, stats in (by_strategy or {}).items():
-        row = dict(stats)
-        pnl = float(row.get("pnl") or 0)
-        row["pnl_pct"] = round(pnl / cap * 100, 2) if cap else 0.0
-        out[regime] = row
-    return out
-
-
 # ── P1-4 : Route validate (Monte-Carlo + Regime Stress Test post-optimisation) ─
-@router.post("/api/optimize/validate", dependencies=[Depends(verify_api_key)])
-@state.limiter.limit("5/minute")
-def optimizer_validate(
-    request: Request,
-    job_id: str,
-    method: str = "monte_carlo",
-):
-    """Valide les best_params d'un job terminé via Monte-Carlo ou Regime Stress Test.
-
-    Prend les ``best_params`` d'un job terminé, lance l'analyse de robustesse,
-    et retourne le dict résultat. Évite à l'utilisateur de relancer un backtest
-    manuel pour estimer la probabilité de ruine ou la performance par régime.
-
-    Parameters
-    ----------
-    job_id : str
-        ID du job terminé dont on veut valider les best_params.
-    method : str
-        ``monte_carlo`` (défaut) ou ``regime``.
-    """
-    from app.core.candle_store import get_store
-    from app.core.exchange import create_exchange
-    from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-    from app.engine.auto_optimizer import get_job
-
-    if state.cfg is None:
-        raise HTTPException(503, "Config non chargée")
-    job = get_job(job_id)
-    if not job:
-        raise HTTPException(404, f"Job '{job_id}' introuvable")
-    if job.get("status") != "done":
-        raise HTTPException(400, "Job non terminé")
-    result = job.get("result", {})
-    best_params = result.get("best_params", {})
-    if not best_params:
-        raise HTTPException(400, "Aucun meilleur paramètre")
-    strat = job.get("strategy", "")
-    tf = job.get("timeframe", "")
-    symbol = job.get("symbol") or DEFAULT_CONFIG_SYMBOL
-
-    try:
-        # Récupérer les données
-        exchange = create_exchange(state.cfg)
-        from app.engine.optimizer_search import auto_fetch_limit
-        fetch_limit = auto_fetch_limit(tf, [strat])
-        df = get_store().fetch(exchange, symbol, tf, total=fetch_limit, prefer_cache=True)
-        if df is None or len(df) == 0:
-            raise HTTPException(400, f"Aucune donnée pour {symbol}/{tf}")
-
-        # Appliquer les best_params et lancer le backtest
-        import importlib
-
-        from app.core.config import load_config as _reload_cfg
-        from app.engine.backtest import Backtester
-        from app.engine.engine import Engine
-        cfg = _reload_cfg("config.yaml")
-        # Override avec best_params
-        sp = dict(cfg.get("strategy_params", {}))
-        sp[strat] = {**(sp.get(strat, {})), **best_params}
-        cfg["strategy_params"] = sp
-        cfg["optimizer_results"] = {}  # pas d'overlay
-
-        mod = importlib.import_module(f"app.strategies.{strat}")
-        eng = Engine()
-        eng.register(mod.Strategy(), silent=True)
-        bt = Backtester(eng, cfg)
-        res = bt.run(df, symbol, timeframe=tf)
-        trades = [t for t in res.trades if t.get("status", "").startswith("closed")]
-
-        if not trades:
-            raise HTTPException(400, "Le backtest avec les best_params n'a produit aucun trade")
-
-        if method == "monte_carlo":
-            from app.core.risk.gate import _default_venue_capital
-            from app.engine.monte_carlo import MonteCarlo
-            mc = MonteCarlo(n_runs=cfg.get("backtest", {}).get("monte_carlo_runs", 200))
-            mc_result = mc.run(trades, _default_venue_capital(cfg))
-            return {"method": "monte_carlo", "result": mc_result, "n_trades": len(trades)}
-
-        elif method == "regime":
-            # `regime_summary` décrit ce qu'a fait le MARCHÉ sur chaque segment
-            # (rendement, Sharpe et drawdown du PRIX). Pris seul, il ne valide
-            # aucun paramétrage : deux stratégies opposées produiraient le même
-            # résumé, et le backtest lancé juste au-dessus n'aurait servi qu'à
-            # compter les trades. C'est ce que `by_strategy` corrige — il
-            # rattache chaque trade au régime dans lequel il a été ouvert.
-            from app.engine.regime_stress_test import (
-                regime_summary,
-                strategy_performance_by_regime,
-                stress_test_by_regime,
-            )
-            segments = stress_test_by_regime(df, regime_type='trend', min_segment_bars=50)
-            return {
-                "method": "regime",
-                "segments": [
-                    {"regime": s.regime, "start_time": s.start_time, "end_time": s.end_time,
-                     "n_bars": s.n_bars, "metrics": s.metrics}
-                    for s in segments
-                ],
-                # Contexte : comportement du sous-jacent par régime.
-                "market": regime_summary(segments),
-                # Réponse à la question posée : tenue de la STRATÉGIE par régime.
-                "by_strategy": _with_pnl_pct(
-                    strategy_performance_by_regime(segments, res.trades),
-                    res.initial_capital,
-                ),
-                "n_trades": len(trades),
-            }
-        else:
-            raise HTTPException(400, f"Méthode inconnue: {method} (attendu: monte_carlo ou regime)")
-    except HTTPException:
-        raise
-    except Exception as e:
-        err_id = uuid.uuid4()
-        logger.error(f"[API] Erreur {err_id} optimize/validate : {e}", exc_info=True)
-        raise HTTPException(500, f"Erreur interne ({err_id})")
-
-
-# ── P1-11 : Purge automatique des jobs backend ───────────────────────────────
 @router.post("/api/optimize/purge", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("5/minute")
 def optimizer_purge(request: Request, max_age_hours: int = 24, keep_last: int = 200):

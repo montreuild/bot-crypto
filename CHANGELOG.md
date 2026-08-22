@@ -10,6 +10,33 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📢 `LAB-B` — ce que le serveur décide remonte à l'écran
+
+Le moteur ne fait pas ce que l'utilisateur demande, pour de bonnes raisons
+qu'il calcule et journalise. L'écran, lui, répétait la demande.
+
+**Le budget d'essais.** Le preset « Équilibré » annonçait *60 trials* ; le
+moteur en lance jusqu'à 400 (`effective_n_trials` proportionne à
+`trials_per_param × n_params`, plafonné). Une route `GET /api/optimize/budget`
+rend la fourchette réelle pour la sélection courante — la formule reste côté
+serveur, la recopier en TypeScript la ferait dériver. Le formulaire annonce
+désormais « 400 essais réels » là où il promettait 60.
+
+**Le motif d'arrêt.** Trois mécanismes tronquent le compteur sans rapport entre
+eux : budget épuisé, arrêt anticipé, essais en échec. La recherche les
+distingue maintenant (`stop_reason`, `trials_failed`), le résultat les porte,
+et la carte de job affiche l'écart entre demandé et tourné. C'était toute
+l'explication du « 200 essais sur 400 » : avec `early_stop_patience: 15` posé
+par le preset, l'arrêt ne peut pas se déclencher avant `n_trials // 2`.
+
+Le budget est consigné dans le job **même quand il est respecté** — « demandé
+60, tourné 60 » est une information, pas un non-événement — et le flux SSE le
+transporte.
+
+`optimizer.py` repassait à 711 lignes : la validation Monte-Carlo / régimes
+part dans `optimizer_validate.py`. C'est le recensement `DETTE-04` qui l'a
+signalé, comme prévu.
+
 ### 🔤 `LAB-C` — la relation recette ↔ stratégie devient une donnée
 
 Les deux vocabulaires du domaine sont **disjoints** : aucun des 10 noms de

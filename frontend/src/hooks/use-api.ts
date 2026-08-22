@@ -447,6 +447,17 @@ export function useOptimizeStatus(jobId?: string) {
   });
 }
 
+/** LAB-04 — essais réellement tournés pour ce budget. La formule vit côté
+ *  serveur ; la recopier ici la ferait dériver. */
+export function useOptimizeBudget(nTrials: number, strategies: string[]) {
+  return useQuery({
+    queryKey: ['optimizeBudget', nTrials, [...strategies].sort().join(',')],
+    queryFn: () => api.getOptimizeBudget(nTrials, strategies),
+    enabled: nTrials > 0,
+    staleTime: 60_000,
+  });
+}
+
 export function useOptimizeSpaces() {
   return useQuery({
     queryKey: ['optimizeSpaces'],

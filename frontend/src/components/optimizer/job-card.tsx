@@ -28,6 +28,42 @@ import { normalizeBaseline, deriveAfter, normalizeTopTrials, formatPctPoints } f
 import { LiveProgress } from '@/components/optimizer/live-progress';
 import { STATUS_LABEL, STATUS_VARIANT } from '@/components/optimizer/status';
 
+/**
+ * LAB-04 / LAB-05 — l'écart entre ce qui a été demandé et ce qui a tourné.
+ *
+ * Le moteur reproportionne le budget (`effective_n_trials`) et peut s'arrêter
+ * pour trois raisons sans rapport : budget épuisé, arrêt anticipé, essais en
+ * échec. Il calcule déjà tout cela ; ne pas l'afficher rendait « 200 / 400 »
+ * indéchiffrable après avoir demandé 60.
+ */
+function CeQueLeServeurADecide({ job }: { job: OptimizeJob }) {
+  const budget = job.n_trials_budget;
+  const reproportionne = budget && budget.n_trials != null
+    && budget.n_trials !== budget.base;
+  const echecs = job.result?.trials_failed ?? 0;
+  const motif = job.result?.stop_reason;
+  if (!reproportionne && !echecs && !motif) return null;
+
+  return (
+    <div className="text-[10px] text-muted space-y-0.5 border-l-2 border-border pl-2">
+      {reproportionne && (
+        <div>
+          Budget : <span className="font-mono text-foreground">{budget!.n_trials}</span> essais
+          {' '}au lieu des <span className="font-mono">{budget!.base}</span> demandés
+          {' '}— {budget!.raison} ({budget!.n_params} paramètre(s)).
+        </div>
+      )}
+      {motif && <div>Arrêt : {motif}.</div>}
+      {echecs > 0 && (
+        <div className="text-amber-400">
+          {echecs} essai(s) en échec — le score ne repose que sur{' '}
+          {(job.result?.trials_done ?? 0) - echecs} évaluation(s).
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function JobCard({
   job,
   defaultExpanded,
@@ -215,6 +251,7 @@ export function JobCard({
                     />
                   )}
                 </div>
+                <CeQueLeServeurADecide job={job} />
                 {/* P0-2 : warning si Deflated Sharpe < 50% (edge probablement nul) */}
                 {job.deflated_sharpe != null && job.deflated_sharpe < 0.5 && (
                   <div className="flex items-center gap-1.5 text-[10px] text-amber-400">
