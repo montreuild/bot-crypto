@@ -246,6 +246,15 @@ cd frontend && npm run lint && npm run type-check && npm run test:coverage && np
 Les tests marqués `slow` tournent dans un workflow séparé
 (`.github/workflows/slow.yml`), pas sur les PR.
 
+**Contrat API → UI** — les types front sont **dérivés**, pas recopiés :
+`python scripts/gen_frontend_types.py` régénère
+`frontend/src/types/generated.ts` depuis les modèles publics de
+`app/api/schemas.py`, et un test compare le fichier entier à la sortie du
+générateur. Une route qui échange une forme non triviale déclare donc son
+modèle **dans `schemas.py`**, avec un `response_model` — sinon son type côté
+front est écrit à la main, et rien ne le vérifie (`LAB-01` : une liste typée
+en objet imbriqué, 5 160 lignes de rebut à l'écran).
+
 **Périmètre mypy** — tout `app/` est couvert, `check_untyped_defs` compris.
 Les sections de `mypy.ini` portent `.*` (`[mypy-app.core.*]`) : sans lui une
 section ne vise que le `__init__.py` du paquet et la garde est inerte.

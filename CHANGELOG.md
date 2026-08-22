@@ -10,6 +10,32 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧱 `LAB-A` — les formulaires du Laboratoire entrent dans le contrat typé
+
+Le dépôt dérive ses types front des modèles Pydantic
+(`scripts/gen_frontend_types.py`), et un test compare `generated.ts` **entier**
+à la sortie du générateur. Les routes du Laboratoire y échappaient : leurs
+types côté front étaient écrits à la main, donc invérifiables — et faux.
+
+**Le cache de bougies affichait 5 160 lignes de rebut.** `/api/candles/stats`
+rend une liste plate de 645 datasets ; `CandleStore` la déclarait
+`Record<symbole, Record<tf, …>>`. Les indices du tableau devenaient des
+symboles, les clés de chaque entrée des timeframes : 645 × 8 lignes toutes
+vides. La table lit maintenant la vraie forme, et affiche **complétude et
+trous** — reçus depuis `DOWN-02`, jamais montrés — à la place de deux colonnes
+que la route ne remplit jamais.
+
+**L'entraînement poolé était inatteignable.** Le dialogue envoyait `symbols`
+en chaîne (**422**) et le nom de la recette dans un champ `strategy`
+(**400** : le pooling n'existe que sur le chemin recette). Les deux erreurs
+sont devenues impossibles : le client consomme `MLTrainRequest`, et le `any`
+qui les laissait passer a disparu. Vérifié dans le navigateur — le mode pool
+part avec `recipe` et une vraie liste, et rend un `job_id`.
+
+`universe`, `max_symbols` et `compare_solo` deviennent atteignables du même
+coup : ils font partie du contrat, plus d'une signature manuscrite à sept
+champs sur douze.
+
 ### 🧹 `DETTE-04b/c` — plus aucun module hors `app/strategies` au-delà de 700 lignes
 
 **`_run_one_job` : 355 lignes à 62.** La fonction qui porte le gate d'apply, et

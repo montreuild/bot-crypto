@@ -477,3 +477,37 @@ export interface Trade {
   reason: string;
   quote_currency?: string;
 }
+
+export interface CandleDatasetStats {
+  symbol: string;
+  tf: string;
+  bars: number;
+  size_kb?: number;
+  gaps?: number;
+  completeness?: number | null;
+  from?: string | null;
+  to?: string | null;
+}
+
+export interface CandlesStatsResponse {
+  store: Array<CandleDatasetStats>;
+}
+
+export interface MLTrainRequest {
+  recipe?: string | null;
+  strategy?: string | null;
+  symbol?: string;
+  tf: string;
+  symbols?: Array<string> | null;
+  universe?: string | null;
+  max_symbols?: number;
+  compare_solo?: number;
+  window_bars?: number | null;
+  as_of?: string | null;
+  params?: Record<string, unknown>;
+  publish?: boolean;
+}
+
+export interface MLTrainStarted {
+  job_id: string;
+}

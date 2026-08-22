@@ -18,13 +18,13 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { cn, timeAgo, formatDateTime } from '@/lib/utils';
+import { cn, timeAgo, formatPct } from '@/lib/utils';
 import { useMLStrategyInfo, useCandlesStats } from '@/hooks/use-api';
 import { MLRecipesList } from '@/components/cards/ml-recipes-list';
 import { RecentMlJobs } from '@/components/cards/recent-ml-jobs';
 import { MLVersioningAudit } from '@/components/cards/ml-versioning-audit';
 import { OptimizerView } from '@/components/views/optimizer-view';
-import type { CandleStore } from '@/types';
+import type { CandleDatasetStats } from '@/types';
 import {
   Loader2, BrainCircuit, Database, CheckCircle2, XCircle,
   AlertCircle, Cpu,
@@ -96,30 +96,21 @@ function StrategyTable({ strategies }: { strategies: Record<string, MLStrategyIn
 
 // ── Candles cache stats ─────────────────────────────────────────────────────
 
-function CandlesStatsTable({ store }: { store: CandleStore }) {
-  const symbols = Object.entries(store || {});
-  if (symbols.length === 0) {
+/**
+ * LAB-01 / LAB-09 — inventaire du cache OHLCV.
+ *
+ * `size_kb` est déjà en kilo-octets côté serveur, d'où l'absence de conversion.
+ * Les colonnes affichées sont celles que la route remplit : `from`/`to` sont
+ * structurellement nuls sur l'inventaire complet (cf. `CandleDatasetStats`),
+ * la complétude et les trous, eux, portent une information.
+ */
+function CandlesStatsTable({ store }: { store: CandleDatasetStats[] }) {
+  if (!store?.length) {
     return <div className="text-sm text-muted text-center py-6">Cache bougies vide</div>;
   }
-  const rows: Array<{ symbol: string; tf: string; count: number; first: string; last: string; size: number }> = [];
-  for (const [symbol, tfs] of symbols) {
-    for (const [tf, info] of Object.entries(tfs || {})) {
-      rows.push({
-        symbol,
-        tf,
-        count: info?.count ?? 0,
-        first: info?.first ?? '—',
-        last: info?.last ?? '—',
-        size: info?.size_bytes ?? 0,
-      });
-    }
-  }
-  rows.sort((a, b) => a.symbol.localeCompare(b.symbol) || a.tf.localeCompare(b.tf));
+  const rows = [...store].sort(
+    (a, b) => a.symbol.localeCompare(b.symbol) || a.tf.localeCompare(b.tf));
 
-  // `tabIndex={0}` : une zone défilable doit être atteignable au clavier, sinon
-  // son contenu est inaccessible sans souris (axe : scrollable-region-focusable).
-  // `role="group"` + `aria-label` évitent qu'un lecteur d'écran annonce un
-  // conteneur anonyme focusable.
   return (
     <div className="overflow-x-auto" tabIndex={0} role="group" aria-label="Tableau défilable">
       <table className="w-full text-sm">
@@ -128,35 +119,45 @@ function CandlesStatsTable({ store }: { store: CandleStore }) {
             <th className="p-3 font-medium">Symbole</th>
             <th className="p-3 font-medium">TF</th>
             <th className="p-3 font-medium text-right">Bougies</th>
-            <th className="p-3 font-medium">Première</th>
-            <th className="p-3 font-medium">Dernière</th>
+            <th className="p-3 font-medium text-right">Complétude</th>
+            <th className="p-3 font-medium text-right">Trous</th>
             <th className="p-3 font-medium text-right">Taille</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={`${r.symbol}-${r.tf}`} className="border-b border-border/30 hover:bg-card-hover">
-              <td className="p-3 font-mono font-semibold">{r.symbol}</td>
-              <td className="p-3"><Badge variant="purple">{r.tf}</Badge></td>
-              <td className="p-3 text-right font-mono">{r.count.toLocaleString()}</td>
-              <td className="p-3 text-xs text-muted font-mono">{formatDateTime(r.first)}</td>
-              <td className="p-3 text-xs text-muted font-mono">{formatDateTime(r.last)}</td>
-              <td className="p-3 text-right font-mono text-muted">
-                {r.size > 0 ? formatBytes(r.size) : '—'}
-              </td>
-            </tr>
-          ))}
+          {rows.map((r) => {
+            const pct = r.completeness == null ? null : r.completeness * 100;
+            return (
+              <tr key={`${r.symbol}-${r.tf}`} className="border-b border-border/30 hover:bg-card-hover">
+                <td className="p-3 font-mono font-semibold">{r.symbol}</td>
+                <td className="p-3"><Badge variant="purple">{r.tf}</Badge></td>
+                <td className="p-3 text-right font-mono">{(r.bars ?? 0).toLocaleString('fr-FR')}</td>
+                <td className={cn('p-3 text-right font-mono',
+                  pct == null ? 'text-muted'
+                    : pct >= 99 ? 'text-emerald-400'
+                    : pct >= 95 ? 'text-amber-400' : 'text-red-400')}>
+                  {pct == null ? 'non mesurée' : formatPct(pct, 1, false)}
+                </td>
+                <td className={cn('p-3 text-right font-mono',
+                  (r.gaps ?? 0) > 0 ? 'text-amber-400' : 'text-muted')}>
+                  {r.gaps ?? 0}
+                </td>
+                <td className="p-3 text-right font-mono text-muted">
+                  {r.size_kb ? formatKb(r.size_kb) : '—'}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+function formatKb(kb: number): string {
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  if (kb < 1024 * 1024) return `${(kb / 1024).toFixed(1)} MB`;
+  return `${(kb / 1024 / 1024).toFixed(1)} GB`;
 }
 
 // ── Vue ─────────────────────────────────────────────────────────────────────
@@ -229,7 +230,7 @@ export function MLView() {
                   Erreur lors du chargement du cache
                 </div>
               ) : (
-                <CandlesStatsTable store={candlesData?.store ?? {}} />
+                <CandlesStatsTable store={candlesData?.store ?? []} />
               )}
             </CardContent>
           </Card>

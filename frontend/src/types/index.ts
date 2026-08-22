@@ -232,14 +232,9 @@ export interface AuditEvent {
   details?: unknown;
 }
 
-export interface CandleStoreEntry {
-  count?: number;
-  first?: string;
-  last?: string;
-  size_bytes?: number;
-}
-
-export type CandleStore = Record<string, Record<string, CandleStoreEntry>>;
+// LAB-01 : `CandleStore` décrivait un objet imbriqué là où la route rend une
+// liste plate — 5 160 lignes de rebut à l'écran. Le contrat vient désormais du
+// serveur (`CandleDatasetStats`, `CandlesStatsResponse` dans generated.ts).
 
 export interface VenueDef {
   name?: string;
