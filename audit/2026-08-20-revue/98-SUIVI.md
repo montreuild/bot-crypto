@@ -74,8 +74,14 @@ la détection de trous les a rendus visibles. Trois sont livrés.
 
 ## Reste ouvert
 
+Un seul constat, issu du lot postérieur sur les trous
+([`18-TROUS-EN-AVAL.md`](18-TROUS-EN-AVAL.md)).
+
 | ID | Sév. | Constat | Effort |
 |---|---|---|---|
+| `DOWN-04` | P2 | Aucun contrôle de continuité temporelle ; les indicateurs positionnels (`shift`, `rolling`) comptent des barres, pas du temps | 2 h à plusieurs jours |
+
+Les 35 constats de la revue du 20 août sont traités.
 
 ---
 
