@@ -27,123 +27,14 @@ import { StrategyComparisonTable } from '@/components/cards/strategy-comparison-
 import { TradesStatsPanel } from '@/components/cards/trades-stats-panel';
 import { MLBacktestPanel } from '@/components/cards/ml-backtest-panel';
 import { CostSimulatorPanel } from '@/components/cards/cost-simulator-panel';
+import { Verdict } from '@/components/cards/backtest-verdict-card';
+import { buildBacktestReportHtml } from '@/lib/backtest-report';
+import {
+  strategyMap, unwrapBacktest, type StrategyPanel,
+} from '@/lib/backtest-verdict';
 import { recommendedThreshold } from '@/lib/strat-thresholds';
 import { normalizeDiagnostics, equityFinal, buyHold, equityValues, alphaPct, formatDrawdownPct } from '@/lib/backend-normalizers';
-import type { BacktestResult, StrategyStats, BacktestTrade } from '@/types';
-
-type StrategyPanel = StrategyStats & {
-  trades?: number | BacktestTrade[];
-  walk_forward?: BacktestResult['walk_forward'];
-  runs?: BacktestResult['runs'];
-  envelope?: unknown;
-  realistic_risk_diagnostics?: BacktestResult['realistic_risk_diagnostics'];
-  diagnostics?: BacktestResult['diagnostics'];
-  ml_info?: BacktestResult['ml_info'];
-  equity_final?: number;
-  final_equity?: number;
-  buy_and_hold_pct?: number;
-  alpha?: number;
-  alpha_vs_bh?: number;
-  initial_capital?: number;
-};
-
-function unwrapBacktest(result: BacktestResult | BacktestResult[]): BacktestResult {
-  return Array.isArray(result) ? result[0] : result;
-}
-
-function strategyMap(r: BacktestResult): Record<string, StrategyPanel> {
-  return (r?.by_strategy || {}) as Record<string, StrategyPanel>;
-}
-
-export function Verdict({ result }: { result: BacktestResult | BacktestResult[] }) {
-  const r = unwrapBacktest(result);
-  const ccy = quoteCurrency(r);
-  const byStrategy = strategyMap(r);
-  const strategyNames = Object.keys(byStrategy);
-
-  if (strategyNames.length === 0) {
-    return (
-      <Card className="border-amber-500/30 bg-amber-500/5">
-        <CardContent className="p-4 flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-amber-400" />
-          <p className="text-sm">
-            <span className="font-medium">Pas de trades générés. </span>
-            <span className="text-muted">Ajuste la période ou les stratégies sélectionnées.</span>
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Trouve la meilleure stratégie
-  const bestEntry = strategyNames
-    .map((name) => [name, byStrategy[name]] as const)
-    .sort(([, a], [, b]) => (b.total_pnl ?? 0) - (a.total_pnl ?? 0))[0];
-  const [bestName, bestStats] = bestEntry;
-  const pnl = bestStats.total_pnl ?? 0;
-  const wr = bestStats.win_rate ?? 0;
-  const sharpe = bestStats.sharpe ?? 0;
-  const maxDd = bestStats.max_drawdown ?? 0;
-  const trades = bestStats.total_trades ?? 0;
-
-  // Verdict logic
-  const isPositive = pnl > 0;
-  const isStrong = sharpe > 1.5 && trades >= 20 && wr >= 50;
-  const isRisky = maxDd < -20 || trades < 10;
-
-  let tone: 'positive' | 'neutral' | 'negative' = 'neutral';
-  let icon: React.ReactNode = <AlertCircle className="w-5 h-5 text-amber-400" />;
-  let message = '';
-
-  if (isStrong && !isRisky) {
-    tone = 'positive';
-    icon = <CheckCircle2 className="w-5 h-5 text-emerald-400" />;
-    message = `Edge significatif sur ${bestName} avec ${trades} trades, Sharpe ${sharpe.toFixed(2)}, max DD ${maxDd.toFixed(1)}%. Recommandation : essai avec budget 5%.`;
-  } else if (isPositive && !isRisky) {
-    tone = 'neutral';
-    icon = <TrendingUp className="w-5 h-5 text-cyan-400" />;
-    message = `Résultats positifs sur ${bestName} (${formatMoney(pnl, ccy, { sign: true })}, WR ${wr.toFixed(0)}%) mais edge limité. À valider par forward-test.`;
-  } else if (isRisky) {
-    tone = 'negative';
-    icon = <AlertCircle className="w-5 h-5 text-amber-400" />;
-    message = `Résultats risqués sur ${bestName} : ${trades} trades (${trades < 10 ? 'trop peu' : 'ok'}), max DD ${maxDd.toFixed(1)}%. À éviter en l'état.`;
-  } else {
-    tone = 'negative';
-    icon = <AlertCircle className="w-5 h-5 text-red-400" />;
-    message = `${bestName} sous-performe (${formatMoney(pnl, ccy, { sign: true })}, WR ${wr.toFixed(0)}%). Stratégie à revoir.`;
-  }
-
-  const toneClasses = {
-    positive: 'border-emerald-500/30 bg-emerald-500/5',
-    neutral: 'border-cyan-500/30 bg-cyan-500/5',
-    negative: 'border-red-500/30 bg-red-500/5',
-  };
-
-  return (
-    <Card className={toneClasses[tone]}>
-      <CardContent className="p-4">
-        <div className="flex items-start gap-3">
-          <div className="flex-shrink-0 mt-0.5">{icon}</div>
-          <div className="flex-1">
-            <div className="text-sm font-medium mb-1">Verdict</div>
-            <p className="text-sm text-foreground">{message}</p>
-            {tone === 'positive' && (
-              <Button
-                size="sm"
-                variant="success"
-                className="mt-3"
-                onClick={() => toast.info('Création du bot en essai — à implémenter')}
-              >
-                <Rocket className="w-3.5 h-3.5" />
-                Créer le bot (Essai)
-              </Button>
-            )}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+import type { BacktestResult } from '@/types';
 
 // ── Backtest Results ─────────────────────────────────────────────────────
 
@@ -195,33 +86,13 @@ export function BacktestResults({
       : [];
 
   const exportPdf = () => {
-    // Impression / PDF navigateur (parité Jinja2 export PDF sans dépendance jspdf)
     const w = window.open('', '_blank', 'noopener,noreferrer,width=900,height=700');
     if (!w) {
       toast.error('Pop-up bloquée — autorisez les fenêtres pour l’export PDF');
       return;
     }
-    const rows = strategies.map(([name, stats]) =>
-      `<tr><td>${name}</td><td>${stats.total_trades ?? '—'}</td>`
-      + `<td>${Number(stats.win_rate ?? 0).toFixed(1)}%</td>`
-      + `<td>${Number(stats.total_pnl ?? 0).toFixed(2)}</td>`
-      + `<td>${Number(stats.sharpe ?? 0).toFixed(2)}</td>`
-      + `<td>${Number(stats.max_drawdown ?? 0).toFixed(2)}%</td></tr>`,
-    ).join('');
-    w.document.write(`<!DOCTYPE html><html><head><title>Backtest</title>
-      <style>
-        body{font-family:system-ui,sans-serif;padding:24px;color:#111}
-        h1{font-size:18px} table{border-collapse:collapse;width:100%;font-size:12px}
-        th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
-        th{background:#f3f4f6} .muted{color:#6b7280;font-size:11px}
-      </style></head><body>
-      <h1>Rapport backtest</h1>
-      <p class="muted">${new Date().toLocaleString('fr-FR')} · ${r?.symbol || ''} ${r?.timeframe || ''}</p>
-      <table><thead><tr><th>Stratégie</th><th>Trades</th><th>WR</th><th>PnL</th><th>Sharpe</th><th>Max DD</th></tr></thead>
-      <tbody>${rows}</tbody></table>
-      <p class="muted">Imprimer → Enregistrer au format PDF</p>
-      <script>window.onload=function(){window.print()}</script>
-      </body></html>`);
+    w.document.write(buildBacktestReportHtml(
+      strategies, { symbol: r?.symbol, timeframe: r?.timeframe }));
     w.document.close();
   };
 
