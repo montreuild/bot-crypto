@@ -104,6 +104,28 @@ recopiée trois fois, le curseur du rejeu appelait `setIsPlaying` à la main
 (seule commande à le faire hors du hook), et le nom de stratégie était inséré
 brut dans le HTML du rapport imprimable.
 
+### 🐛 `BT-03` / `FE-02` — deux P3 « signalés pour mémoire »
+
+**Le walk-forward ignorait `optimizer.ml_mode`.** Il forçait `"frozen"` : la
+validation ne tournait pas sous le mode qui avait servi à la recherche — et
+c'est ce walk-forward qui gate l'auto-apply. Le docstring affirmait l'inverse
+(« `None` laisse `Backtester` dériver de sa config » — `Backtester` ne lit
+aucune config).
+
+Mesuré avant de trancher le défaut : un modèle publié couvre tout l'historique
+disponible, donc son entraînement chevauche chaque fold et M-06 l'invalide.
+Sur BTC/USDC 15 m, `frozen` est exploitable sur **0 fold sur 5** pour
+`stat48_v5`, `dyn_threshold_v1` et `omnibus_v4_multi` — le walk-forward tournait
+déjà `inline`, via le repli, avec un avertissement par fold. `resolve_ml_mode`
+rend donc `"inline"` : le mode déclaré rejoint le mode observé.
+
+**Un handshake WebSocket perdu par cycle.** Le jeton est à usage unique et vit
+30 s : en redemander un à chaque tentative est correct. Mais quand le POST
+échouait, la socket s'ouvrait quand même sur l'URL nue, refusée en 4403 — deux
+allers-retours perdus au lieu d'un, et un `[WS] error` qui masquait la cause.
+Le recul exponentiel est factorisé au passage : le `catch` autour de
+`new WebSocket` retombait sur 5 s fixes sans incrémenter le compteur.
+
 ### 🐛 Optimiseur — un job perdu, une barre qui gèle
 
 Deux défauts remontés d'une optimisation réelle.
