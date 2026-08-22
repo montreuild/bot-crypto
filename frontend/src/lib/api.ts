@@ -13,7 +13,8 @@ import type {
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
   RiskOverview, RiskDiagnostics, VenueEnvelopeConfig,
   OptimizeValidateResult, BotThresholds, OosTracker, OptimizeStartResult,
-  AuditEvent, CandleStore, AppConfig, ForwardTestResult,
+  AuditEvent, CandlesStatsResponse, AppConfig, ForwardTestResult,
+  MLTrainRequest, MLTrainStarted,
   DerivativesStatus, DerivativesPayload, PortfolioSnapshot, BacktestSettings,
   NotificationItem, FeesBreakdown, DailyStat, OptimizeSpaces, OptimizeResults,
   OptimizeJob, RiskPresetRemote, MlRecipe, MLStrategyInfo,
@@ -491,7 +492,7 @@ export const api = {
 
   // ── ML ──────────────────────────────────────────────────────────────────
   getMLStrategyInfo: () => apiFetch<{ strategies: Record<string, MLStrategyInfo> }>('/ml/strategy-info'),
-  getCandlesStats: () => apiFetch<{ store: CandleStore }>('/candles/stats'),
+  getCandlesStats: () => apiFetch<CandlesStatsResponse>('/candles/stats'),
   getMLRecipes: () => apiFetch<{ recipes: MlRecipe[] }>('/ml/recipes', { schema: MlRecipesResponseSchema }),
 
   // ── Config (S9-F3-US3 changelog optimizer + S9-F3-US4 test notif) ──────
@@ -524,10 +525,8 @@ export const api = {
         reason: 'Action manuelle depuis la page Modèles (frontend)',
       }),
     }),
-  startMLTrain: (params: {
-    strategy: string; symbol: string; tf: string; as_of?: string | null;
-    window_bars?: number | null; params?: Record<string, any>; publish?: boolean;
-  }) => apiFetch<{ job_id: string }>('/ml/train', { method: 'POST', body: JSON.stringify(params) }),
+  startMLTrain: (params: MLTrainRequest) =>
+    apiFetch<MLTrainStarted>('/ml/train', { method: 'POST', body: JSON.stringify(params) }),
   getMLTrainStatus: (jobId: string) =>
     apiFetch<MLJobStatus>(`/ml/train/status?${new URLSearchParams({ job_id: jobId })}`),
   startMLSweep: (params: {

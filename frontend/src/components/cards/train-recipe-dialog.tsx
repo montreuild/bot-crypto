@@ -34,6 +34,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { api } from '@/lib/api';
+import type { MLTrainRequest } from '@/types';
 import { useMLTrainStatus } from '@/hooks/use-api';
 import { toast } from 'sonner';
 import {
@@ -174,11 +175,12 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
     setPhase('starting');
     setStartError(null);
     try {
-      // P1-1 : en mode pool, on envoie symbols + max_symbols + compare_solo.
-      // Le backend résout le pool (top-N par profondeur d'historique) et
-      // entraîne sur la concaténation des symboles (coupure temporelle commune).
-      const params: any = {
-        strategy: recipe.recipe,
+      // LAB-02 : `recipe`, pas `strategy`. Le pooling n'existe que sur le
+      // chemin recette — envoyer le nom dans `strategy` le faisait refuser en
+      // 400, après un 422 sur `symbols` transmis en chaîne. Le type vient
+      // maintenant du serveur : les deux erreurs deviennent impossibles.
+      const params: MLTrainRequest = {
+        recipe: recipe.recipe,
         tf: tf.trim(),
         window_bars: windowBars > 0 ? windowBars : null,
         publish,
@@ -187,9 +189,11 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
       if (trainMode === 'single') {
         params.symbol = symbol.trim();
       } else {
-        params.symbols = poolSymbols.split(',').map((s) => s.trim()).filter(Boolean).join(',');
+        params.symbols = poolSymbols.split(',').map((s) => s.trim()).filter(Boolean);
         params.max_symbols = maxSymbols;
-        params.compare_solo = compareSolo;
+        // Le serveur attend un COMPTE de titres à comparer en solo, pas un
+        // booléen : coché sans nombre, on compare le premier.
+        params.compare_solo = compareSolo ? 1 : 0;
       }
       const res = await api.startMLTrain(params);
       setJobId(res.job_id);

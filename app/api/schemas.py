@@ -710,3 +710,69 @@ class Trade(BaseModel):
     score: float
     reason: str
     quote_currency: str = ""
+
+
+# ── Laboratoire : entraînement ML et cache de bougies (LAB-A) ───────────────
+# Ces trois formulaires échangeaient des types écrits à la main côté front,
+# donc invérifiables. Les décrire ici les fait entrer dans `generated.ts` et
+# dans le test de dérive qui compare le fichier entier.
+
+
+class CandleDatasetStats(BaseModel):
+    """Un fichier Parquet du cache OHLCV.
+
+    ``first``/``last`` sont toujours ``None`` sur l'inventaire complet :
+    `all_stats` compte les barres sans charger les DataFrames — c'est ce qui
+    lui permet de balayer 645 datasets. Les dater exigerait de tout ouvrir.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    symbol: str
+    tf: str
+    bars: int
+    size_kb: float = 0.0
+    #: Trous intérieurs restants, hors créneaux confirmés absents.
+    gaps: int = 0
+    #: 0-1. ``None`` tant qu'aucun scan n'a écrit le sidecar `.gaps.json`.
+    completeness: Optional[float] = None
+    first: Optional[str] = Field(None, alias="from")
+    last: Optional[str] = Field(None, alias="to")
+
+
+class CandlesStatsResponse(BaseModel):
+    """Inventaire à plat — une entrée par couple (symbole, timeframe)."""
+
+    store: List[CandleDatasetStats]
+
+
+class MLTrainRequest(BaseModel):
+    """Corps de ``POST /api/ml/train``.
+
+    ``recipe`` et ``strategy`` sont deux points d'entrée distincts, pas des
+    synonymes : le pooling multi-symboles n'existe que par la recette, seule à
+    savoir entraîner sans instancier une classe ``Strategy`` par symbole.
+    """
+
+    recipe: Optional[str] = None
+    strategy: Optional[str] = None
+    symbol: str = "BTC/USDC"
+    tf: str
+    #: Pool explicite. Non vide, ``symbol`` est ignoré.
+    symbols: Optional[List[str]] = None
+    #: Nom d'univers (``sbf120``) — s'unit à ``symbols`` sans doublon.
+    universe: Optional[str] = None
+    #: Borne le pool aux N titres les mieux dotés en historique. 0 = tous.
+    max_symbols: int = 0
+    #: Entraîne aussi un modèle dédié pour les N premiers titres, et rapporte
+    #: l'écart avec le poolé.
+    compare_solo: int = 0
+    window_bars: Optional[int] = None
+    as_of: Optional[str] = None
+    params: Dict[str, Any] = {}
+    publish: bool = False
+
+
+class MLTrainStarted(BaseModel):
+    job_id: str
+

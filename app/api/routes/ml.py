@@ -10,6 +10,11 @@ from pydantic import BaseModel
 
 from app.api import state
 from app.api.helpers import _discover_strategies, verify_api_key
+from app.api.schemas import (
+    CandlesStatsResponse,
+    MLTrainRequest,
+    MLTrainStarted,
+)
 from app.core.audit_log import audit_log
 from app.core.candle_store import get_store
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
@@ -48,7 +53,8 @@ def ml_strategy_info():
     return {"strategies": strategies_info}
 
 
-@router.get("/api/candles/stats", dependencies=[Depends(verify_api_key)])
+@router.get("/api/candles/stats", dependencies=[Depends(verify_api_key)],
+            response_model=CandlesStatsResponse)
 def candles_stats():
     """Retourne les statistiques du cache Parquet local (toutes paires/TFs stockés)."""
     return {"store": get_store().all_stats()}
@@ -273,37 +279,7 @@ def ml_registry_promote(request: Request, body: _PromoteBody):
 # ─────────────────────────────────────────────────────────────────────────────
 #  Entraînement / window sweep (jobs asynchrones)
 # ─────────────────────────────────────────────────────────────────────────────
-class _TrainBody(BaseModel):
-    # ``strategy`` reste optionnel depuis l'étape C : une RECETTE suffit à
-    # entraîner (app.ml.recipe_trainer). C'est ce qui permet à la page
-    # « Modèles », indexée par recette, de cesser de demander une stratégie —
-    # le formulaire parlait un vocabulaire que le tableau juste au-dessus
-    # n'utilisait pas.
-    strategy: Optional[str] = None
-    recipe: Optional[str] = None
-    symbol: str = DEFAULT_CONFIG_SYMBOL
-    #: ML-16 — entraînement POOLÉ. Non vide, ``symbol`` est ignoré et la
-    #: recette est entraînée sur tous ces symboles mis en commun.
-    symbols: Optional[List[str]] = None
-    #: Nom d'un univers (``sbf120``) — alternative à ``symbols``, et la seule
-    #: praticable depuis l'UI : personne ne saisit 120 mnémoniques à la main.
-    #: Les deux peuvent se combiner ; l'union est prise, sans doublon.
-    universe: Optional[str] = None
-    #: Borne le pool aux N titres les mieux dotés en historique. 0 = tous.
-    #: Un pool de 120 titres coûte cher ; pouvoir en prendre 20 rend
-    #: l'expérimentation possible sans écrire la liste.
-    max_symbols: int = 0
-    #: Entraîne aussi un modèle DÉDIÉ pour les N premiers titres et rapporte
-    #: l'écart avec le poolé. Opt-in : c'est un entraînement complet par titre.
-    compare_solo: int = 0
-    tf: str
-    as_of: Optional[str] = None
-    window_bars: Optional[int] = None
-    params: Dict[str, Any] = {}
-    publish: bool = False
-
-
-def _resolve_pool(body: "_TrainBody") -> List[str]:
+def _resolve_pool(body: MLTrainRequest) -> List[str]:
     """Symboles du pool : union de ``symbols`` et des membres de ``universe``.
 
     ``max_symbols`` trie par PROFONDEUR D'HISTORIQUE décroissante avant de
@@ -332,9 +308,10 @@ def _resolve_pool(body: "_TrainBody") -> List[str]:
     return out
 
 
-@router.post("/api/ml/train", dependencies=[Depends(verify_api_key)])
+@router.post("/api/ml/train", dependencies=[Depends(verify_api_key)],
+             response_model=MLTrainStarted)
 @state.limiter.limit("10/minute")
-def ml_train_start(request: Request, body: _TrainBody):
+def ml_train_start(request: Request, body: MLTrainRequest):
     """Lance un entraînement (dry-run par défaut — ``publish=false`` : rien
     n'est écrit au registre ; ``publish=true`` : gate + publication réelle,
     même chemin que le live/backtest simulated_live). Retourne un ``job_id``
