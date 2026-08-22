@@ -8,119 +8,30 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import polars as pl
 
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 from app.core.execution import cost_model as _cost_model
 from app.core.execution import format_cost_model as _format_cost_model
-from app.core.execution import size_impact_cost as _size_impact_cost
-from app.core.execution import venue_trade_cost as _venue_trade_cost
 from app.core.log_throttle import log_throttled
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, resolve_strategy_params
 from app.core.rejections import RejectionCounter
 from app.core.risk.envelope import trade_risk_pct as _trade_risk_pct
 from app.core.risk.envelope import with_reference_envelope
-from app.core.trade_economics import funding_cost as _funding_cost
 from app.core.trailing import TrailingStopManager
+from app.engine.backtest_costs import BacktestCostsMixin
 from app.engine.backtest_result import BacktestResult
+
+# Ré-exports : ces trois helpers sont importés d'ici par les tests et l'API.
+from app.engine.backtest_setup import (  # noqa: F401
+    _iso_of,
+    _mesurer_completude,
+    _resolve_frozen_ml_model,
+)
 from app.engine.engine import Engine
 from app.engine.position_lifecycle import PositionLifecycleMixin
 
 logger = logging.getLogger(__name__)
-
-
-def _mesurer_completude(df, tf: str, symbol: str):
-    """Complétude de la série en %, ou None si non mesurable.
-
-    DOWN-02 : l'indicateur existait mais n'était consommé par personne — un
-    backtest tournait sur une série à 26 % sans que rien ne le signale. Il
-    accompagne désormais les métriques, sans bloquer : c'est un avertissement,
-    pas un gate.
-    """
-    try:
-        from app.core import ohlcv_absents as _abs
-        from app.core.candle_store import get_store
-        from app.core.ohlcv_gaps import (
-            calendar_for_symbol,
-            completeness_from_gaps,
-            detect_ohlcv_gaps,
-        )
-        try:
-            absents = _abs.charger(get_store()._path(symbol, tf), symbol, tf)
-        except Exception:
-            absents = set()
-        gaps = detect_ohlcv_gaps(df, tf, calendar=calendar_for_symbol(symbol),
-                                 absents=absents)
-        return round(completeness_from_gaps(len(df), gaps) * 100, 2)
-    except Exception as e:
-        logger.debug("[Backtest] complétude non mesurable %s/%s : %s", symbol, tf, e)
-        return None
-
-
-def _iso_of(df: pl.DataFrame, idx: int) -> Optional[str]:
-    """``time`` de la barre ``idx`` en ISO (borne ``as_of`` du registre ML)."""
-    if df is None or len(df) == 0 or "time" not in df.columns:
-        return None
-    from app.ml.model_registry import to_iso
-    return to_iso(df["time"][idx])
-
-
-def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
-                             window_start: Optional[str], window_end: Optional[str]) -> dict:
-    """Charge le modèle figé ``as_of=window_start``. Ne lève jamais :
-    introuvable / illisible / chevauchement → ``fallback_to_inline``.
-    """
-    import app.ml.model_registry as ml_registry
-
-    entry: Dict = {"resolved": False, "fallback_to_inline": True}
-    if not tf:
-        return entry
-    base_dir = getattr(strat, "model_dir", "models") or "models"
-    try:
-        from app.ml.scoring import resolve_recipe_name
-        recipe = resolve_recipe_name(strat)
-        art = ml_registry.resolve(tf, recipe, as_of=window_start, base_dir=base_dir)
-    except Exception as e:
-        logger.warning(f"[Backtest] ml_mode=frozen : resolve() KO pour {strat.name}/{tf} : {e}")
-        return entry
-    if art is None:
-        logger.warning(
-            f"[Backtest] ml_mode=frozen : aucun modèle résoluble pour {strat.name}/{tf} "
-            f"(symbole={symbol}) — entraînement inline activé (lancez d'abord un cycle "
-            f"live, le runner CLI, ou un optimiseur pour publier un modèle)."
-        )
-        return entry
-    overlap = ml_registry.overlaps(art, window_start, window_end)
-    if overlap:
-        # M-06 : un modèle qui a vu la fenêtre évaluée n'est pas utilisable.
-        logger.warning(
-            f"[Backtest] ml_mode=frozen : {strat.name}/{tf} — la fenêtre d'entraînement "
-            f"de {art.version_id} ({art.train_start}..{art.train_end}) chevauche la "
-            f"fenêtre backtestée ({window_start}..{window_end}) : modèle invalidé, "
-            f"repli inline."
-        )
-        return {
-            "resolved": False, "fallback_to_inline": True,
-            "overlap_warning": True, "invalidated": True,
-            "version_id": art.version_id,
-            "train_start": art.train_start, "train_end": art.train_end,
-        }
-    if not strat.load_model(art.path_prefix):
-        logger.warning(
-            f"[Backtest] ml_mode=frozen : {strat.name}/{tf} — modèle {art.version_id} "
-            f"résolu mais illisible — entraînement inline activé."
-        )
-        return entry
-    strat.managed_externally = True
-    logger.debug(f"[Backtest] ml_mode=frozen : {strat.name}/{tf} -> {art.version_id} chargé")
-    entry.update({
-        "resolved": True, "fallback_to_inline": False,
-        "version_id": art.version_id, "train_start": art.train_start,
-        "train_end": art.train_end, "auc": round(float(art.auc), 4),
-        "undated": not art.train_end, "overlap_warning": overlap,
-    })
-    return entry
 
 
 def run_dual_pass(engine: Engine, cfg: dict, df, envelope, *,
@@ -159,7 +70,7 @@ def _clone_frame(df):
 _ML_MODES = ("frozen", "inline", "simulated_live")
 
 
-class Backtester(PositionLifecycleMixin):
+class Backtester(BacktestCostsMixin, PositionLifecycleMixin):
     """Trailing stop multi-phases.
 
     ``ml_mode`` : ``frozen`` (défaut, ``as_of`` début de fenêtre), ``inline``
@@ -760,49 +671,6 @@ class Backtester(PositionLifecycleMixin):
             return self.envelope.slot_envelope
         from app.core.risk.gate import _default_venue_capital
         return _default_venue_capital(cfg) or 1000.0
-
-    def _funding_cost(self, ctx, position: dict, i: int,
-                      hours_held: float) -> float:
-        """L2 (§27) — funding d'un perpétuel sur la durée de détention.
-
-        0.0 hors venue perp, ou quand la série de funding n'est pas disponible
-        (``ctx.funding_arr``, alimentée par ``derivatives.align_to_ohlcv``).
-        Un long paie quand le funding est positif, un short encaisse — d'où le
-        signe porté par le sens de la position."""
-        arr = getattr(ctx, "funding_arr", None)
-        if arr is None or self._venue is None:
-            return 0.0
-        if getattr(self._venue, "market_type", "spot") != "perp":
-            return 0.0
-        debut = int(position.get("bar", i))
-        if not (0 <= debut <= i < len(arr)):
-            return 0.0
-        taux_moyen = float(np.nanmean(arr[debut:i + 1]))
-        if taux_moyen != taux_moyen:      # NaN
-            return 0.0
-        cout = _funding_cost(position["notional"], taux_moyen, hours_held)
-        return cout if position["side"] == "long" else -cout
-
-    def _impact_cost(self, ctx, i: int, notional: float) -> float:
-        """BT-10 : coût d'impact croissant avec la taille RELATIVE du trade
-        (participation au volume) — 0.0 si le modèle est off ou volume absent.
-        Formule partagée avec le paper trading live (FIN-07) : voir
-        ``app.core.execution.size_impact_cost``."""
-        if self.slippage_model != "size":
-            return 0.0
-        qv = getattr(ctx, "qvol_arr", None)
-        if qv is None or not (0 <= i < len(qv)):
-            return 0.0
-        return _size_impact_cost(notional, self.spread_pct, self.slippage_k, float(qv[i]))
-
-    def _fees(self, price: float, size: float, maker: bool = False,
-              side: str = "long", is_entry: bool = True) -> float:
-        """Coût d'un fill. Passe par le modèle de la venue quand il y en a une
-        (G2 : commission fixe, plancher, TTF) — sinon frais proportionnels,
-        strictement comme avant."""
-        rate = self.maker_fee if maker else self.taker_fee
-        return _venue_trade_cost(price, size, rate, side=side,
-                                 venue=self._venue, is_entry=is_entry)
 
 
 # Imports en fin de module : walk_forward importe Backtester en lazy dans run().

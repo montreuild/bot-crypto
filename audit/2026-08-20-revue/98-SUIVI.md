@@ -42,7 +42,8 @@ que trouvés** le 20 août ; ce document dit ce qui a été livré depuis.
 | `PERF-02` | `07bc133` | détection de trous incrémentale à la sauvegarde — ×138 |
 | `SEC-02` | `8e86393` | limite de débit sur `POST /api/ws/ticket` |
 | `ML-03b` | `8e86393` | `fit_trace` partagé entre threads |
-| `DETTE-04` | cette PR | `candle_store` 1 213→534, `auto_optimizer` 1 000→759 ; déplacements prouvés littéraux (AST) |
+| `DETTE-04b/c` | cette PR | `_run_one_job` 355→62 (14 tests de caractérisation), 6 fichiers sous 700 lignes, recensement verrouillé |
+| `DETTE-04` | PR précédente | `candle_store` 1 213→534, `auto_optimizer` 1 000→759 ; déplacements prouvés littéraux (AST) |
 | `ARCH-02` | cette PR | `smart-replay-view` 744→346, `backtest-results` 708→579 ; 64 tests sur les règles extraites |
 | `BT-03` | cette PR | résolveur unique `resolve_ml_mode` ; `frozen` mesuré inexploitable sur 0/5 folds |
 | `FE-02` | cette PR | pas de handshake sans jeton : un aller-retour perdu par cycle au lieu de deux |
@@ -75,8 +76,6 @@ la détection de trous les a rendus visibles. Trois sont livrés.
 
 | ID | Sév. | Constat | Effort |
 |---|---|---|---|
-| `DETTE-04b` | P3 | `auto_optimizer._run_one_job` : 355 lignes, la fonction qui porte le gate. Séparée du lot — c'est là qu'un découpage précédent avait introduit `FIN-01`/`FIN-02` | 1 j |
-| `DETTE-04c` | P3 | `position_lifecycle.py` (741 l.), `optimizer_search.py` (887 l.), `backtest.py` (810 l.) | 1 j chacun |
 
 ---
 
