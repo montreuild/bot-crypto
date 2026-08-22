@@ -18,7 +18,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { cn, timeAgo, formatPct } from '@/lib/utils';
+import { cn, formatPct } from '@/lib/utils';
 import { useMLStrategyInfo, useCandlesStats } from '@/hooks/use-api';
 import { MLRecipesList } from '@/components/cards/ml-recipes-list';
 import { RecentMlJobs } from '@/components/cards/recent-ml-jobs';
@@ -30,6 +30,17 @@ import {
   AlertCircle, Cpu,
 } from 'lucide-react';
 import type { MLStrategyInfo } from '@/types';
+
+/** LAB-08 — `timeAgo` mesure un PASSÉ : sur un horodatage futur il rendait la
+ *  valeur brute (`-154352s`) dans une colonne intitulée « Prochain retrain ». */
+function formatEcheance(epochSecondes: number | null | undefined): string {
+  if (!epochSecondes) return 'jamais';
+  const restant = Math.round(epochSecondes - Date.now() / 1000);
+  if (restant <= 0) return 'imminent';
+  if (restant < 3600) return `dans ${Math.round(restant / 60)} min`;
+  if (restant < 86400) return `dans ${Math.round(restant / 3600)} h`;
+  return `dans ${Math.round(restant / 86400)} j`;
+}
 
 // ── Strategy table ──────────────────────────────────────────────────────────
 
@@ -48,6 +59,7 @@ function StrategyTable({ strategies }: { strategies: Record<string, MLStrategyIn
         <thead>
           <tr className="text-left text-xs text-dim border-b border-border">
             <th className="p-3 font-medium">Stratégie</th>
+            <th className="p-3 font-medium">Recette</th>
             <th className="p-3 font-medium">Statut</th>
             <th className="p-3 font-medium text-right">Best AUC</th>
             <th className="p-3 font-medium text-right">Prochain retrain</th>
@@ -67,6 +79,11 @@ function StrategyTable({ strategies }: { strategies: Record<string, MLStrategyIn
                   </div>
                 </td>
                 <td className="p-3">
+                  {info?.recipe
+                    ? <span className="font-mono text-xs text-cyan-400">{info.recipe}</span>
+                    : <span className="text-xs text-dim">aucune</span>}
+                </td>
+                <td className="p-3">
                   {trained ? (
                     <Badge variant="success">
                       <CheckCircle2 className="w-3 h-3" />
@@ -83,7 +100,7 @@ function StrategyTable({ strategies }: { strategies: Record<string, MLStrategyIn
                   {auc > 0 ? auc.toFixed(4) : '—'}
                 </td>
                 <td className="p-3 text-right text-xs text-muted font-mono">
-                  {info?.next_retrain_at ? timeAgo(info.next_retrain_at) : 'jamais'}
+                  {formatEcheance(info?.next_retrain_at)}
                 </td>
               </tr>
             );
@@ -182,7 +199,7 @@ export function MLView() {
         </div>
         <Badge variant={trainedCount === totalCount && totalCount > 0 ? 'success' : 'warning'}>
           <BrainCircuit className="w-3 h-3" />
-          {trainedCount}/{totalCount} entraînés
+          {trainedCount}/{totalCount} stratégies entraînées
         </Badge>
       </div>
 

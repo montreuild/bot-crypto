@@ -473,11 +473,7 @@ export interface OptimizeResults {
 
 // ── ML ──────────────────────────────────────────────────────────────────────
 
-export interface MLStrategyInfo {
-  is_trained: boolean;
-  best_auc: number;
-  next_retrain_at: number | null;
-}
+// `MLStrategyInfo` vient de generated.ts (LAB-07 : elle porte `recipe`).
 
 // ── ML Model Registry (ML-02) ───────────────────────────────────────────────
 

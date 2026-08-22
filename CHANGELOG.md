@@ -10,6 +10,35 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔤 `LAB-C` — la relation recette ↔ stratégie devient une donnée
+
+Les deux vocabulaires du domaine sont **disjoints** : aucun des 10 noms de
+recette n'est un nom de stratégie. L'onglet ML les empilait, tous deux
+étiquetés « ML », sans dire ce qui les relie — et le dialogue d'entraînement
+envoyait l'un dans le champ de l'autre.
+
+La relation existait côté serveur (`resolve_recipe_name`) sans être exposée.
+`/api/ml/strategy-info` porte désormais la recette consommée par chaque
+stratégie, `/api/ml/recipes` la liste des stratégies qui consomment chacune —
+et les deux routes déclarent leur modèle, donc entrent dans `generated.ts`.
+
+À l'écran : une colonne « Recette » dans la table des stratégies, un
+« Utilisée par … » sous chaque recette. Un test verrouille le constat
+lui-même : si un nom venait à coïncider, la juxtaposition redeviendrait
+lisible et ce lot perdrait sa raison d'être.
+
+Deux constats indépendants tombent au passage :
+
+- **`LAB-08`** — « Prochain retrain » affichait `-154352s`. `timeAgo` mesure un
+  **passé** ; appliqué à un horodatage futur, la première branche rendait la
+  valeur brute. La colonne annonce maintenant « dans 2 j ».
+- **`LAB-10`** — `filterMl` était transmis à deux enfants sur trois : le
+  panneau « Optimiseur ML » listait les espaces des 41 stratégies, dont les 25
+  non-ML. Il en liste 14.
+
+Et deux types manuscrits de plus disparaissent (`MLStrategyInfo`, `MlRecipe`) :
+ils dupliquaient ce que le serveur décrit maintenant.
+
 ### 🧱 `LAB-A` — les formulaires du Laboratoire entrent dans le contrat typé
 
 Le dépôt dérive ses types front des modèles Pydantic

@@ -52,7 +52,7 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
 
       <OptimizerConfigForm filterMl={filterMl} spaces={spaces} />
 
-      {!spacesLoading && <ParamSpaceTable spaces={spaces || {}} />}
+      {!spacesLoading && <ParamSpaceTable spaces={spaces || {}} filterMl={filterMl} />}
 
       <OptimizerJobsPanel
         jobs={jobs}

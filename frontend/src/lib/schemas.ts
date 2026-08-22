@@ -154,6 +154,8 @@ export const MlRecipeSchema = z
     features_catalog: z.string().nullish(),
     label_scheme: z.string().nullish(),
     heads: z.array(z.string()).default([]),
+    /** LAB-07 — stratégies qui consomment cette recette. */
+    used_by: z.array(z.string()).default([]),
   })
   .passthrough();
 
