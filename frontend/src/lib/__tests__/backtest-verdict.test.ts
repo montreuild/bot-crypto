@@ -10,11 +10,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SEUILS, bestStrategy, computeVerdict, strategyMap, unwrapBacktest,
+  type StrategyPanel,
 } from '@/lib/backtest-verdict';
 
+/** `StrategyStats` porte une douzaine de champs ; seuls ceux du verdict comptent. */
 const strat = (o: Record<string, number>) => ({
   total_pnl: 0, win_rate: 0, sharpe: 0, max_drawdown: 0, total_trades: 0, ...o,
-});
+} as unknown as StrategyPanel);
 const res = (by: Record<string, any>) => ({ by_strategy: by } as any);
 
 /** Le cas nominal « edge significatif » : tout au-dessus des seuils. */
