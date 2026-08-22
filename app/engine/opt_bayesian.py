@@ -174,6 +174,18 @@ class OptimizerBayesianMixin(OptimizerHost):
             "cardinality_before": card_before, "cardinality_after": card_after,
         }
 
+    def _tell_progress(self, done: int, n_trials: int, best_score: float,
+                       r: Optional[dict]) -> None:
+        """Un essai de plus, abouti ou non — la barre suit le budget consommé."""
+        if not self.progress_callback:
+            return
+        self.progress_callback(done, n_trials, best_score, {} if r is None else {
+            "oos_pnl":     r["oos_pnl"],
+            "oos_sharpe":  r["oos_sharpe"],
+            "final_score": r.get("final_score", -999.0),
+            "overfit":     r.get("overfit", 1.0),
+        })
+
     def _optuna_sequential(self, study, n_trials: int, early_stop_patience: int,
                            freeze_at: Optional[int] = None,
                            param_keys: Optional[List[str]] = None) -> Optional[dict]:
@@ -199,13 +211,7 @@ class OptimizerBayesianMixin(OptimizerHost):
             else:
                 no_improve += 1
 
-            if self.progress_callback:
-                self.progress_callback(i + 1, n_trials, best_score, {
-                    "oos_pnl":     r["oos_pnl"],
-                    "oos_sharpe":  r["oos_sharpe"],
-                    "final_score": score,
-                    "overfit":     r.get("overfit", 1.0),
-                })
+            self._tell_progress(i + 1, n_trials, best_score, r)
 
             if freeze_at is not None and reduction is None and len(own_results) >= freeze_at:
                 reduction = self._optuna_apply_freeze(study, own_results, param_keys)
@@ -237,6 +243,12 @@ class OptimizerBayesianMixin(OptimizerHost):
         _worker_timeout = 300
         reduction = None
         own_results: List[dict] = []
+        # `done` compte les essais RENDUS à Optuna, échecs compris : c'est lui
+        # qui borne la boucle. La progression rapportait `len(self.results)`,
+        # qui n'agrège que les succès — un lot de trials en échec faisait donc
+        # geler la barre avant la fin (« 200/400 ») alors que la recherche
+        # allait bien à son terme. Deux quantités, un seul libellé.
+        echecs = 0
 
         try:
             with concurrent.futures.ProcessPoolExecutor(
@@ -258,10 +270,16 @@ class OptimizerBayesianMixin(OptimizerHost):
                         except Exception as _e:
                             logger.warning(f"[Bayesian/TPE] worker KO : {_e}")
                             study.tell(trials[i], -999.0)
+                            done += 1
+                            echecs += 1
+                            self._tell_progress(done, n_trials, best_score, None)
                             continue
                         if "error" in r:
                             logger.warning("[Bayesian/TPE] worker erreur : %s", r["error"])
                             study.tell(trials[i], -999.0)
+                            done += 1
+                            echecs += 1
+                            self._tell_progress(done, n_trials, best_score, None)
                             continue
                         score = self._penalized_score(r)
                         r["final_score"] = score
@@ -273,19 +291,18 @@ class OptimizerBayesianMixin(OptimizerHost):
                             no_improve = 0
                         else:
                             no_improve += 1
-                        if self.progress_callback:
-                            self.progress_callback(len(self.results), n_trials, best_score, {
-                                "oos_pnl":     r["oos_pnl"],
-                                "oos_sharpe":  r["oos_sharpe"],
-                                "final_score": score,
-                                "overfit":     r.get("overfit", 1.0),
-                            })
-                    done += k
+                        done += 1
+                        self._tell_progress(done, n_trials, best_score, r)
                     if freeze_at is not None and reduction is None and len(own_results) >= freeze_at:
                         reduction = self._optuna_apply_freeze(study, own_results, param_keys)
                     if self._should_early_stop(no_improve, early_stop_patience, done, n_trials):
                         logger.info(f"[Bayesian/TPE] Early stop à {done}/{n_trials}")
                         break
+                if echecs:
+                    logger.warning(
+                        "[Bayesian/TPE] %d/%d essai(s) en échec — le score retenu "
+                        "ne repose que sur %d évaluation(s)",
+                        echecs, done, done - echecs)
         except BrokenProcessPool as _bp:
             logger.error("[Bayesian/TPE] pool brisé (OOM worker ?) — repli séquentiel "
                          "pour les trials restants : %s", _bp)
