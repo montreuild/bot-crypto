@@ -10,6 +10,33 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧹 `DETTE-04b/c` — plus aucun module hors `app/strategies` au-delà de 700 lignes
+
+**`_run_one_job` : 355 lignes à 62.** La fonction qui porte le gate d'apply, et
+l'endroit exact où un découpage précédent avait déplacé la comptabilité des
+frais et fait naître `FIN-01`/`FIN-02`. Méthode : **14 tests de caractérisation
+écrits d'abord, sur le code d'origine** — statut terminal, écriture de config,
+trace d'audit, exclusion mutuelle des deux chemins, libération du créneau CPU
+sur exception, conjonction des gates. Verts des deux côtés. Le gate lui-même
+vit désormais dans `opt_gate.py`.
+
+**Cinq autres modules découpés**, déplacements prouvés littéraux (AST) :
+
+| Fichier | Avant | Après |
+|---|---:|---:|
+| `position_lifecycle.py` | 741 | 395 |
+| `optimizer_search.py` | 887 | 672 |
+| `backtest.py` | 810 | 678 |
+| `scanner_service.py` | 781 | 395 |
+| `position_open_mixin.py` | 741 | 638 |
+
+**Le recensement est désormais un test.** Le seuil de 700 lignes est mesuré sur
+tout `app/`, avec l'exemption d'`app/strategies` rendue explicite et sa raison
+inscrite — le constat l'accordait déjà, tacitement. Ce test a immédiatement
+trouvé `position_open_mixin.py` (741 l.), qui ne figurait pas dans les onze : il
+avait grossi depuis. C'est le mode de récidive que la liste seule ne voit pas —
+`candle_store` était passé de 1 087 à 1 213 entre deux revues.
+
 ### 🧹 `DETTE-04` — les deux gros fichiers du constat découpés
 
 Le fichier le plus cité du constat, et le point d'entrée du bot vers les

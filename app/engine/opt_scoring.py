@@ -209,7 +209,7 @@ def fmt_metric(v: Optional[float], spec: str = ".2f") -> str:
 
 
 def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
-                   oos_sharpe: float, baseline: dict,
+                   oos_sharpe: Optional[float], baseline: dict,
                    min_trades: int = MIN_SIGNIFICANT_TRADES,
                    n_trials: int = 1,
                    min_deflated_sharpe: Optional[float] = None,

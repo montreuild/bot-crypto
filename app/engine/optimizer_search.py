@@ -14,17 +14,13 @@ restent valides. ``StrategyOptimizer`` est conservé comme alias de
 ``OptimizerSearchEngine`` pour compatibilité ascendante.
 """
 import importlib
-import io
 import itertools
 import logging
 import math
-import os
 import random
 import threading
-from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 import polars as pl
@@ -57,6 +53,8 @@ from app.engine.opt_persistence import (  # noqa: F401
     record_optimizer_audit,
     save_optimizer_results,
 )
+from app.engine.opt_pool import OptimizerPoolMixin, _PoolHandle  # noqa: F401
+from app.engine.opt_result import OptimizerResultMixin
 from app.engine.opt_scoring import (  # noqa: F401
     _composite_score,
     _overfitting_ratio,
@@ -185,25 +183,9 @@ def ml_hp_space_for(strategy_name: str) -> Dict[str, List]:
     Vide si la stratégie n'expose aucun de ces hyperparamètres → phase unique."""
     fixed = FIXED_PARAMS.get(strategy_name, {})
     return {k: v for k, v in ML_HP_SPACE.items() if k in fixed}
-
-
-@dataclass
-class _PoolHandle:
-    """Pool de process ouvert et déjà initialisé (workers avec features
-    pré-calculées), partageable entre plusieurs vagues d'évaluation d'un même
-    appel (ex: dépistage puis recherche réduite) — évite de repayer le spawn
-    + ré-import complet de l'appli (lightgbm, sklearn, polars…) à chaque
-    phase, coût quasi fixe par pool et dominant pour les stratégies ML
-    multi-modèles (ex: opus_omnibus_v12)."""
-    executor: Any
-    cfg_yaml: str
-    df_is_ipc: bytes
-    df_oos_ipc: bytes
-    safe_jobs: int
-
-
 # ── OptimizerSearchEngine — classe principale ──
-class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
+class OptimizerSearchEngine(OptimizerPoolMixin, OptimizerResultMixin,
+                            OptimizerFreezeMixin, OptimizerBayesianMixin):
     def __init__(self, strategy_name: str, cfg: dict,
                  df_is: pl.DataFrame, df_oos: pl.DataFrame,
                  param_space: Dict | None = None,
@@ -423,127 +405,6 @@ class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
             result["param_search_optim"] = reduction
         return result
 
-    @contextmanager
-    def _open_pool(self, n_jobs: int):
-        """Pool persistant pour le bloc ``with``. ``None`` si n_jobs<=1."""
-        safe_jobs = self._safe_worker_count(n_jobs)
-        if safe_jobs <= 1:
-            yield None
-            return
-        import concurrent.futures
-        import multiprocessing as _mp
-        cfg_yaml, df_is_ipc, df_oos_ipc, init_args = self._serialize_pool_inputs()
-        ctx = _mp.get_context("spawn")
-        executor = concurrent.futures.ProcessPoolExecutor(
-            max_workers=safe_jobs, mp_context=ctx,
-            initializer=_worker_init, initargs=init_args)
-        try:
-            yield _PoolHandle(executor, cfg_yaml, df_is_ipc, df_oos_ipc, safe_jobs)
-        finally:
-            executor.shutdown(wait=True, cancel_futures=True)
-
-    def _submit_wave(self, pool: "_PoolHandle", params_list: List[dict],
-                     timeout: int = 300) -> Tuple[List[dict], bool, List[dict]]:
-        """Soumet une vague de ``params_list`` au pool DÉJÀ OUVERT (jamais
-        créé ici) et attend leurs résultats. Retourne (résultats OK, pool
-        cassé ?, params non traités si cassé). Primitive bas niveau partagée
-        par ``_run_parallel`` (random/grid) et ``_optuna_parallel`` (bayésien
-        parallèle)."""
-        import concurrent.futures
-        try:
-            from concurrent.futures.process import BrokenProcessPool
-        except ImportError:
-            BrokenProcessPool = Exception  # type: ignore
-
-        worker_args = [self._worker_args(p, pool.cfg_yaml, pool.df_is_ipc, pool.df_oos_ipc)
-                      for p in params_list]
-        try:
-            futures_map = {pool.executor.submit(_eval_worker, a): i
-                           for i, a in enumerate(worker_args)}
-        except BrokenProcessPool as _bp:
-            logger.error("[Optimizer] pool déjà cassé, bascule séquentielle : %s", _bp)
-            return [], True, list(params_list)
-
-        results: List[Optional[dict]] = [None] * len(params_list)
-        broken = False
-        remaining: List[dict] = []
-        timed_out: List[Tuple[int, dict]] = []
-        for fut in concurrent.futures.as_completed(futures_map):
-            i = futures_map[fut]
-            try:
-                r = fut.result(timeout=timeout)
-            except concurrent.futures.TimeoutError:
-                logger.warning("[Optimizer] worker timeout (>%ds) — retry in-process", timeout)
-                timed_out.append((i, params_list[i]))
-                continue
-            except BrokenProcessPool as _bp:
-                logger.error("[Optimizer] BrokenProcessPool (worker tué, ex: OOM) : %s", _bp)
-                broken = True
-                for f, idx in futures_map.items():
-                    if not f.done():
-                        remaining.append(params_list[idx])
-                        f.cancel()
-                break
-            except Exception as _e:
-                logger.warning(f"[Optimizer] worker KO : {_e}")
-                continue
-            if "error" in r:
-                logger.warning("[Optimizer] worker erreur : %s", r["error"])
-                continue
-            results[i] = r
-        # O-11 : un timeout n'est plus ignoré — un retry in-process.
-        for i, params in timed_out:
-            try:
-                results[i] = self._eval(params)
-                logger.info("[Optimizer] trial rejoué après timeout")
-            except Exception as _re:
-                logger.warning("[Optimizer] retry timeout KO : %s", _re)
-        ok_results = [r for r in results if r is not None]
-        return ok_results, broken, remaining
-
-    def _serialize_pool_inputs(self):
-        """Sérialise (une fois) cfg + DataFrames IS/OOS pour les workers spawn.
-        Retourne ``(cfg_yaml, df_is_ipc, df_oos_ipc, init_args)``."""
-        import yaml as _yaml  # type: ignore[import-untyped,unused-ignore]
-        _buf_is = io.BytesIO()
-        self.df_is.write_ipc(_buf_is)
-        df_is_ipc  = _buf_is.getvalue()
-        _buf_oos = io.BytesIO()
-        self.df_oos.write_ipc(_buf_oos)
-        df_oos_ipc = _buf_oos.getvalue()
-        cfg_yaml = _yaml.dump(self.cfg)
-        init_args = (self.strategy_name, cfg_yaml,
-                     df_is_ipc, df_oos_ipc, self.symbol, self.timeframe)
-        return cfg_yaml, df_is_ipc, df_oos_ipc, init_args
-
-    def _worker_args(self, params: dict, cfg_yaml: str,
-                     df_is_ipc: bytes, df_oos_ipc: bytes) -> tuple:
-        return (self.strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc,
-                self.symbol, params, self.timeframe)
-
-    def _safe_worker_count(self, n_jobs: int) -> int:
-        """Plafonne le nombre de workers : cpu-1 puis cap mémoire anti-OOM."""
-        if n_jobs <= 1:
-            return 1
-        _cpu = os.cpu_count() or 1
-        safe = max(1, min(n_jobs, max(1, _cpu - 1)))
-        # Estimation prudente ~5× le payload IPC + 256 Mo (features + LightGBM).
-        try:
-            # P-06 : réutilise la sérialisation déjà faite, pas un 2e write_ipc.
-            cached = getattr(self, "_pool_ipc_sizes", None)
-            if cached is None:
-                _buf_is = io.BytesIO()
-                self.df_is.write_ipc(_buf_is)
-                _buf_oos = io.BytesIO()
-                self.df_oos.write_ipc(_buf_oos)
-                cached = _buf_is.tell() + _buf_oos.tell()
-                self._pool_ipc_sizes = cached
-            per_worker = int(cached * 5) + 256 * 1024 * 1024
-            safe = _mem_aware_max_workers(safe, per_worker)
-        except Exception:
-            pass
-        return safe
-
     def _run_parallel(self, n: int, n_total: int, trial_offset: int = 0,
                       sampler=None, pool: Optional["_PoolHandle"] = None,
                       early_stop_patience: int = 0,
@@ -729,82 +590,6 @@ class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
             result["param_search_optim"] = reduction
         return result
 
-    def _best_result(self) -> dict:
-        if not self.results:
-            return {
-                "error": ("Aucun trial complété (workers tous KO — ex: OOM LightGBM). "
-                          "Réduisez --jobs / n_jobs, ou diminuez le nombre de bougies."),
-                "failed": True,
-                "completed_trials": 0,
-            }
-        best = max(self.results, key=self._penalized_score)
-        # Top 5 par score final
-        sorted_results = sorted(self.results, key=self._penalized_score, reverse=True)
-        top5 = [
-            {
-                "is_score":    round(r["is_score"], 4),
-                "oos_score":   round(r["oos_score"], 4),
-                "final_score": round(self._penalized_score(r), 4),
-                "oos_pnl":     round(r["oos_pnl"], 2),
-                "oos_wr":      round(r.get("oos_wr", 0.0), 1),
-                "oos_dd":      round(r.get("oos_dd", 0.0), 2),
-                "overfit":     round(r.get("overfit", 1.0), 2),
-            }
-            for r in sorted_results[:5]
-        ]
-        return {
-            "strategy":       self.strategy_name,
-            "timeframe":      self.timeframe,
-            "symbol":         self.symbol,
-            "best_params":    best["params"],
-            "best_is_score":  best["is_score"],
-            "best_oos_score": self._penalized_score(best),
-            "best_is_pnl":    best["is_pnl"],
-            "best_oos_pnl":   best["oos_pnl"],
-            "best_is_sharpe": best["is_sharpe"],
-            "best_oos_sharpe":best["oos_sharpe"],
-            "best_is_trades": best["is_trades"],
-            "best_oos_trades":best["oos_trades"],
-            "best_oos_wr":    round(best.get("oos_wr", 0.0), 1),
-            # OPT-01 : discriminants de qualité du gate d'application.
-            "best_oos_pf":         best.get("oos_pf"),
-            "best_oos_expectancy": best.get("oos_expectancy"),
-            # O-01 : alias honnêtes — cette tranche a servi à sélectionner.
-            "best_val_score": self._penalized_score(best),
-            "best_val_pnl":   best["oos_pnl"],
-            "best_val_sharpe":best["oos_sharpe"],
-            "best_val_trades":best["oos_trades"],
-            "best_val_wr":    round(best.get("oos_wr", 0.0), 1),
-            "best_is_wr":     round(best.get("is_wr", 0.0), 1),
-            "best_oos_dd":    round(best.get("oos_dd", 0.0), 2),
-            "best_oos_alpha": round(best["oos_alpha"], 4) if best.get("oos_alpha") is not None else None,
-            "overfit":        best.get("overfit", 1.0),
-            "n_trials":       len(self.results),
-            "top5":           top5,
-            # S11 : contexte d'exécution facturé pendant toute l'optimisation
-            # (venue, spot/margin, levier, détail des frais, emprunt). Sans lui,
-            # un `oos_score` n'est pas comparable d'un run à l'autre : deux
-            # scores très différents peuvent ne différer que par la venue.
-            "cost_model":     self._cost_model(),
-        }
-
-    def _cost_model(self) -> dict:
-        """Modèle de coûts de CE couple (symbole, timeframe).
-
-        Recalculé depuis la config et la venue résolue plutôt que capturé sur un
-        trial : tous les trials partagent le même contexte (seuls les params de
-        stratégie varient), et un trial peut avoir échoué.
-        """
-        from app.core.bot_identity import resolve_venue
-        from app.core.execution import cost_model
-        try:
-            venue = resolve_venue(self.cfg, tf=self.timeframe, symbol=self.symbol)
-            return cost_model(self.cfg, venue)
-        except Exception as e:      # pragma: no cover — jamais bloquant
-            logger.debug(f"[Optimizer] modèle de coûts indisponible : {e}")
-            return {}
-
-    # ── Dispatch & two-phase ML (#6) ──────────────────────────────────────────
     def _dispatch(self, method: str, n_trials: int, n_jobs: int,
                   early_stop_patience: int = 0,
                   param_search_optim: bool = True) -> dict:
