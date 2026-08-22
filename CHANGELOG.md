@@ -10,6 +10,32 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧹 `ARCH-02` — deux vues découpées, leurs règles enfin testables
+
+`smart-replay-view.tsx` (744 l.) et `backtest-results.tsx` (708 l.)
+concentraient la complexité du front. Découpe sur le modèle que l'audit
+désignait lui-même (`use-smart-graph-chart` + `smart-graph-helpers`).
+
+| Extrait | Ce qu'il porte |
+|---|---|
+| `smart-replay-entities.ts` | cycle de vie causal des entités SMC |
+| `use-smart-replay-chart.ts` | lightweight-charts, zones, niveaux, marqueurs |
+| `use-replay-transport.ts` | position, lecture, raccourcis clavier |
+| `backtest-verdict.ts` | la règle du verdict et ses seuils |
+| `backtest-report.ts` | le rapport imprimable |
+
+Le gain n'est pas la taille mais l'atteignabilité. Deux familles de règles
+décidaient de ce que l'opérateur voit, sans qu'aucun test puisse les atteindre
+sans monter un graphique : ce que le rejeu montre à chaque barre — une erreur y
+fait **voir le futur** — et les seuils qui qualifient une stratégie
+d'exploitable, `positive` faisant apparaître le bouton « Créer le bot ».
+**64 tests neufs** les couvrent.
+
+Trois corrections induites : la normalisation `entry_bar`/`entry_time` était
+recopiée trois fois, le curseur du rejeu appelait `setIsPlaying` à la main
+(seule commande à le faire hors du hook), et le nom de stratégie était inséré
+brut dans le HTML du rapport imprimable.
+
 ### 🐛 Optimiseur — un job perdu, une barre qui gèle
 
 Deux défauts remontés d'une optimisation réelle.
