@@ -491,6 +491,16 @@ load_config(path)
 
 ### `app/core/candle_store.py` ← V11
 
+**Découpage (DETTE-04)** — 1 213 lignes réparties en quatre modules ; le
+`CandleStore` reste le seul point d'entrée et ré-exporte les noms historiques.
+
+| Module | Rôle |
+|---|---|
+| `candle_helpers.py` | provider effectif, bornes de `since`, verrous par fichier, élagage de la bougie en formation — rien qui touche l'état du store |
+| `candle_memos.py` | `CandleMemosMixin` : historique épuisé, cooldown de recousage, `oublier_memos` |
+| `candle_fetch.py` | `CandleFetchMixin` : les cinq chemins vers l'exchange et le recousage des trous |
+| `candle_store.py` | API publique, persistance Parquet, statistiques |
+
 **Responsabilité** : Stockage Parquet persistant des bougies OHLCV
 
 ```python

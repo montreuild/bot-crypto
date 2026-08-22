@@ -10,6 +10,26 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧹 `DETTE-04` — `candle_store` découpé, 1 213 lignes à 534
+
+Le fichier le plus cité du constat, et le point d'entrée du bot vers les
+données. `CandleStore` reste la seule porte d'entrée et ré-exporte les noms
+historiques ; trois modules portent le reste.
+
+| Module | Lignes | Rôle |
+|---|---|---|
+| `candle_helpers.py` | 194 | provider effectif, bornes de `since`, verrous, élagage |
+| `candle_memos.py` | 86 | historique épuisé, cooldown de recousage |
+| `candle_fetch.py` | 512 | les cinq chemins vers l'exchange, recousage des trous |
+| `candle_store.py` | **534** | API publique, persistance, statistiques |
+
+Le constat rappelait qu'un découpage précédent avait déplacé la comptabilité
+des frais et introduit `FIN-01` et `FIN-02`. Le déplacement est ici **prouvé
+littéral** : les 21 fonctions déplacées ont un corps AST identique, docstring
+exclue. 36 tests verrouillent la surface publique, les ré-exports, la MRO et
+l'unicité des constantes — `_NO_HISTORY_RETRY_S` s'était retrouvé défini deux
+fois pendant le découpage, ce qui rendait un `monkeypatch` existant inerte.
+
 ### 🧹 `ARCH-02` — deux vues découpées, leurs règles enfin testables
 
 `smart-replay-view.tsx` (744 l.) et `backtest-results.tsx` (708 l.)
