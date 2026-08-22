@@ -35,6 +35,7 @@ from app.core.is_oos import (  # BT-08 : constantes partagées
 from app.core.is_oos import (
     OOS_FRACTION_DEFAULT as _OOS_FRACTION,
 )
+from app.core.is_oos import resolve_ml_mode
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 # ── Sous-modules (ré-exports compatibilité — noms historiques inclus) ────────
@@ -229,17 +230,11 @@ class OptimizerSearchEngine(OptimizerFreezeMixin, OptimizerBayesianMixin):
         # two-phase) — fusionnés dans chaque jeu de params échantillonné via
         # ``_with_hp``. None = phase unique (comportement historique inchangé).
         self._fixed_ml_hp: Optional[Dict] = None
-        # ML-02 : ml_mode du Backtester utilisé par CHAQUE trial. "inline"
-        # (défaut, comportement historique inchangé) réentraîne à chaque essai
-        # — c'est délibéré pour évaluer le comportement réel de la ML sur des
-        # seuils de décision variés. "frozen" gèle un modèle déjà publié au
-        # registre et n'optimise QUE les seuils contre lui (plus rapide, cible
-        # fixe) — cf. docs/CONCEPTION_CYCLE_DE_VIE_ML.md §4.2. Lu depuis
-        # cfg["optimizer"]["ml_mode"] si non fourni explicitement — les workers
-        # (opt_workers._eval_worker) le redérivent de la même clé après
-        # désérialisation du YAML, aucun paramètre supplémentaire à faire
-        # traverser la frontière de process.
-        self.ml_mode = ml_mode if ml_mode is not None else (self.cfg.get("optimizer") or {}).get("ml_mode", "inline")
+        # ML-02 : "inline" réentraîne à chaque trial — délibéré, on évalue le
+        # comportement réel de la ML sur des seuils variés. "frozen" gèle un
+        # modèle publié et n'optimise QUE les seuils contre lui (cible fixe,
+        # plus rapide) — docs/CONCEPTION_CYCLE_DE_VIE_ML.md §4.2.
+        self.ml_mode = resolve_ml_mode(self.cfg, ml_mode)
 
         # S11 : annonce le contexte facturé AVANT le premier essai. Le
         # Backtester le journalise aussi, mais seulement au premier trial et de

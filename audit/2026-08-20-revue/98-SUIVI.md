@@ -42,6 +42,8 @@ que trouvés** le 20 août ; ce document dit ce qui a été livré depuis.
 | `PERF-02` | `07bc133` | détection de trous incrémentale à la sauvegarde — ×138 |
 | `SEC-02` | `8e86393` | limite de débit sur `POST /api/ws/ticket` |
 | `ML-03b` | `8e86393` | `fit_trace` partagé entre threads |
+| `BT-03` | cette PR | résolveur unique `resolve_ml_mode` ; `frozen` mesuré inexploitable sur 0/5 folds |
+| `FE-02` | cette PR | pas de handshake sans jeton : un aller-retour perdu par cycle au lieu de deux |
 
 ## P3 — livrés
 
@@ -72,8 +74,6 @@ la détection de trous les a rendus visibles. Trois sont livrés.
 | ID | Sév. | Constat | Effort |
 |---|---|---|---|
 | `ARCH-02` | P3 | `smart-replay-view.tsx` (744 l.), `backtest-results.tsx` (681 l.) | 8 h |
-| `FE-02` | P3 | Jeton WS redemandé à chaque reconnexion — correct, signalé pour mémoire | — |
-| `BT-03` | P3 | Mode ML des folds forcé à `frozen` | — |
 | `DETTE-04` | P3 | 11 fichiers Python > 700 lignes | — |
 
 ---

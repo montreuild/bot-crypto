@@ -297,12 +297,10 @@ def _eval_worker(args: tuple) -> dict:
         # priorité supérieure et avalerait silencieusement les params du trial.
         if strategy_name in _cfg_copy.get("optimizer_results", {}):
             del _cfg_copy["optimizer_results"][strategy_name]
-        # ML-02 : ml_mode dérivé de cfg["optimizer"]["ml_mode"] (défaut "inline",
-        # comportement historique inchangé) — même clé que côté in-process
-        # (OptimizerSearchEngine.ml_mode), pas de paramètre supplémentaire à
-        # faire traverser la frontière de process : _cfg contient déjà tout
-        # cfg["optimizer"] via le YAML dumpé par l'engine.
-        _ml_mode = (_cfg.get("optimizer") or {}).get("ml_mode", "inline")
+        # Le worker est spawné : rien ne traverse la frontière de process
+        # hormis _cfg, qui porte déjà tout cfg["optimizer"] via le YAML dumpé.
+        from app.core.is_oos import resolve_ml_mode
+        _ml_mode = resolve_ml_mode(_cfg)
         # Convention de lissage ATR/ADX/DI — même mécanisme que ml_mode : le
         # worker est spawné, donc il n'hérite AUCUN global du parent. Absente
         # de cfg, le défaut de module (Wilder) s'applique ; présente, elle

@@ -57,6 +57,25 @@ def resolve_realistic_risk(cfg: dict | None) -> bool:
     return bool(((cfg or {}).get("backtest") or {}).get("realistic_risk", True))
 
 
+def resolve_ml_mode(cfg: dict | None, explicit: str | None = None) -> str:
+    """BT-03 — mode ML du backtest, résolu au MÊME endroit partout.
+
+    `cfg["optimizer"]["ml_mode"]` était lu par l'optimiseur et ses workers,
+    mais le walk-forward forçait `"frozen"` : la validation ne tournait pas
+    sous le mode qui avait servi à la recherche, et la surcharge de config
+    n'y arrivait jamais.
+
+    Défaut `"inline"` — c'est déjà ce qui se passait. Un modèle publié couvre
+    tout l'historique disponible, donc son entraînement chevauche chaque fold
+    et M-06 l'invalide : mesuré 0 fold sur 5 exploitable en `frozen`, pour
+    stat48_v5, dyn_threshold_v1 et omnibus_v4_multi. `"frozen"` ne produisait
+    qu'un avertissement par fold avant de replier sur inline.
+    """
+    if explicit is not None:
+        return explicit
+    return str(((cfg or {}).get("optimizer") or {}).get("ml_mode", "inline"))
+
+
 def default_purge_embargo(n: int, lookahead: int = 0) -> tuple:
     """``(purge_bars, embargo_bars)`` pour un historique de ``n`` barres.
 

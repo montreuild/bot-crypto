@@ -77,6 +77,18 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const reconnectAttempts = useRef(0);
   const mountedRef = useRef(true);
   const connectingRef = useRef(false);
+  // `scheduleReconnect` est defini avant `connect` et le rappelle : la ref
+  // casse le cycle sans remettre `connect` dans ses deps.
+  const connectRef = useRef<(() => void) | null>(null);
+
+  /** Recul exponentiel borne a 30 s, compteur remis a zero par `onopen`. */
+  const scheduleReconnect = useCallback(() => {
+    if (!mountedRef.current) return;
+    const attempt = reconnectAttempts.current++;
+    const delay = Math.min(1000 * 2 ** attempt, 30000);
+    console.info(`[WS] reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+    reconnectTimeoutRef.current = setTimeout(() => connectRef.current?.(), delay);
+  }, []);
 
   const connect = useCallback(() => {
     if (!mountedRef.current) return;
@@ -97,6 +109,15 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       }
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         connectingRef.current = false;
+        return;
+      }
+      // FE-02 : sans jeton, le handshake part sur l'URL nue et se fait
+      // refuser en 4403. Deux allers-retours perdus par cycle au lieu d'un,
+      // et un `[WS] error` qui masque la vraie cause (le POST a echoue).
+      if (!ticket) {
+        connectingRef.current = false;
+        setStatus('disconnected');
+        scheduleReconnect();
         return;
       }
       try {
@@ -137,19 +158,20 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
           if (!mountedRef.current) return;
           setStatus('disconnected');
           wsRef.current = null;
-          const attempt = reconnectAttempts.current++;
-          const delay = Math.min(1000 * 2 ** attempt, 30000);
-          console.info(`[WS] reconnecting in ${delay}ms (attempt ${attempt + 1})`);
-          reconnectTimeoutRef.current = setTimeout(connect, delay);
+          scheduleReconnect();
         };
       } catch (err) {
         connectingRef.current = false;
         console.error('[WS] connect error:', err);
         setStatus('error');
-        reconnectTimeoutRef.current = setTimeout(connect, 5000);
+        scheduleReconnect();
       }
     })();
-  }, []);
+  }, [scheduleReconnect]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     mountedRef.current = true;
