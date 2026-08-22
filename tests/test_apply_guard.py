@@ -66,17 +66,21 @@ def test_auto_apply_has_walk_forward_gate():
     consistency minimale, désactivable via optimizer.wf_gate)."""
     import inspect
 
-    from app.engine import auto_optimizer
-    src = inspect.getsource(auto_optimizer.AutoOptimizer._run_one_job)
-    assert "_wf_consistent" in src
+    # DETTE-04b : le gate vit dans `opt_gate`, extrait de `_run_one_job`.
+    # Ce test reste un grep — le COMPORTEMENT est vérifié par
+    # `test_run_one_job_contrat.py`, qui fait réellement refuser le gate.
+    from app.engine import opt_gate
+    src = inspect.getsource(opt_gate)
     assert "WalkForwardAnalyzer" in src
     from app.engine.walk_forward import WalkForwardAnalyzer
     assert "reoptimizes" in inspect.getsource(WalkForwardAnalyzer.run)
     assert "stability" in inspect.getsource(WalkForwardAnalyzer.run)
     assert "wf_min_consistency" in src
     assert "wf_gate" in src
-    # Le gate s'applique bien à la décision d'apply
-    assert "_beats_baseline() and _wf_consistent()" in src
+    # Conjonction court-circuitée : la qualité d'abord, le walk-forward ensuite.
+    conj = inspect.getsource(opt_gate.gates_passes)
+    assert "gate_qualite(" in conj and "gate_walk_forward(" in conj
+    assert conj.index("gate_qualite(") < conj.index("gate_walk_forward(")
     # N-03 / B-03 : le WF tourne sur la recherche, avec le TF du job.
     assert "df_recherche" in src
     assert "timeframe=timeframe" in src

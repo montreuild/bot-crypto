@@ -4,7 +4,6 @@ import logging
 import math
 import threading
 import time
-from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 import polars as pl
@@ -13,7 +12,8 @@ from app.core.is_oos import (
     HOLDOUT_FRACTION_DEFAULT,
     split_is_oos,
 )
-from app.engine.engine import BaseStrategyML, Engine
+from app.engine import opt_gate
+from app.engine.engine import BaseStrategyML
 from app.engine.opt_baseline import (  # noqa: F401
     _cfg_avec_params,
     _run_baseline,
@@ -265,19 +265,80 @@ class AutoOptimizer:
                      symbol: str, auto_apply: bool,
                      df_recherche: pl.DataFrame | None = None, split: int | None = None,
                      df_holdout: pl.DataFrame | None = None):
-        trials_log = []
+        """Un job d'optimisation, de l'attente du créneau au verdict.
 
+        DETTE-04b — 355 lignes découpées en étapes nommées. Les deux portillons
+        (CPU puis mémoire) et le `finally` qui les rend restent ici : ce sont
+        les seules ressources partagées entre jobs.
+        """
         cancel_event = _cancel_flags.get(job_id)
+        if not self._attendre_creneau(job_id, cancel_event):
+            return
 
-        # Attente bornée d'un créneau d'exécution (cap CPU global). Tant que le
-        # sémaphore n'est pas acquis, le job reste "queued" et reste annulable.
+        mem_need = _estimate_job_bytes(df_is, df_oos, _is_ml_strategy(strategy_name))
+        mem_held = False
+        try:
+            mem_held = _acquire_mem_slot(mem_need, cancel_event)
+            if cancel_event and cancel_event.is_set():
+                logger.info(f"[AutoOpt] {job_id} annulé pendant l'attente mémoire")
+                _update_job(job_id, status="cancelled", finished_at=time.time())
+                return
+
+            result, n_trials_eff = self._chercher(
+                job_id, strategy_name, timeframe, df_is, df_oos, symbol,
+                df_recherche, split, cancel_event)
+
+            mesure = opt_gate.mesurer_oos(
+                result, df_holdout,
+                lambda df: self._mesurer_holdout(job_id, strategy_name, timeframe,
+                                                 symbol, result, df))
+            _update_job(job_id, gate_source=mesure.source)
+
+            applied = self._decider(job_id, strategy_name, timeframe, symbol,
+                                    auto_apply, result, mesure, df_holdout,
+                                    df_recherche, n_trials_eff)
+
+            # Stratégies ML : modèle final sur les meilleurs params. O-10 —
+            # défaut `is_only`, le modèle livré est celui qui a été évalué.
+            if result.get("best_params") and _is_ml_strategy(strategy_name) \
+                    and df_recherche is not None:
+                _save_ml_model_post_opt(
+                    strategy_name, result["best_params"], df_recherche, timeframe,
+                    df_is=df_is,
+                    train_mode=self.cfg.get("optimizer", {}).get(
+                        "ml_final_train_mode", "is_only"))
+
+            self._finaliser(job_id, strategy_name, timeframe, result, applied)
+
+        except InterruptedError:
+            logger.info(f"[AutoOpt] {job_id} annulé par l'utilisateur")
+            _update_job(job_id, status="cancelled", finished_at=time.time())
+        except Exception as e:
+            logger.error(f"[AutoOpt] {job_id} KO : {e}", exc_info=True)
+            _update_job(job_id, status="error", error=str(e), finished_at=time.time())
+        finally:
+            if mem_held:
+                _release_mem_slot(mem_need)
+            _job_semaphore.release()
+
+    def _attendre_creneau(self, job_id: str, cancel_event) -> bool:
+        """Cap CPU global. `False` si l'utilisateur a annulé pendant l'attente.
+
+        Le job reste `queued` et annulable tant que le sémaphore n'est pas pris.
+        """
         _update_job(job_id, status="queued")
         while not _job_semaphore.acquire(timeout=1.0):
             if cancel_event and cancel_event.is_set():
                 logger.info(f"[AutoOpt] {job_id} annulé pendant l'attente du créneau")
                 _update_job(job_id, status="cancelled", finished_at=time.time())
-                return
+                return False
         _update_job(job_id, status="running")
+        return True
+
+    def _progression(self, job_id: str, cancel_event):
+        """Callback de progression — seul endroit d'où l'annulation interrompt
+        la recherche, en levant depuis le thread qui l'exécute."""
+        trials_log: List[dict] = []
 
         def on_progress(trial: int, total: int, best_score: float, latest: dict):
             if cancel_event and cancel_event.is_set():
@@ -296,323 +357,166 @@ class AutoOptimizer:
                 trials=trials_log[-50:],
             )
 
-        # Portillon mémoire (anti-OOM inter-jobs) : on ne lance les trials que
-        # lorsque l'empreinte estimée de CE job tient dans le budget restant.
-        # Le créneau CPU est déjà détenu ; on le libère via le ``finally``.
-        mem_need = _estimate_job_bytes(df_is, df_oos, _is_ml_strategy(strategy_name))
-        mem_held = False
-        try:
-            mem_held = _acquire_mem_slot(mem_need, cancel_event)
-            if cancel_event and cancel_event.is_set():
-                logger.info(f"[AutoOpt] {job_id} annulé pendant l'attente mémoire")
-                _update_job(job_id, status="cancelled", finished_at=time.time())
-                return
+        return on_progress
 
-            opt = StrategyOptimizer(
-                strategy_name=strategy_name,
-                cfg=self.cfg,
-                df_is=df_is,
-                df_oos=df_oos,
-                symbol=symbol,
-                progress_callback=on_progress,
-                df_full=df_recherche,
-                split=split,
-                timeframe=timeframe,
-                cancel_event=cancel_event,
-            )
+    def _chercher(self, job_id: str, strategy_name: str, timeframe: str,
+                  df_is, df_oos, symbol: str, df_recherche, split,
+                  cancel_event) -> tuple:
+        """Lance la recherche et rend `(result, n_trials_effectifs)`."""
+        from app.engine.opt_budget import effective_n_trials, format_budget
 
-            # Budget proportionné à l'espace de CETTE stratégie (cf.
-            # app/engine/opt_budget.py) : un espace à 3 paramètres et un espace
-            # à 58 ne se couvrent pas avec le même nombre d'essais.
-            from app.engine.opt_budget import effective_n_trials, format_budget
-            n_trials_eff, budget = effective_n_trials(
-                opt.param_space, self.n_trials, self.cfg)
-            if n_trials_eff != self.n_trials:
-                logger.info(format_budget(strategy_name, budget))
-                _update_job(job_id, n_trials=n_trials_eff, n_trials_budget=budget)
+        opt = StrategyOptimizer(
+            strategy_name=strategy_name, cfg=self.cfg,
+            df_is=df_is, df_oos=df_oos, symbol=symbol,
+            progress_callback=self._progression(job_id, cancel_event),
+            df_full=df_recherche, split=split, timeframe=timeframe,
+            cancel_event=cancel_event,
+        )
 
-            # #6 : two-phase pour les stratégies ML exposant des hyperparamètres
-            # d'entraînement réglables (et si activé). Sinon phase unique.
-            ml_hp_space = {}
-            if self.ml_tune_hp and _is_ml_strategy(strategy_name):
-                from app.engine.optimizer_search import ml_hp_space_for
-                ml_hp_space = ml_hp_space_for(strategy_name)
+        # Budget proportionné à l'espace de CETTE stratégie : un espace à 3
+        # paramètres et un espace à 58 ne se couvrent pas avec le même budget.
+        n_trials_eff, budget = effective_n_trials(
+            opt.param_space, self.n_trials, self.cfg)
+        if n_trials_eff != self.n_trials:
+            logger.info(format_budget(strategy_name, budget))
+            _update_job(job_id, n_trials=n_trials_eff, n_trials_budget=budget)
 
-            if ml_hp_space:
-                result = opt.optimize_two_phase(
-                    self.method, n_trials_eff, self.n_jobs, ml_hp_space,
-                    early_stop_patience=self.early_stop_patience,
-                    param_search_optim=self.param_search_optim)
-            elif self.method == "bayesian":
-                result = opt.bayesian_search(n_trials_eff, n_jobs=self.n_jobs,
-                                             early_stop_patience=self.early_stop_patience,
-                                             param_search_optim=self.param_search_optim)
-            elif self.method == "grid":
-                result = opt.grid_search(n_jobs=self.n_jobs,
-                                         param_search_optim=self.param_search_optim)
-            else:
-                result = opt.random_search(n_trials_eff, n_jobs=self.n_jobs,
-                                           early_stop_patience=self.early_stop_patience,
-                                           param_search_optim=self.param_search_optim)
+        # #6 : two-phase pour les stratégies ML exposant des hyperparamètres
+        # d'entraînement réglables (et si activé). Sinon phase unique.
+        ml_hp_space = {}
+        if self.ml_tune_hp and _is_ml_strategy(strategy_name):
+            from app.engine.optimizer_search import ml_hp_space_for
+            ml_hp_space = ml_hp_space_for(strategy_name)
 
-            applied = False
-            best_oos_score = result.get("best_oos_score", 0.0)
+        if ml_hp_space:
+            result = opt.optimize_two_phase(
+                self.method, n_trials_eff, self.n_jobs, ml_hp_space,
+                early_stop_patience=self.early_stop_patience,
+                param_search_optim=self.param_search_optim)
+        elif self.method == "bayesian":
+            result = opt.bayesian_search(
+                n_trials_eff, n_jobs=self.n_jobs,
+                early_stop_patience=self.early_stop_patience,
+                param_search_optim=self.param_search_optim)
+        elif self.method == "grid":
+            result = opt.grid_search(n_jobs=self.n_jobs,
+                                     param_search_optim=self.param_search_optim)
+        else:
+            result = opt.random_search(
+                n_trials_eff, n_jobs=self.n_jobs,
+                early_stop_patience=self.early_stop_patience,
+                param_search_optim=self.param_search_optim)
+        return result, n_trials_eff
 
-            # ── Mesure sur la tranche JAMAIS VUE (#5) ─────────────────────────
-            # La tranche de sélection a servi à classer les N essais : le score
-            # du gagnant y est un maximum d'ordre N, pas une estimation. Le
-            # gate d'apply se prononce donc sur le holdout, touché une seule
-            # fois, sur un seul paramétrage. Sans holdout exploitable, on reste
-            # sur l'ancien contrat — journalisé au découpage, pas dégradé en
-            # silence.
-            gate_source = "selection"
-            oos_trades = result.get("best_oos_trades", 0)
-            best_oos_pnl = result.get("best_oos_pnl", 0)
-            best_oos_wr = result.get("best_oos_wr", 0)
-            best_oos_sharpe = result.get("best_oos_sharpe", 0)
-            # OPT-01 : l'optimiseur ne publie pas de best_oos_pf / expectancy ;
-            # seul le holdout les porte (via _run_baseline). None tant qu'il
-            # n'a pas tourné — les branches correspondantes restent alors
-            # inactives, ce qui est le repli honnête.
-            # OPT-01 : la tranche de sélection les publie désormais aussi
-            # (optimizer_search) ; le holdout les écrase plus bas s'il tourne.
-            best_oos_pf = result.get("best_oos_pf")
-            best_oos_expectancy = result.get("best_oos_expectancy")
-            best_oos_dd = None
-            if df_holdout is not None and result.get("best_params"):
-                _h = _run_baseline(strategy_name, _cfg_avec_params(
-                    self.cfg, strategy_name, result["best_params"]),
-                    df_holdout, symbol, timeframe=timeframe)
-                if _h:
-                    gate_source = "holdout"
-                    oos_trades = _h.get("trades", 0)
-                    best_oos_pnl = _h.get("pnl", 0)
-                    best_oos_wr = _h.get("wr", 0)
-                    best_oos_sharpe = _h.get("sharpe", 0)
-                    best_oos_pf = _h.get("profit_factor")
-                    best_oos_expectancy = _h.get("expectancy")
-                    best_oos_dd = _h.get("dd")
-                    _update_job(job_id, holdout=_h, gate_source="holdout")
-                    logger.info(
-                        f"[AutoOpt] {job_id} : holdout ({len(df_holdout)} barres) — "
-                        f"PnL={best_oos_pnl:+.2f} WR={best_oos_wr:.1f}% "
-                        f"Sharpe={fmt_metric(best_oos_sharpe)} sur {oos_trades} trades "
-                        f"(sélection : PnL={result.get('best_oos_pnl', 0):+.2f})")
-                else:
-                    logger.warning(
-                        f"[AutoOpt] {job_id} : backtest holdout KO — gate mesuré "
-                        f"sur la tranche de sélection")
+    def _mesurer_holdout(self, job_id: str, strategy_name: str, timeframe: str,
+                         symbol: str, result: dict, df_holdout) -> dict:
+        """Backtest du candidat sur la tranche jamais vue (#5)."""
+        h = _run_baseline(
+            strategy_name,
+            _cfg_avec_params(self.cfg, strategy_name, result["best_params"]),
+            df_holdout, symbol, timeframe=timeframe)
+        if not h:
+            logger.warning(f"[AutoOpt] {job_id} : backtest holdout KO — gate "
+                           f"mesuré sur la tranche de sélection")
+            return {}
+        _update_job(job_id, holdout=h, gate_source="holdout")
+        logger.info(
+            f"[AutoOpt] {job_id} : holdout ({len(df_holdout)} barres) — "
+            f"PnL={h.get('pnl', 0):+.2f} WR={h.get('wr', 0):.1f}% "
+            f"Sharpe={fmt_metric(h.get('sharpe'))} sur {h.get('trades', 0)} trades "
+            f"(sélection : PnL={result.get('best_oos_pnl', 0):+.2f})")
+        return h
 
-            # Récupérer le baseline pour comparer avant d'appliquer. Il a été
-            # mesuré sur la MÊME tranche que le candidat (cf. start_async).
-            _baseline      = (get_job(job_id) or {}).get("baseline") or {}
-            baseline_pnl   = _baseline.get("pnl", float("-inf"))
-            baseline_wr    = _baseline.get("wr", 0)
-            baseline_sharpe = _baseline.get("sharpe", 0)
+    def _decider(self, job_id: str, strategy_name: str, timeframe: str,
+                 symbol: str, auto_apply: bool, result: dict,
+                 mesure, df_holdout, df_recherche, n_trials_eff: int) -> bool:
+        """Applique, ou trace pour l'audit. Jamais les deux.
 
-            # Garde-fou UNIQUE d'application (BT-04/BT-06) : fonction pure
-            # partagée avec la route /api/optimize/apply — échantillon OOS
-            # ≥ MIN_SIGNIFICANT_TRADES (10, cf. app/core/stats_thresholds.py,
-            # remplace l'ancien seuil 3 du TODO), PnL OOS positif ET meilleur
-            # que le baseline, plus une amélioration de qualité (WR ou Sharpe).
-            # P0 (câblage TODO ci-dessous) : seuil de **Deflated Sharpe**
-            # (Bailey & López de Prado 2014) au gate de naissance — corrige le
-            # biais de multiple testing quand n_trials > 1. Désactivable via
-            # `optimizer.deflated_sharpe_gate: false` dans config.yaml.
-            from app.engine.opt_scoring import beats_baseline as _bb
-            from app.engine.opt_scoring import (
-                resolve_dd_max_abs as _resolve_dd_max_abs,
-            )
+        « Non appliqué = non utilisé » : écrire dans `optimizer_results` rendrait
+        le paramétrage refusé actif via la précédence de
+        `resolve_strategy_params`.
+        """
+        # Le baseline a été mesuré sur la MÊME tranche que le candidat
+        # (cf. start_async) : c'est ce qui rend la comparaison honnête.
+        baseline = (get_job(job_id) or {}).get("baseline") or {}
 
-            # Lecture de la config du gate Deflated Sharpe (P0)
-            _opt_cfg = (self.cfg.get("optimizer") or {})
-            _ds_gate_enabled = bool(_opt_cfg.get("deflated_sharpe_gate", False))
-            _ds_min = float(_opt_cfg.get("deflated_sharpe_min", 0.5))
-            # Le nombre d'essais RÉELLEMENT tirés, pas celui demandé : c'est
-            # lui qui mesure le biais de sélection multiple à corriger.
-            _ds_n_trials = int(result.get("n_trials") or n_trials_eff) \
-                if _ds_gate_enabled else 1
-            _ds_min_arg = _ds_min if _ds_gate_enabled else None
+        gate_ok = opt_gate.gates_passes(
+            job_id, self.cfg, auto_apply=auto_apply, result=result,
+            df_holdout=df_holdout, m=mesure, baseline=baseline,
+            n_trials_eff=n_trials_eff, strategy_name=strategy_name,
+            timeframe=timeframe, symbol=symbol, df_recherche=df_recherche,
+            noter_consistance=lambda c: _update_job(job_id, wf_consistency=c))
 
-            def _beats_baseline() -> bool:
-                ok, reason = _bb(oos_trades, best_oos_pnl, best_oos_wr,
-                                 best_oos_sharpe, _baseline,
-                                 n_trials=_ds_n_trials,
-                                 min_deflated_sharpe=_ds_min_arg,
-                                 oos_dd=(best_oos_dd
-                                         or result.get("best_oos_dd")
-                                         or result.get("best_val_dd")),
-                                 oos_pf=best_oos_pf,
-                                 oos_expectancy=best_oos_expectancy,
-                                 dd_max_abs=_resolve_dd_max_abs(self.cfg))
-                if not ok:
-                    logger.info(f"[AutoOpt] {job_id} : gate d'apply refusé "
-                                f"[{gate_source}] — {reason}")
-                return ok
+        ecart = (f"OOS PnL={mesure.pnl:+.2f} vs baseline="
+                 f"{baseline.get('pnl', float('-inf')):+.2f}, "
+                 f"WR={mesure.wr:.1f}% vs {baseline.get('wr', 0):.1f}%, "
+                 f"Sharpe={fmt_metric(mesure.sharpe)} vs "
+                 f"{fmt_metric(baseline.get('sharpe', 0))}")
 
-            def _wf_consistent() -> bool:
-                """Gate walk-forward (BT-07) : les best_params FIGÉS (aucune
-                re-optimisation par fold) doivent rester positifs sur une
-                majorité de fenêtres OOS glissantes avant l'auto-apply — un
-                unique split IS/OOS ne suffit pas. Neutre (True) si le gate
-                est désactivé (optimizer.wf_gate: false), si les données
-                de recherche manquent, ou si le walk-forward est indisponible
-                (historique trop court) : on ne durcit pas à l'aveugle."""
-                opt_cfg = (self.cfg.get("optimizer") or {})
-                if not bool(opt_cfg.get("wf_gate", True)):
-                    return True
-                if df_recherche is None:
-                    logger.info(f"[AutoOpt] {job_id} : walk-forward non évaluable "
-                                f"(pas de données) — auto-apply bloqué")
-                    return False
-                min_cons = float(opt_cfg.get("wf_min_consistency", 60.0))
+        if gate_ok:
+            # Config par symbole : `optimizer_results[tf][symbol]`, chaque paire
+            # a la sienne et elles coexistent.
+            applied = apply_best_params(
+                strategy_name, result["best_params"], self.config_path,
+                timeframe=timeframe, oos_score=result.get("best_oos_score", 0.0),
+                symbol=symbol)
+            if applied and self.on_apply_callback:
                 try:
-                    from app.engine.backtest import WalkForwardAnalyzer
-                    cfg2 = {k: v for k, v in self.cfg.items()}
-                    sp = deepcopy(self.cfg.get("strategy_params") or {})
-                    frozen = dict(sp.get(strategy_name, {}))
-                    frozen.update(result["best_params"])
-                    sp[strategy_name] = frozen
-                    cfg2["strategy_params"] = sp
-                    cfg2["optimizer_results"] = {}
-                    mod = importlib.import_module(f"app.strategies.{strategy_name}")
-                    eng = Engine()
-                    eng.register(mod.Strategy(), silent=True)
-                    wf = WalkForwardAnalyzer(eng, cfg2,
-                                             n_folds=int(opt_cfg.get("wf_folds", 5)))
-                    res_wf = wf.run(df_recherche, symbol, timeframe=timeframe)
-                    if "error" in res_wf:
-                        logger.info(f"[AutoOpt] {job_id} : walk-forward non évaluable "
-                                    f"({res_wf['error']}) — auto-apply bloqué")
-                        return False
-                    if int(res_wf.get("n_folds_failed") or 0) > 0:
-                        logger.info(f"[AutoOpt] {job_id} : walk-forward partiel "
-                                    f"({res_wf.get('n_folds_failed')} fold(s) échoué(s)) "
-                                    f"— auto-apply bloqué")
-                        return False
-                    cons = float(res_wf.get("consistency", 0.0))
-                    _update_job(job_id, wf_consistency=cons)
-                    if cons < min_cons:
-                        logger.info(f"[AutoOpt] {job_id} : gate walk-forward refusé — "
-                                    f"consistency {cons:.0f}% < {min_cons:.0f}%")
-                        return False
-                    return True
-                except Exception as e:
-                    logger.warning(f"[AutoOpt] {job_id} : walk-forward KO ({e}) "
-                                   f"— auto-apply bloqué")
-                    return False
+                    self.on_apply_callback(strategy_name, result["best_params"])
+                except Exception as _cb_err:
+                    logger.warning(f"[AutoOpt] callback KO: {_cb_err}")
+            if not applied:
+                logger.info(f"[AutoOpt] {job_id} : résultat non appliqué car pas "
+                            f"meilleur que le baseline ({ecart})")
+            return applied
 
-            _update_job(job_id, gate_source=gate_source)
-            if auto_apply and df_holdout is None:
-                logger.info(f"[AutoOpt] {job_id} : pas de holdout — auto-apply "
-                            f"refusé (OPT-04), apply manuel requis")
-            gate_ok = bool(auto_apply and df_holdout is not None
-                           and result.get("best_params")
-                           and _beats_baseline() and _wf_consistent())
+        if not result.get("best_params"):
+            return False
 
-            if gate_ok:
-                best_params = result["best_params"]
-                # Config par symbole : on écrit sous optimizer_results[tf][symbol]
-                # (chaque paire a sa propre config, elles coexistent).
-                applied = apply_best_params(
-                    strategy_name, best_params, self.config_path,
-                    timeframe=timeframe, oos_score=best_oos_score, symbol=symbol
+        # La trace passe AVANT le log : le job entier était perdu quand le
+        # formatage d'une métrique non mesurable levait.
+        record_optimizer_audit(
+            strategy_name, timeframe, result["best_params"],
+            result.get("best_oos_score", 0.0), self.config_path)
+        if auto_apply:
+            logger.info(f"[AutoOpt] {job_id} : application refusée (gate qualité "
+                        f"ou walk-forward) — {ecart}")
+        return False
+
+    def _finaliser(self, job_id: str, strategy_name: str, timeframe: str,
+                   result: dict, applied: bool) -> None:
+        """Statut terminal, log de bilan, notification.
+
+        Un échec global de la recherche (tous les workers tombés sur un OOM
+        LightGBM, par exemple) marque `error` et non `done` : le board doit
+        refléter l'état réel.
+        """
+        job_failed = bool(result.get("failed")) or (
+            result.get("error") and not result.get("best_params"))
+        _update_job(job_id,
+            status="error" if job_failed else "done",
+            progress=100,
+            result=result,
+            applied=applied,
+            error=result.get("error") if job_failed else None,
+            finished_at=time.time(),
+        )
+        elapsed = time.time() - (get_job(job_id) or {}).get("started_at", time.time())
+        logger.info(
+            f"[AutoOpt] {job_id} terminé en {elapsed:.0f}s "
+            f"| OOS score={result.get('best_oos_score', 0):.4f} "
+            f"| PnL={result.get('best_oos_pnl', 0):+.2f} "
+            f"| Applied={applied}")
+        if self._notifier:
+            try:
+                self._notifier.notify_optimization_done(
+                    strategy=f"{strategy_name}@{timeframe}",
+                    score_before=result.get("baseline_score", 0),
+                    score_after=result.get("best_oos_score", 0),
+                    applied=applied,
                 )
-                if applied and self.on_apply_callback:
-                    try:
-                        self.on_apply_callback(strategy_name, best_params)
-                    except Exception as _cb_err:
-                        logger.warning(f"[AutoOpt] callback KO: {_cb_err}")
-                if not applied:
-                    logger.info(
-                        f"[AutoOpt] {job_id} : résultat non appliqué car pas meilleur que le baseline "
-                        f"(OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
-                        f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
-                        f"Sharpe={fmt_metric(best_oos_sharpe)} vs "
-                        f"{fmt_metric(baseline_sharpe)})"
-                    )
-            elif auto_apply and result.get("best_params"):
-                # Non appliqué = non utilisé : on trace pour l'audit sans écrire
-                # dans optimizer_results (sinon le paramétrage refusé deviendrait
-                # actif via la précédence de resolve_strategy_params). AVANT le
-                # log : le job entier était perdu quand le formatage levait.
-                record_optimizer_audit(
-                    strategy_name, timeframe,
-                    result["best_params"],
-                    best_oos_score,
-                    self.config_path
-                )
-                logger.info(
-                    f"[AutoOpt] {job_id} : application refusée (gate qualité ou walk-forward) — "
-                    f"OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
-                    f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
-                    f"Sharpe={fmt_metric(best_oos_sharpe)} vs "
-                    f"{fmt_metric(baseline_sharpe)}"
-                )
-            elif result.get("best_params"):
-                # Sans auto_apply : on ne fait que tracer le résultat pour l'audit.
-                # L'application reste explicite (bouton « Appliquer » de l'UI →
-                # apply_best_params), conformément à « non appliqué = non utilisé ».
-                record_optimizer_audit(
-                    strategy_name, timeframe,
-                    result["best_params"],
-                    result.get("best_oos_score", 0.0),
-                    self.config_path
-                )
-
-            # Pour les stratégies ML : entraîner un modèle final avec les meilleurs params
-            # et le persister. O-10 : défaut is_only (le modèle livré est
-            # celui évalué). ``full`` (IS+OOS) reste un choix explicite.
-            if result.get("best_params") and _is_ml_strategy(strategy_name) and df_recherche is not None:
-                # O-10 : défaut is_only — le modèle livré est celui évalué
-                # (IS seul). "full" (IS+OOS) reste disponible explicitement.
-                _ml_train_mode = self.cfg.get("optimizer", {}).get(
-                    "ml_final_train_mode", "is_only")
-                _save_ml_model_post_opt(strategy_name, result["best_params"], df_recherche, timeframe,
-                                        df_is=df_is, train_mode=_ml_train_mode)
-
-            # Si l'optimiseur signale un échec global (ex: tous les workers
-            # tombés à cause d'un OOM LightGBM), on marque le job "error"
-            # plutôt que "done" pour que le board reflète l'état réel.
-            job_failed = bool(result.get("failed")) or (
-                result.get("error") and not result.get("best_params")
-            )
-            _update_job(job_id,
-                status="error" if job_failed else "done",
-                progress=100,
-                result=result,
-                applied=applied,
-                error=result.get("error") if job_failed else None,
-                finished_at=time.time(),
-            )
-            elapsed = time.time() - (get_job(job_id) or {}).get("started_at", time.time())
-            logger.info(
-                f"[AutoOpt] {job_id} terminé en {elapsed:.0f}s "
-                f"| OOS score={result.get('best_oos_score', 0):.4f} "
-                f"| PnL={result.get('best_oos_pnl', 0):+.2f} "
-                f"| Applied={applied}"
-            )
-            if self._notifier:
-                try:
-                    self._notifier.notify_optimization_done(
-                        strategy=f"{strategy_name}@{timeframe}",
-                        score_before=result.get("baseline_score", 0),
-                        score_after=result.get("best_oos_score", 0),
-                        applied=applied,
-                    )
-                except Exception as _ne:
-                    logger.debug(f"[AutoOpt] notify KO : {_ne}")
-
-        except InterruptedError:
-            logger.info(f"[AutoOpt] {job_id} annulé par l'utilisateur")
-            _update_job(job_id, status="cancelled", finished_at=time.time())
-        except Exception as e:
-            logger.error(f"[AutoOpt] {job_id} KO : {e}", exc_info=True)
-            _update_job(job_id, status="error", error=str(e), finished_at=time.time())
-        finally:
-            if mem_held:
-                _release_mem_slot(mem_need)
-            _job_semaphore.release()
+            except Exception as _ne:
+                logger.debug(f"[AutoOpt] notify KO : {_ne}")
 
     # ── Exécution séquentielle (une stratégie à la fois) ──────────────────
     def optimize_sequential(self, df_map: Dict[str, pl.DataFrame], symbol: str,
