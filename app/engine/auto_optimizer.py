@@ -12,12 +12,35 @@ import polars as pl
 from app.core.is_oos import (
     HOLDOUT_FRACTION_DEFAULT,
     split_is_oos,
-    split_with_holdout,
 )
-from app.engine.backtest import Backtester
 from app.engine.engine import BaseStrategyML, Engine
+from app.engine.opt_baseline import (  # noqa: F401
+    _cfg_avec_params,
+    _run_baseline,
+    _slices_for,
+)
+
+# Ré-exports : le registre de jobs est atteint via ce module par l'API et les tests.
+from app.engine.opt_jobs import (  # noqa: F401
+    _cancel_flags,
+    _job_id,
+    _job_semaphore,
+    _jobs,
+    _jobs_lock,
+    _update_job,
+    any_optimization_running,
+    cancel_job,
+    delete_job,
+    get_all_jobs,
+    get_job,
+)
+from app.engine.opt_memory import (  # noqa: F401
+    _acquire_mem_slot,
+    _estimate_job_bytes,
+    _release_mem_slot,
+    _snapshot_mem_budget,
+)
 from app.engine.opt_scoring import fmt_metric
-from app.engine.opt_workers import available_memory_bytes
 from app.engine.optimizer_search import (
     PARAM_SPACES,
     RECOMMENDED_LIMIT,
@@ -98,270 +121,6 @@ def _save_ml_model_post_opt(strategy_name: str, best_params: dict,
     except Exception as e:
         logger.warning(f"[AutoOpt] Sauvegarde modèle ML post-opt KO ({strategy_name}/{timeframe}): {e}")
 
-# ════════════════════════════════════════════════════════════════════════════
-#  État global des jobs (thread-safe)
-# ════════════════════════════════════════════════════════════════════════════
-_jobs: Dict[str, dict] = {}
-_jobs_lock = threading.Lock()
-_cancel_flags: Dict[str, threading.Event] = {}
-
-# Borne le nombre de jobs d'optimisation exécutés *simultanément*, toutes sources
-# confondues (auto-optimisation planifiée + API). start_async peut créer des
-# centaines de threads (n_stratégies × n_TF) ; sans cette borne ils saturent le
-# CPU/la mémoire du serveur pendant le live. Les threads en excès attendent
-# (bloqués sur le sémaphore) au lieu de tourner tous en même temps.
-def _max_concurrent_opt_jobs() -> int:
-    import os
-    cpu = os.cpu_count() or 2
-    return max(1, cpu - 1)
-
-_job_semaphore = threading.BoundedSemaphore(_max_concurrent_opt_jobs())
-
-
-# ════════════════════════════════════════════════════════════════════════════
-#  Portillon mémoire (admission control anti-OOM inter-jobs)
-# ════════════════════════════════════════════════════════════════════════════
-# Le sémaphore ci-dessus borne le nombre de jobs concurrents par le CPU (cpu-1),
-# mais PAS par la mémoire. Or avec n_jobs=1 (défaut de l'UI), chaque job évalue
-# ses trials IN-PROCESS : cpu-1 backtests ML walk-forward — qui réentraînent
-# LightGBM en boucle sur de larges matrices de features — tournent alors
-# simultanément dans le MÊME process. Sur de gros jeux de données le pic mémoire
-# cumulé épuise la RAM → std::bad_alloc LightGBM / OOM → mort silencieuse du
-# process (aucune traceback). Le cap ``mem_aware_max_workers`` existant ne couvre
-# QUE le ProcessPool d'un job (chemin n_jobs>1), jamais cette concurrence
-# inter-jobs.
-#
-# Ce portillon borne la mémoire CUMULÉE des jobs actifs : un job n'entre en
-# exécution que si son empreinte estimée tient dans le budget restant (70 % de la
-# RAM dispo, snapshotée par lot). Règle anti-blocage : un job seul (aucun autre
-# n'occupe de mémoire) est toujours admis, même si son estimation dépasse le
-# budget — au pire les jobs lourds se sérialisent un par un.
-_MEM_BUDGET_FRACTION = 0.70
-_mem_cond            = threading.Condition()
-_mem_committed       = 0                 # octets réservés par les jobs en cours
-_mem_budget: Optional[int] = None        # snapshot du budget (None = non calculé)
-
-
-def _snapshot_mem_budget() -> None:
-    """(Re)mesure la RAM dispo et fixe le budget d'admission pour le lot courant.
-    Appelé au démarrage d'un lot (start_async / optimize_sequential)."""
-    global _mem_budget
-    avail = available_memory_bytes()
-    with _mem_cond:
-        _mem_budget = int(avail * _MEM_BUDGET_FRACTION) if avail else None
-
-
-def _mem_budget_bytes() -> Optional[int]:
-    """Budget d'admission courant (snapshot paresseux au 1er appel si besoin).
-    Retourne None si la RAM dispo est inconnue (→ portillon désactivé)."""
-    if _mem_budget is None:
-        _snapshot_mem_budget()
-    return _mem_budget
-
-
-def _estimate_job_bytes(df_is, df_oos, is_ml: bool) -> int:
-    """Estimation prudente du pic mémoire d'un job d'optimisation.
-
-    Échelonnée sur la TAILLE réelle des données (la variable qui provoque l'OOM) :
-    nb de barres × nb de colonnes de features × 8 o × nb de copies vivant
-    simultanément (features float64 + copie scalée + Dataset LightGBM biné +
-    temporaires numpy), plus un plancher fixe (interpréteur, modèles, caches)."""
-    rows = (len(df_is) if df_is is not None else 0) + (len(df_oos) if df_oos is not None else 0)
-    if is_ml:
-        feat_cols, copies, floor = 480, 6, 350 * 1024 * 1024
-    else:
-        feat_cols, copies, floor = 64, 3, 150 * 1024 * 1024
-    return rows * feat_cols * 8 * copies + floor
-
-
-def _acquire_mem_slot(need: int, cancel_event: Optional[threading.Event] = None) -> bool:
-    """Réserve ``need`` octets dès qu'ils tiennent dans le budget restant.
-
-    Retourne True si la réservation a été faite (→ à libérer ensuite via
-    ``_release_mem_slot``), False si le portillon est désactivé (RAM inconnue) ou
-    si annulé pendant l'attente."""
-    global _mem_committed
-    budget = _mem_budget_bytes()
-    if not budget:
-        return False
-    with _mem_cond:
-        while True:
-            # committed == 0 : ce job est seul → toujours admis (anti-blocage).
-            if _mem_committed == 0 or _mem_committed + need <= budget:
-                _mem_committed += need
-                return True
-            if cancel_event is not None and cancel_event.is_set():
-                return False
-            _mem_cond.wait(timeout=1.0)
-
-
-def _release_mem_slot(need: int) -> None:
-    global _mem_committed
-    with _mem_cond:
-        _mem_committed = max(0, _mem_committed - need)
-        _mem_cond.notify_all()
-
-
-def _job_id(strategy: str, timeframe: str, symbol: str) -> str:
-    return f"{strategy}@{timeframe}@{symbol}"
-
-
-def get_job(job_id: str) -> Optional[dict]:
-    with _jobs_lock:
-        return dict(_jobs.get(job_id, {}))
-
-
-def get_all_jobs() -> dict:
-    with _jobs_lock:
-        return {k: dict(v) for k, v in _jobs.items()}
-
-
-def any_optimization_running() -> bool:
-    """True si au moins un job d'optimisation est en cours ou en file.
-
-    Sert aux tâches de fond (forward-test, cycle de vie) à se mettre en attente
-    pendant une optimisation lourde, pour ne pas saturer mémoire/CPU.
-    """
-    with _jobs_lock:
-        return any(j.get("status") in ("running", "queued") for j in _jobs.values())
-
-
-def _update_job(job_id: str, **kwargs):
-    with _jobs_lock:
-        if job_id not in _jobs:
-            _jobs[job_id] = {}
-        _jobs[job_id].update(kwargs)
-
-
-def cancel_job(job_id: str) -> bool:
-    """Signal a running job to stop. Returns True if the job was running."""
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if not job or job.get("status") != "running":
-            return False
-    event = _cancel_flags.get(job_id)
-    if event:
-        event.set()
-    return True
-
-
-def delete_job(job_id: str) -> bool:
-    """Remove a job from the registry (only if not running). Returns True if deleted."""
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if not job:
-            return False
-        if job.get("status") == "running":
-            return False
-        del _jobs[job_id]
-        _cancel_flags.pop(job_id, None)
-        return True
-
-
-# ════════════════════════════════════════════════════════════════════════════
-#  Baseline (snapshot avant optimisation)
-# ════════════════════════════════════════════════════════════════════════════
-def _slices_for(df, strategy_name: str, timeframe: str, min_bars: int,
-                holdout_fraction: float):
-    """``(df_is, df_oos, split, df_recherche, df_holdout, df_gate)``.
-
-    Un seul endroit décide du découpage à trois tranches, pour que le chemin
-    asynchrone et le chemin séquentiel ne divergent pas — c'est exactement le
-    genre d'écart qui produit un gate mesuré sur le holdout d'un côté et sur la
-    sélection de l'autre, sans que rien ne le signale.
-    """
-    from app.core.is_oos import default_purge_embargo
-    n = len(df) if df is not None else 0
-    lookahead = 0
-    try:
-        mod = importlib.import_module(f"app.strategies.{strategy_name}")
-        cls = getattr(mod, "Strategy", None)
-        raw = (getattr(cls, "label_horizons", None)
-               or getattr(cls, "lookahead", None)
-               or getattr(cls, "horizon", None))
-        if raw is not None:
-            from app.ml.splitting import label_embargo
-            lookahead = label_embargo(raw if hasattr(raw, "__iter__")
-                                      and not isinstance(raw, (str, bytes))
-                                      else [raw])
-    except Exception:
-        lookahead = 0
-    purge, embargo = default_purge_embargo(n, lookahead)
-    df_is, df_oos, split, df_recherche, df_holdout = split_with_holdout(
-        df, holdout_fraction=holdout_fraction, min_holdout_bars=min_bars,
-        purge_bars=purge, embargo_bars=embargo)
-    if df_holdout is None and holdout_fraction > 0:
-        logger.warning(
-            f"[AutoOpt] {strategy_name}/{timeframe} : pas de holdout — "
-            f"{len(df)} bougies ne permettent pas d'en réserver une tranche "
-            f"exploitable ({min_bars} barres min pour cette stratégie). "
-            f"L'auto-apply sera refusé (OPT-04) ; le chiffre affiché reste "
-            f"mesuré sur la tranche de sélection.")
-    # Le baseline se mesure là où le candidat sera jugé, sinon la comparaison
-    # n'a pas de sens. Sans holdout, df_gate sert à AFFICHER, pas à décider.
-    df_gate = df_holdout if df_holdout is not None else df_oos
-    return df_is, df_oos, split, df_recherche, df_holdout, df_gate
-
-
-def _cfg_avec_params(cfg: dict, strategy_name: str, params: dict) -> dict:
-    """Copie de ``cfg`` où ``strategy_name`` porte ``params``, sans overlay.
-
-    ``optimizer_results`` est vidé : c'est l'entrée qui, dans le YAML, gagne sur
-    ``strategy_params`` — la laisser reviendrait à mesurer le paramétrage
-    ACTUEL en croyant mesurer le candidat.
-    """
-    cfg2 = {k: v for k, v in cfg.items()}
-    sp = deepcopy(cfg.get("strategy_params") or {})
-    fusion = dict(sp.get(strategy_name, {}))
-    fusion.update(params or {})
-    sp[strategy_name] = fusion
-    cfg2["strategy_params"] = sp
-    cfg2["optimizer_results"] = {}
-    return cfg2
-
-
-def _run_baseline(strategy_name: str, cfg: dict,
-                  df_oos: pl.DataFrame, symbol: str,
-                  timeframe: str | None = None) -> dict:
-    try:
-        mod = importlib.import_module(f"app.strategies.{strategy_name}")
-        eng = Engine()
-        eng.register(mod.Strategy())
-        # BT-01 : même résolution que le walk-forward, sinon le gate d'apply
-        # compare un baseline avec circuit breakers à des folds sans.
-        from app.core.is_oos import resolve_realistic_risk
-        bt  = Backtester(eng, cfg, realistic_risk=resolve_realistic_risk(cfg))
-        # timeframe transmis pour que resolve_strategy_params superpose
-        # optimizer_results[tf] : le baseline reflète ainsi le paramétrage
-        # RÉELLEMENT actif (params: + optimizer_results), comme le live/comparatif,
-        # et non le seul bloc params: par défaut.
-        res = bt.run(df_oos, symbol, timeframe=timeframe).to_dict()
-        return {
-            "trades": res.get("total_trades", 0),
-            "pnl":    round(res.get("total_pnl", 0), 4),
-            "sharpe": (None if res.get("sharpe") is None
-                       else round(res.get("sharpe", 0), 3)),
-            "wr":     round(res.get("win_rate", 0), 1),
-            "dd":     round(res.get("max_drawdown", 0), 2),
-            "alpha":  round(res["alpha"], 4) if res.get("alpha") is not None else None,
-            # OPT-01 : `beats_baseline` sait comparer le profit factor et
-            # l'expectancy, mais ses branches restaient mortes faute de ces
-            # deux clés côté baseline. Cette fonction sert AUSSI au holdout :
-            # les alimenter ici les rend disponibles des deux côtés de la
-            # comparaison d'un seul geste.
-            "profit_factor": (None if res.get("profit_factor") is None
-                              else round(res["profit_factor"], 3)),
-            "expectancy":    (None if res.get("expectancy") is None
-                              else round(res["expectancy"], 4)),
-        }
-    except Exception as e:
-        logger.debug(f"[AutoOpt] baseline {strategy_name} KO : {e}")
-        return {}
-
-
-# ════════════════════════════════════════════════════════════════════════════
-#  AutoOptimizer
-# ════════════════════════════════════════════════════════════════════════════
 class AutoOptimizer:
     """
     Optimiseur multi-stratégies × multi-timeframes avec jobs asynchrones.

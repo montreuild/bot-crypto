@@ -194,8 +194,8 @@ class TestNoHistoryMemo:
         """Un 429 pendant le backfill est indiscernable d'un historique
         épuisé. Le mémo doit donc être daté, sinon un incident réseau
         gèlerait l'historique du symbole définitivement."""
-        import app.core.candle_store as cs
-        monkeypatch.setattr(cs, "_NO_HISTORY_RETRY_S", 0.0)
+        import app.core.candle_memos as memos
+        monkeypatch.setattr(memos, "_NO_HISTORY_RETRY_S", 0.0)
         ex = self._Shallow()
         with tempfile.TemporaryDirectory() as d:
             store = _store(d)

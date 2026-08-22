@@ -10,6 +10,47 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧹 `DETTE-04` — les deux gros fichiers du constat découpés
+
+Le fichier le plus cité du constat, et le point d'entrée du bot vers les
+données. `CandleStore` reste la seule porte d'entrée et ré-exporte les noms
+historiques ; trois modules portent le reste.
+
+| Module | Lignes | Rôle |
+|---|---|---|
+| `candle_helpers.py` | 194 | provider effectif, bornes de `since`, verrous, élagage |
+| `candle_memos.py` | 86 | historique épuisé, cooldown de recousage |
+| `candle_fetch.py` | 512 | les cinq chemins vers l'exchange, recousage des trous |
+| `candle_store.py` | **534** | API publique, persistance, statistiques |
+
+Le constat rappelait qu'un découpage précédent avait déplacé la comptabilité
+des frais et introduit `FIN-01` et `FIN-02`. Le déplacement est ici **prouvé
+littéral** : les 21 fonctions déplacées ont un corps AST identique, docstring
+exclue. 36 tests verrouillent la surface publique, les ré-exports, la MRO et
+l'unicité des constantes — `_NO_HISTORY_RETRY_S` s'était retrouvé défini deux
+fois pendant le découpage, ce qui rendait un `monkeypatch` existant inerte.
+
+**`auto_optimizer` 1 000 → 759.** `opt_jobs.py` (registre thread-safe),
+`opt_memory.py` (portillon anti-OOM), `opt_baseline.py` (tranches et baseline).
+Déplacement également prouvé littéral : 16 fonctions, corps AST identiques.
+
+**Le même piège trois fois.** Réexporter un état mutable rend tout `setattr`
+inerte : `from X import _mem_committed` fige la valeur à l'import, et un test
+qui réaffecte le nom côté ré-export ne touche jamais celui que le code lit.
+Trois tests s'y sont laissés prendre — dont un qui attendait alors 6 h. Un test
+dédié interdit désormais le ré-export d'état scalaire.
+
+**Une régression de mon fait, corrigée.** Le garde `503 « Config non chargée »`
+ajouté à `POST /api/optimize/apply` (BT-03) était trop large : cette route écrit
+dans le fichier désigné par `config_path`, ce qui ne demande aucune config en
+mémoire. Elle refusait donc un cas légitime (CLI, démarrage). La suite complète
+était verte au moment du merge **par fuite d'ordre entre tests** — en isolation,
+le fichier échouait déjà. Le garde ne couvre plus que la propagation runtime.
+
+Restent ouverts, séparés du lot : `_run_one_job` (355 l., la fonction qui porte
+le gate — c'est là que `FIN-01`/`FIN-02` étaient nés), `position_lifecycle`,
+`optimizer_search` et `backtest`.
+
 ### 🧹 `ARCH-02` — deux vues découpées, leurs règles enfin testables
 
 `smart-replay-view.tsx` (744 l.) et `backtest-results.tsx` (708 l.)

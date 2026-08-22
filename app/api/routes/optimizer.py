@@ -323,8 +323,6 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
     from app.engine.opt_scoring import beats_baseline, resolve_dd_max_abs
     from app.engine.optimizer_search import apply_best_params
 
-    if state.cfg is None:
-        raise HTTPException(503, "Config non chargée")
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, f"Job '{job_id}' introuvable")
@@ -395,18 +393,25 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
         raise HTTPException(500, "Erreur écriture config")
 
     trader_updated = False
+    # L'écriture disque a déjà eu lieu ; ce qui suit ne fait que propager le
+    # changement au runtime. Sans config en mémoire (CLI, démarrage), il n'y a
+    # rien à propager — l'application reste valide.
     _cfg = state.cfg
-    try:
-        _cfg.update(_reload_cfg(config_path))
-    except Exception as e:
-        logger.warning(f"[apply] reload config KO: {e}")
-    if state.trader:
+    if _cfg is None:
+        logger.info("[apply] config non chargée en mémoire — params écrits sur "
+                    "disque, pas de propagation runtime")
+    else:
         try:
-            state.trader.strat_params = _cfg.get("strategy_params", {})
-            state.trader.reload_active_strategies()
-            trader_updated = True
+            _cfg.update(_reload_cfg(config_path))
         except Exception as e:
-            logger.warning(f"[apply] propagation trader KO: {e}")
+            logger.warning(f"[apply] reload config KO: {e}")
+        if state.trader:
+            try:
+                state.trader.strat_params = _cfg.get("strategy_params", {})
+                state.trader.reload_active_strategies()
+                trader_updated = True
+            except Exception as e:
+                logger.warning(f"[apply] propagation trader KO: {e}")
 
     return {"status": "applied", "strategy": strat, "timeframe": tf, "symbol": symbol,
             "params": best, "trader_updated": trader_updated,
