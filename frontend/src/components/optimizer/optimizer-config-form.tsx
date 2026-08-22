@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn, errorMessage } from '@/lib/utils';
 import { toast } from 'sonner';
-import { useStartOptimize, useConfig } from '@/hooks/use-api';
+import { useStartOptimize, useConfig, useOptimizeBudget } from '@/hooks/use-api';
 import { Play, Loader2, CheckCircle2, Sparkles, Info } from 'lucide-react';
 import type { OptimizeSpaces } from '@/types';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
@@ -89,6 +89,7 @@ export function OptimizerConfigForm({
   };
 
   const hasMlSelected = selectedStrategies.some((s) => spaces?.[s]?.is_ml);
+  const budget = useOptimizeBudget(nTrials, selectedStrategies);
   const hasOmnibusSelected = selectedStrategies.some((s) => /omnibus/i.test(s));
 
   const listedStrategies = filterMl
@@ -315,6 +316,21 @@ export function OptimizerConfigForm({
               onChange={(e) => { setNTrials(Math.max(1, Number(e.target.value) || 1)); markCustom(); }}
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
             />
+            {/* LAB-04 : le moteur reproportionne le budget à
+                `trials_per_param x n_params`, plafonné. Annoncer le nombre
+                demandé laissait l'opérateur découvrir 400 essais après en
+                avoir demandé 60. */}
+            {budget.data && budget.data.max > 0 && (
+              <p className={cn('text-[10px] mt-1',
+                budget.data.max > nTrials ? 'text-amber-400' : 'text-dim')}>
+                {budget.data.min === budget.data.max
+                  ? `${budget.data.max} essais réels`
+                  : `${budget.data.min} à ${budget.data.max} essais réels selon la stratégie`}
+                {' · '}{budget.data.total} au total
+                {budget.data.max > nTrials
+                  && ' — proportionné au nombre de paramètres'}
+              </p>
+            )}
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Workers parallèles</label>

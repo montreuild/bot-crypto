@@ -536,3 +536,18 @@ export interface MlRecipe {
 export interface MLRecipesResponse {
   recipes: Array<MlRecipe>;
 }
+
+export interface OptimizeBudgetLine {
+  strategy: string;
+  n_trials_eff: number;
+  raison?: string;
+  n_params?: number;
+}
+
+export interface OptimizeBudgetResponse {
+  demande: number;
+  min: number;
+  max: number;
+  total: number;
+  par_strategie: Array<OptimizeBudgetLine>;
+}

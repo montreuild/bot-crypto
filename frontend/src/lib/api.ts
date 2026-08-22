@@ -14,7 +14,7 @@ import type {
   RiskOverview, RiskDiagnostics, VenueEnvelopeConfig,
   OptimizeValidateResult, BotThresholds, OosTracker, OptimizeStartResult,
   AuditEvent, CandlesStatsResponse, AppConfig, ForwardTestResult,
-  MLTrainRequest, MLTrainStarted,
+  MLTrainRequest, MLTrainStarted, OptimizeBudgetResponse,
   DerivativesStatus, DerivativesPayload, PortfolioSnapshot, BacktestSettings,
   NotificationItem, FeesBreakdown, DailyStat, OptimizeSpaces, OptimizeResults,
   OptimizeJob, RiskPresetRemote, MlRecipe, MLStrategyInfo,
@@ -465,6 +465,9 @@ export const api = {
     }>(`/data/backfill-status/${jobId}`),
 
   // ── Optimizer ───────────────────────────────────────────────────────────
+  getOptimizeBudget: (nTrials: number, strategies: string[]) =>
+    apiFetch<OptimizeBudgetResponse>(
+      `/optimize/budget?n_trials=${nTrials}&strategies=${encodeURIComponent(strategies.join(','))}`),
   getOptimizeStatus: (jobId?: string) =>
     apiFetch<OptimizeJob[] | OptimizeJob | { jobs?: OptimizeJob[] }>(`/optimize/status${jobId ? `?job_id=${jobId}` : ''}`, { schema: OptimizeStatusSchema }),
   startOptimize: (params: {

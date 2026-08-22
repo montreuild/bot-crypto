@@ -206,6 +206,8 @@ class OptimizerSearchEngine(OptimizerPoolMixin, OptimizerResultMixin,
         self.timeframe         = timeframe
         self._cancel_event     = cancel_event
         self.results: List[Dict] = []
+        self.stop_reason: str = "budget épuisé"
+        self.trials_failed: int = 0
         self.df_full = df_full if df_full is not None else pl.concat([df_is, df_oos])
         self.split   = split   if split   is not None else len(df_is)
         # Hyperparamètres d'entraînement ML figés pour la passe courante (#6,

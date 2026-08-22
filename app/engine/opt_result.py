@@ -70,6 +70,9 @@ class OptimizerResultMixin:
             "best_oos_dd":    round(best.get("oos_dd", 0.0), 2),
             "best_oos_alpha": round(best["oos_alpha"], 4) if best.get("oos_alpha") is not None else None,
             "overfit":        best.get("overfit", 1.0),
+            "stop_reason":    getattr(self, "stop_reason", None),
+            "trials_failed":  getattr(self, "trials_failed", 0),
+            "trials_done":    len(self.results),
             "n_trials":       len(self.results),
             "top5":           top5,
             # S11 : contexte d'exécution facturé pendant toute l'optimisation

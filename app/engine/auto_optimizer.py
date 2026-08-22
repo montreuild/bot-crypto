@@ -377,9 +377,9 @@ class AutoOptimizer:
         # paramètres et un espace à 58 ne se couvrent pas avec le même budget.
         n_trials_eff, budget = effective_n_trials(
             opt.param_space, self.n_trials, self.cfg)
+        _update_job(job_id, n_trials=n_trials_eff, n_trials_budget=budget)
         if n_trials_eff != self.n_trials:
             logger.info(format_budget(strategy_name, budget))
-            _update_job(job_id, n_trials=n_trials_eff, n_trials_budget=budget)
 
         # #6 : two-phase pour les stratégies ML exposant des hyperparamètres
         # d'entraînement réglables (et si activé). Sinon phase unique.

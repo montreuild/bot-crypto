@@ -48,6 +48,10 @@ class OptimizerPoolMixin:
     df_oos: Any
     _eval: Any
     _pool_ipc_sizes: Any
+    #: LAB-05 — pourquoi la recherche s'est arrêtée, et sur combien
+    #: d'évaluations le score repose vraiment.
+    stop_reason: str
+    trials_failed: int
 
     @contextmanager
     def _open_pool(self, n_jobs: int):

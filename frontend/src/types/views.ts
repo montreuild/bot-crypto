@@ -392,6 +392,18 @@ export interface OptimizeJob {
   deflated_sharpe?: number;
   /** P0-2 — raison du refus apply (cf. beats_baseline). Présent si apply refusé. */
   apply_refused_reason?: string;
+  /** LAB-04 — budget effectif et sa justification. Le moteur reproportionne
+   *  ce que l'utilisateur demande (`effective_n_trials`) : 60 demandés,
+   *  jusqu'à 400 tournés. Sans ce bloc, l'écart est indéchiffrable. */
+  n_trials_budget?: {
+    base: number;
+    n_trials?: number;
+    n_params: number;
+    cardinality: number;
+    raison: string;
+    trials_per_param?: number;
+    max_trials?: number;
+  };
   result?: {
     best_params?: Record<string, any>;
     best_oos_score?: number;
@@ -408,6 +420,11 @@ export interface OptimizeJob {
     best_oos_dd?: number;
     best_oos_alpha?: number;
     overfit?: number;
+    /** LAB-05 — pourquoi la recherche s'est arrêtée, et sur combien
+     *  d'évaluations le score repose vraiment. */
+    stop_reason?: string | null;
+    trials_failed?: number;
+    trials_done?: number;
     /** P0-2 — Deflated Sharpe dans le résultat (alias pour compat). */
     deflated_sharpe?: number;
     /** Alias backend : `top5` (cf. audit §3.3). */
