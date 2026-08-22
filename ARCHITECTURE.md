@@ -550,6 +550,29 @@ dit « refais la mesure » et non « redonne-moi ta conclusion ».
 
 ---
 
+### Découpage des gros modules (DETTE-04)
+
+Aucun module hors `app/strategies` ne dépasse 700 lignes — mesuré par
+`tests/test_dette04_taille_fichiers.py`, exemptions écrites avec leur raison.
+
+| Point d'entrée | Modules extraits |
+|---|---|
+| `core/candle_store.py` | `candle_helpers`, `candle_memos`, `candle_fetch` |
+| `engine/auto_optimizer.py` | `opt_jobs`, `opt_memory`, `opt_baseline`, `opt_gate` |
+| `engine/optimizer_search.py` | `opt_pool`, `opt_result` |
+| `engine/backtest.py` | `backtest_setup`, `backtest_costs` |
+| `engine/position_lifecycle.py` | `position_hours`, `position_exit_reason`, `position_close`, `position_exits` |
+| `api/services/scanner_service.py` | `scanner_smc` |
+| `live/position_open_mixin.py` | `order_status` |
+
+Chaque point d'entrée ré-exporte les noms historiques. **Attention** : un état
+mutable ré-exporté ne se patche que dans le module qui le LIT — `from X import
+_compteur` fige la valeur à l'import. Quatre tests s'y sont laissés prendre
+pendant ces découpages ; `test_candle_store_decoupage.py` interdit désormais le
+ré-export d'état scalaire.
+
+---
+
 ### `app/core/database.py`
 
 **Responsabilité** : ORM SQLAlchemy, gestion des trades et stats
